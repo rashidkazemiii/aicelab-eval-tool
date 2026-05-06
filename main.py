@@ -1,6 +1,9 @@
 from read_files import load
 import matplotlib.pyplot as plt
 
+import logging
+logging.basicConfig(level=logging.INFO)   #so we can see the logs in the terminal
+
 # --- SETTINGS ---
 FILE_PATH = "data/OFT07935.txt"   #
 DATA_TYPE = "OFT"               # Options: "SRV", "SRV_FSA", "OFT"

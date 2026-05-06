@@ -1,30 +1,72 @@
 import pandas as pd
 import numpy as np
+import logging
 from physics import stroke
+
+logger = logging.getLogger(__name__)
 
 
 # Header
-def read_header(fread):
-    header_data = {}
-    for line in fread:
-        line = line.strip()
+#so if the file changed, we need to modify the stop_markers to stop at the new section
+def read_header(fread: list[str]) -> dict:
+    """
+    Read key/value metadata from the OFT file header.
 
-        # Stop if either Startzeit or Nummer is found
+    The parser stops once table-like content begins (e.g. lines containing
+    "Startzeit" or "Nummer").
+    """
+    header_data: dict[str, str] = {}  # Store parsed header values as {"key": "value"} pairs.
+    stop_markers = ("Startzeit", "Nummer")  # These markers indicate we reached step/main table content.
 
-        if "Startzeit" in line or "Nummer" in line:
+    for raw_line in fread:    # Read the file line-by-line from the top.
+        line = raw_line.strip()     # Remove surrounding spaces/newline to normalize processing.
+
+    # Read the file line-by-line from the top.
+    for raw_line in fread:
+        # Remove surrounding spaces/newline to normalize processing.
+        line = raw_line.strip()
+
+        # Stop header parsing once table section starts.
+        if any(marker in line for marker in stop_markers):
             break
+
+        # Ignore blank lines in header.
         if not line:
             continue
-        parts = [
-            p.strip() 
-            for p in line.split("\t") 
-            if p.strip()
-        ]
-        if len(parts) >= 2:
-            key = parts[0]
-            value = " ".join(parts[1:])
-            header_data[key] = value
-    print(f"Extracted header data: {header_data}")
+        """
+        if line is empty (for example "")
+        skip the rest of current loop body
+        jump to the next iteration of the loop
+        So it is used to ignore blank lines.
+        """
+
+        # Header lines are tab-separated: first part is key, rest is value.
+        parts = [part.strip() for part in line.split("\t") if part.strip()]
+        if len(parts) < 2:
+            continue
+        """
+        line.split("\t") -> breaks one line into chunks using tab as separator
+        part.strip() -> removes spaces/newline around each chunk
+        if part.strip() -> keeps only chunks that are not empty after trimming
+        final result parts -> a clean list of meaningful fields
+        Example:
+
+        If line is:
+
+        "  Key\t  Value  \t\t"
+        Then parts becomes:
+
+        ["Key", "Value"]
+        """
+
+        # Keep first token as key and join remaining tokens as one value.
+        key = parts[0]
+        value = " ".join(parts[1:])
+        header_data[key] = value
+
+    # Log parsed header data at INFO level instead of printing to stdout.
+    logger.info("Extracted header data: %s", header_data)
+    # Normalize special fields (e.g., parse numeric stroke).
     return clean_header_data(header_data)
 
 
@@ -33,15 +75,32 @@ def clean_header_data(header_data):
         try:
             value=header_data["Hub Exzenter"].split()[0].replace(",", ".")
             header_data["stroke"] = float(value)
-            print(f"Parsed 'Hub Exzenter' value: {header_data['stroke']}")
+            logger.info("Parsed 'Hub Exzenter' value: %s", header_data["stroke"])
         except(ValueError, IndexError) as e:
-            print(f"Error parsing 'Hub Exzenter': {e}")
+            logger.warning("Error parsing 'Hub Exzenter': %s", e)
             header_data["stroke"] = None
 
     if "Anzahl Stufen" in header_data.keys():
         header_data["Stufe_ja_nein"] = header_data["Anzahl Stufen"] == "Ja"
     return header_data
+    """
+    split()[0] means:
 
+    split() -> break the string into words (by spaces)
+    [0] -> take the first word
+    So in your line:
+
+    value = header_data["Hub Exzenter"].split()[0].replace(",", ".")
+    if header_data["Hub Exzenter"] is:
+
+    "1,0 mm"
+
+    then:
+
+    .split() gives ["1,0", "mm"]
+    [0] gives "1,0"
+    .replace(",", ".") gives "1.0"
+    """
 
 # Step data
 
@@ -186,7 +245,7 @@ def remove_inactive_data(df, step_df):
 
 def readRawFile(filename: str):
     with open(filename, mode="r", encoding="latin-1") as f:
-        fread = f.readlines()
+        fread = f.readlines()  #f.readlines() returns all file lines as a list, where each item is one line (usually ending with \n).
     header = read_header(fread)
     step_df = read_step_df(fread)
     df = read_main_df(filename, fread)
