@@ -2,12 +2,25 @@ from read_files import SRV, SRV_FSA, OFT
 import pandas as pd
 
 
-def load_data(filename, data_origin):  #function to load data from different file formats based on the data origin 
-    df = None    
-    print(type(df))                        
-    step_df = None
-    header = None
-    if data_origin == "SRV":            #so dataorigin is string type
+def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFrame | None, dict | None]:
+    """
+    Load test data from a supported source format.
+
+    Returns:
+        df: main measurement data table.
+        step_df: step metadata table (or None).
+        header: file header metadata (OFT only, else None).
+    """
+    # df (DataFrame | None): main measurement dataset.
+    df: pd.DataFrame | None = None
+
+    # step_df (DataFrame | None): step interval metadata.
+    step_df: pd.DataFrame | None = None
+
+    # header (dict | None): optional metadata from OFT file headers.
+    header: dict | None = None
+
+    if data_origin == "SRV":
         df, step_df = SRV.readRawFile(filename)
     elif data_origin == "SRV_FSA":
         df, step_df = SRV_FSA.readRawFile(filename)
@@ -29,5 +42,9 @@ def load_data(filename, data_origin):  #function to load data from different fil
             )
         else:
             print("Warning: df is empty, cannot generate step_df.")
-    df['stroke'] = df['stroke'].astype(float)
+    if df is None:
+        raise ValueError(f"No data could be loaded from {filename} (origin={data_origin}).")
+    if "stroke" in df.columns:
+        # stroke (Series[float]): numeric stroke signal for downstream calculations.
+        df['stroke'] = df['stroke'].astype(float)
     return df, step_df, header
