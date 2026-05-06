@@ -36,7 +36,7 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
                 {
                     'Step': [0],
                     'Startzeit [s]': [0],
-                    'Endtime [s]': [df["time"].max()],
+                    'Endzeit [s]': [df["Zeit [s]"].max()],
                     'inactive': [False],
                 }
             )
@@ -48,3 +48,4 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
         # stroke (Series[float]): numeric stroke signal for downstream calculations.
         df['stroke'] = df['stroke'].astype(float)
     return df, step_df, header
+

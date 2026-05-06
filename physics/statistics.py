@@ -29,7 +29,7 @@ def CoF_Stat(CoF, step_df):
         if not row["inactive"]:
 
             lowerLimit = row["Startzeit [s]"]  # referenceTime[i]
-            upperLimit = row["Endtime [s]"]  # referenceTime[i + 1]
+            upperLimit = row["Endzeit [s]"]  # referenceTime[i + 1]
             mask = (staticTime >= lowerLimit) & (staticTime <= upperLimit)
             absoluteCoF = np.abs(staticCoF[mask])
             stepdynamicStdDev = dynamicStdDev[mask]
@@ -97,7 +97,7 @@ def CoF_Statisticspersecond(CoF, step_df):
         i
         for i in range(
             int(step_df["Startzeit [s]"].to_numpy()[0]),
-            int(step_df["Endtime [s]"].to_numpy()[-1]) + 1,
+            int(step_df["Endzeit [s]"].to_numpy()[-1]) + 1,
         )
     ]
     # initial_time = static_time.iloc[0]
@@ -545,3 +545,4 @@ def CoF_Discontsepstatistics(CoF, step_df):
         }
     )
     return statisticssep
+

@@ -3,7 +3,7 @@ from .utility_functions import Find_minima, Evaluate
 
 
 def calculate(df, stroke, threshold=1):
-    df["phase"] = 2 * np.pi * df["rotation speed"] / 60 * df["time"]
+    df["phase"] = 2 * np.pi * df["rotation speed"] / 60 * df["Zeit [s]"]
     diff = df["phase"].diff()
     mask = (diff < -threshold) | (diff > threshold)
     corrections = diff.where(mask, 0).cumsum()
@@ -27,3 +27,4 @@ def find_maxima(
         beginning_dynamic_range,
         ending_dynamic_range,
     )
+

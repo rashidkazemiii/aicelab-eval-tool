@@ -1,5 +1,6 @@
 from read_files import load
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import logging
 logging.basicConfig(level=logging.INFO)   #so we can see the logs in the terminal
@@ -12,19 +13,22 @@ def main():
     print(f"Loading file: {FILE_PATH}")
 
     try:
+        # Expected types:
+        # df -> pd.DataFrame (main measurement data)
+        # step_df -> pd.DataFrame | None (step metadata, may be missing)
+        # header -> dict | None (header metadata, may be missing)
+        df: pd.DataFrame
+        step_df: pd.DataFrame | None
+        header: dict | None
         df, step_df, header = load.load_data(FILE_PATH, DATA_TYPE)
 
         print("✅ Data loaded successfully!")
 
-        # Inspect the data
-        print("\n--- df (first rows) ---")
-        print(df.head())
-
-        # Plot CoF vs Time
-        plt.plot(df['time'], df['CoF'])
-        plt.xlabel('Time')
+        # Plot CoF vs Zeit
+        plt.plot(df['Zeit [s]'], df['CoF'])
+        plt.xlabel('Zeit [s]')
         plt.ylabel('Coefficient of Friction (CoF)')
-        plt.title('CoF vs Time')
+        plt.title('CoF vs Zeit')
         plt.show()
 
     except FileNotFoundError:

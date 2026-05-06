@@ -150,10 +150,10 @@ def clean_step_df(step_df):
         )
 
     # Logic: Endtime is the Startzeit of the next step
-    step_df["Endtime [s]"] = step_df["Startzeit [s]"].shift(-1)
+    step_df["Endzeit [s]"] = step_df["Startzeit [s]"].shift(-1)
 
     # Remove rows where start and end time are identical (artifacts)
-    step_df = step_df[step_df["Endtime [s]"] != step_df["Startzeit [s]"]]
+    step_df = step_df[step_df["Endzeit [s]"] != step_df["Startzeit [s]"]]
 
     # Calculate inactivity (where RPM is 0)
     step_df["inactive"] = step_df["Drehzahl [U/min]"] == 0
@@ -193,7 +193,7 @@ def clean_main_df(df):
     df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_", regex=True)
 
     rename_map = {
-        "zeit": "time",
+        "zeit": "Zeit [s]",
         "drehzahl": "rotation speed",
         "belastung": "normal load",
         "rk_oft_links": "friction force left",
@@ -232,12 +232,12 @@ def remove_inactive_data(df, step_df):
     if step_df is None:
         return df
     inactive_periods = step_df[step_df["inactive"] == True][
-        ["Startzeit [s]", "Endtime [s]"]
+        ["Startzeit [s]", "Endzeit [s]"]
     ]
 
     for _, row in inactive_periods.iterrows():
         df = df[
-            (df["time"] < row["Startzeit [s]"]) | (df["time"] >= row["Endtime [s]"])
+            (df["Zeit [s]"] < row["Startzeit [s]"]) | (df["Zeit [s]"] >= row["Endzeit [s]"])
         ]
 
     return df.reset_index(drop=True)
@@ -252,5 +252,6 @@ def readRawFile(filename: str):
     df = stroke.calculate(df, header["stroke"])
     df = remove_inactive_data(df, step_df)
     if not step_df is None:
-        step_df.loc[step_df.index[-1], "Endtime [s]"] = df["time"].max()
+        step_df.loc[step_df.index[-1], "Endzeit [s]"] = df["Zeit [s]"].max()
     return df, step_df, header
+

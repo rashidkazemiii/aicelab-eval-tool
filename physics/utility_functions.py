@@ -11,8 +11,8 @@ def offset(df, step_df=None):
             if not row["inactive"]:
                 # Filter rows based on conditions
                 filtered_rows = df[
-                    (df["time"] < row["Endtime [s]"])
-                    & (df["time"] > row["Startzeit [s]"])
+                    (df["Zeit [s]"] < row["Endzeit [s]"])
+                    & (df["Zeit [s]"] > row["Startzeit [s]"])
                 ]
                 # Select "CoF" column from filtered rows
                 cof_column = filtered_rows["CoF"]
@@ -36,8 +36,8 @@ def filter(df, step_df, window):
             if not row["inactive"]:
                 # Filter rows based on conditions
                 filtered_rows = df[
-                    (df["time"] < row["Endtime [s]"])
-                    & (df["time"] > row["Startzeit [s]"])
+                    (df["Zeit [s]"] < row["Endzeit [s]"])
+                    & (df["Zeit [s]"] > row["Startzeit [s]"])
                 ]
                 # Select "CoF" column from filtered rows
                 cof_column = filtered_rows["CoF"]
@@ -53,7 +53,7 @@ def filter(df, step_df, window):
 
 
 def trim(df, trim_start, trim_end):
-    return df[(df["time"] < trim_end) & (df["time"] > trim_start)]
+    return df[(df["Zeit [s]"] < trim_end) & (df["Zeit [s]"] > trim_start)]
 
 
 def Find_minima(df, column):
@@ -66,11 +66,11 @@ def Find_minima(df, column):
     for index, row in df.iterrows():
         if firstIteration:
             prevValue = row[column]
-            prevTime = row["time"]
+            prevTime = row["Zeit [s]"]
             firstIteration = False
         else:
             currentValue = row[column]
-            currentTime = row["time"]
+            currentTime = row["Zeit [s]"]
             if currentTime - prevTime < 0.002:
                 if (prevValue < 0 and currentValue >= 0) or (
                     prevValue >= 0 and currentValue < 0
@@ -124,11 +124,11 @@ def Find_minima(df, column):
 
     res = pd.DataFrame(
         {
-            "-Min time": negativeTime,
+            "-Min Zeit": negativeTime,
             "-Min " + column: negativeArray,
-            "+Min time": positiveTime,
+            "+Min Zeit": positiveTime,
             "+Min " + column: positiveArray,
-            "Min time": theoreticalTime,
+            "Min Zeit": theoreticalTime,
             "Min " + column: [0] * len(positiveArray),
         }
     )
@@ -142,9 +142,9 @@ def Evaluate(
     b = 0.01 * beginning_dynamic_range
     c = 0.01 * ending_dynamic_range
 
-    Time = df["time"].tolist()
+    Time = df["Zeit [s]"].tolist()
     Stroke = df[column].tolist()
-    negMinTime = minima["-Min time"].tolist()
+    negMinTime = minima["-Min Zeit"].tolist()
 
     startIndex = []
     maxStrokeIndex = []
@@ -249,3 +249,4 @@ def Evaluate(
         raise Exception(column + " not implemented")
 
     return res_df
+
