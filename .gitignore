@@ -1,2 +1,22 @@
+# Python
 __pycache__/
 *.pyc
+.venv/
+env/
+venv/
+.python-version
+
+# Node / Frontend
+node_modules/
+dist/
+.eslintcache
+.project
+
+# IDEs
+.vscode/
+.idea/
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
