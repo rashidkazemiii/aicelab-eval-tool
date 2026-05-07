@@ -5,12 +5,21 @@ from physics import utility_functions
 
 import logging
 logging.basicConfig(level=logging.INFO)   #so we can see the logs in the terminal
-
+#2. import FastAPI and CORS middleware
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 #1. initialize the FastAPI app
 app = FastAPI()
 
+# 3. Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Allow requests from your frontend
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
 # --- SETTINGS ---
 FILE_PATH = "data/OFT07935.txt"   #
 DATA_TYPE = "OFT"               # Options: "SRV", "SRV_FSA", "OFT"
