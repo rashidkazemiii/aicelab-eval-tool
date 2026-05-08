@@ -3,85 +3,81 @@ import axios from 'axios';
 import ReactECharts from 'echarts-for-react';
 
 function FrictionAnalysis() {
-  const [data, setData] = useState([]);
+  const [rawData, setRawData] = useState([]);
+  const [filteredData, setFilteredData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Fetching from your backend (assuming it returns the OFT07935.txt data)
     axios.get('http://localhost:8000/analyze')
       .then(response => {
         if (response.data.status === 'success') {
-          // Mapping your Zeit (Time) and Reibungszahl (Friction) columns
-          const chartData = response.data.zeit.map((t, i) => [
-            parseFloat(t), 
-            parseFloat(response.data.reibungszahl[i])
-          ]);
-          setData(chartData);
+          const { zeit, cof_raw, cof_filtered } = response.data;
+          
+          // Map both datasets
+          const raw = zeit.map((t, i) => [parseFloat(t), parseFloat(cof_raw[i])]);
+          const filtered = zeit.map((t, i) => [parseFloat(t), parseFloat(cof_filtered[i])]);
+          
+          setRawData(raw);
+          setFilteredData(filtered);
           setLoading(false);
         }
-      });
+      })
+      .catch(err => console.error("API Error:", err));
   }, []);
 
   const option = {
-    title: { text: 'Friction Coefficient Analysis', left: 'center' },
+    title: { text: 'Friction Coefficient: Raw vs Filtered', left: 'center' },
+    legend: { data: ['Raw Data', 'Filtered Data'], top: '30px' },
     tooltip: {
       trigger: 'axis',
       formatter: (params) => {
-        const [time, value] = params[0].data;
-        return `Time: ${time.toFixed(3)} s<br/>Friction (μ): ${value.toFixed(5)}`;
+        let res = `Time: ${params[0].data[0].toFixed(3)} s`;
+        params.forEach(p => {
+          res += `<br/>${p.marker} ${p.seriesName}: ${p.data[1].toFixed(5)}`;
+        });
+        return res;
       }
     },
-    // TOOLBOX: This is the key for verifying peaks
     toolbox: {
       feature: {
-        dataZoom: { yAxisIndex: 'none' }, // Enables the Box Zoom tool
-        restore: {}, // Reset button
+        dataZoom: { yAxisIndex: 'none' },
+        restore: {},
         saveAsImage: {}
       }
     },
-    xAxis: {
-      type: 'value',
-      name: 'Time (s)',
-      tickLine: { show: true }
-    },
-    yAxis: {
-      type: 'value',
-      name: 'Friction (μ)',
-      scale: true // Auto-focuses on the data range
-    },
-    // DATA ZOOM: Slider and Mouse-wheel support
+    xAxis: { type: 'value', name: 'Time (s)' },
+    yAxis: { type: 'value', name: 'CoF (μ)', scale: true },
     dataZoom: [
-      { type: 'inside', start: 0, end: 100 }, // Mouse wheel zoom
-      { type: 'slider', start: 0, end: 100 }  // Bottom slider
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100 }
     ],
     series: [
       {
-        name: 'Friction Coefficient',
+        name: 'Raw Data',
         type: 'line',
-        symbol: 'none', // Keeps it clean
-        sampling: 'lttb', // Optimization for large datasets
-        data: data,
-        lineStyle: { color: '#5470c6', width: 1 },
-        // Highlights the peaks when you hover
-        emphasis: { lineStyle: { width: 2 } }
+        symbol: 'none',
+        sampling: 'lttb',
+        data: rawData,
+        lineStyle: { color: '#ccc', width: 1, opacity: 0.6 }, // Lighter color for raw
+      },
+      {
+        name: 'Filtered Data',
+        type: 'line',
+        symbol: 'none',
+        sampling: 'lttb',
+        data: filteredData,
+        lineStyle: { color: '#5470c6', width: 2 }, // Bolder color for filtered
+        emphasis: { lineStyle: { width: 3 } }
       }
     ]
   };
 
-  if (loading) return <div>Loading 45,000 data points...</div>;
+  if (loading) return <div>Processing 45,000+ data points...</div>;
 
   return (
     <div style={{ padding: '20px' }}>
       <div style={{ backgroundColor: '#fff', padding: '20px', borderRadius: '10px', boxShadow: '0 4px 15px rgba(0,0,0,0.1)' }}>
-        <ReactECharts 
-          option={option} 
-          style={{ height: '600px', width: '100%' }} 
-          notMerge={true}
-          lazyUpdate={true}
-        />
-        <div style={{ marginTop: '10px', textAlign: 'center', color: '#666', fontSize: '14px' }}>
-          <strong>How to verify peaks:</strong> Click the 🔍 icon in the top right, then click and drag a rectangle over any peak to zoom in instantly.
-        </div>
+        <ReactECharts option={option} style={{ height: '600px', width: '100%' }} />
       </div>
     </div>
   );
