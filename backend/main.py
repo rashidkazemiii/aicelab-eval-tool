@@ -55,8 +55,9 @@ def analyze_data():
     
         return {
             "status": "success",
-            "zeit": df_filtered['Zeit [s]'].tolist() if 'Zeit [s]' in df_filtered.columns else [],
-            "reibungszahl": df_filtered['CoF'].tolist() if 'CoF' in df_filtered.columns else [],
+            "zeit": df_filtered['Zeit [s]'].tolist(),
+            "cof_raw": df_offset['CoF'].tolist(), # Original data
+            "cof_filtered": df_filtered['CoF'].tolist(), # Filtered data
             "metadata": {
                 "rows": len(df_filtered),
                 "filter_window": FILTER_WINDOW
