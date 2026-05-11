@@ -1,29 +1,32 @@
 import React, { useState } from 'react';
 import { Box, Typography, Stack, Alert } from '@mui/material';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 
-// 1. Import our organized parts
+// Import your components
 import UploadBox from '../components/upload/UploadBox';
 import { useFileUpload } from '../hooks/useFileUpload';
 import FileInfo from '../components/upload/FileInfo';
-// 2. Import our NEW Common Components
 import Button from '../components/common/Button';
-import CheckboxGroup from '../components/common/CheckboxGroup';
 
 export default function UploadPage({ onSwitch }) {
   const [file, setFile] = useState(null);
-  const [success, setSuccess] = useState(false);
-
+  
+  // We use the handleUpload function from your custom hook
   const { handleUpload, loading, error } = useFileUpload();
 
   const onFileChange = (e) => {
     setFile(e.target.files[0]);
-    setSuccess(false);
   };
 
   const onImportClick = async () => {
-    const isDone = await handleUpload(file);
-    if (isDone) setSuccess(true);
+    if (!file) return;
+
+    // 1. Upload the file to Python
+    const isDone = await handleUpload(file); 
+    
+    // 2. If successful, immediately trigger the switch to the next tab
+    if (isDone) {
+      onSwitch(); 
+    }
   };
 
   return (
@@ -33,38 +36,25 @@ export default function UploadPage({ onSwitch }) {
       </Typography>
 
       <Stack spacing={3} sx={{ width: 450 }}>
+        {/* Upload Area */}
         <UploadBox file={file} onFileChange={onFileChange} />
 
-
-        {file && !success && (
+        {/* File Details (shows up only when a file is selected) */}
+        {file && (
           <FileInfo file={file} onClear={() => setFile(null)} />
-
-          
         )}
 
-
-        {/* Using our CUSTOM Button component now! */}
+        {/* The single "Master" Button */}
         <Button 
-          disabled={!file || loading || success}
+          disabled={!file || loading}
           onClick={onImportClick}
           sx={{ bgcolor: '#3e4396' }}
         >
-          {loading ? "Processing..." : "Import to System"}
+          {loading ? "Processing..." : "Import"}
         </Button>
 
+        {/* Error message if Python connection fails */}
         {error && <Alert severity="error">{error}</Alert>}
-
-        {success && (
-          <Button 
-            onClick={onSwitch}
-            startIcon={<PlayArrowIcon />}
-            sx={{ bgcolor: '#3e4396' }} // <--- Changed from Green to your Reference Blue
-          >
-            Analyze & View Results
-          </Button>
-
-          
-        )}
       </Stack>
     </Box>
   );

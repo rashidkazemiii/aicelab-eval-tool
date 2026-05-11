@@ -15,19 +15,18 @@ export const useFileUpload = () => {
     formData.append('file', file);
 
     try {
-      const response = await uploadFile(formData);
-      // Assuming your FastAPI returns { status: 'success', zeit: [...], ... }
-      if (response.data.status === 'success') {
-        setAnalysisData({
-          zeit: response.data.zeit,
-          raw: response.data.cof_raw,
-          filtered: response.data.cof_filtered,
-          fileName: file.name
-        });
-        return true;
-      }
+      // 2. Send it to Python
+      const response = await fetch('http://localhost:8000/upload', {
+        method: 'POST',
+        body: formData,
+      });
+  
+      if (!response.ok) throw new Error('Failed to connect to server');
+  
+      const data = await response.json();
+      return true; // Tells UploadPage that success = true
     } catch (err) {
-      setError("Communication failed. Is the Python server running on port 8000?");
+      setError(err.message);
       return false;
     } finally {
       setLoading(false);

@@ -6,9 +6,14 @@ import json
 import logging
 logging.basicConfig(level=logging.INFO)   #so we can see the logs in the terminal
 #2. import FastAPI and CORS middleware
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+import os
+
+# Create a data folder if it doesn't exist
+os.makedirs("temp_uploads", exist_ok=True)
 
 #1. initialize the FastAPI app
 app = FastAPI()
@@ -30,6 +35,28 @@ FILTER_WINDOW = 25
 @app.get("/")
 def read_root():
     return {"message": "Hello World! Your Backend is Live"}
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    try:
+        # 1. Define the save path
+        file_location = f"temp_uploads/{file.filename}"
+        
+        # 2. Write the uploaded content to a real file on your disk
+        with open(file_location, "wb+") as file_object:
+            file_object.write(await file.read())
+            
+        print(f"File saved at: {file_location}")
+        
+        # 3. Return the path so the frontend knows where it is (optional)
+        return {
+            "message": "Success", 
+            "filename": file.filename, 
+            "path": file_location
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 # 3. Define an endpoint to run your logic
 @app.get("/analyze")
