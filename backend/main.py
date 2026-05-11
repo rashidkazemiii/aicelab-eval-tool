@@ -39,6 +39,7 @@ def read_root():
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
+    global latest_file_path # Tell Python we want to update the variable above
     try:
         # 1. Define the save path
         file_location = f"temp_uploads/{file.filename}"
@@ -47,6 +48,7 @@ async def upload_file(file: UploadFile = File(...)):
         with open(file_location, "wb+") as file_object:
             file_object.write(await file.read())
             
+        latest_file_path = file_location # Save the path for the next step
         print(f"File saved at: {file_location}")
         
         # 3. Return the path so the frontend knows where it is (optional)
