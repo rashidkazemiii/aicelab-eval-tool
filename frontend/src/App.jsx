@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import { Box, CssBaseline } from '@mui/material';
 import { DataProvider } from './context/DataContext';
 
-// 1. IMPORT YOUR COMPONENTS
-import Navbar from './components/layout/Navbar';
-import Sidebar from './components/layout/Sidebar';
+// 1. Import the Layout
+import Layout from './components/layout/Layout';
 
-// 2. IMPORT YOUR PAGES
+// 2. Import your Pages
 import UploadPage from './pages/UploadPage';
 import AnalysisPage from './pages/AnalysisPage';
 
@@ -15,20 +13,17 @@ function App() {
 
   return (
     <DataProvider>
-      <Box sx={{ display: 'flex', bgcolor: '#141b2d', minHeight: '100vh' }}>
-        <CssBaseline />
-        <Navbar />
-        <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} />
+      {/* 3. Wrap everything in the Layout */}
+      <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
         
-        <Box component="main" sx={{ flexGrow: 1, p: 3, mt: 8, color: 'white' }}>
-          {/* 3. CONDITIONAL RENDERING LOGIC */}
-          {activeTab === 'upload' ? (
-            <UploadPage onSwitch={() => setActiveTab('analysis')} />
-          ) : (
-            <AnalysisPage />
-          )}
-        </Box>
-      </Box>
+        {/* This logic block is the "children" passed to Layout */}
+        {activeTab === 'upload' ? (
+          <UploadPage onSwitch={() => setActiveTab('analysis')} />
+        ) : (
+          <AnalysisPage />
+        )}
+        
+      </Layout>
     </DataProvider>
   );
 }
