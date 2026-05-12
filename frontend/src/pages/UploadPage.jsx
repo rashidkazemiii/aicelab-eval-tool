@@ -1,60 +1,66 @@
 import React, { useState } from 'react';
-import { Box, Typography, Stack, Alert } from '@mui/material';
-
-// Import your components
+import { Box, Typography, Stack, Alert, CircularProgress } from '@mui/material';
 import UploadBox from '../components/upload/UploadBox';
-import { useFileUpload } from '../hooks/useFileUpload';
 import FileInfo from '../components/upload/FileInfo';
 import Button from '../components/common/Button';
+import { useFileUpload } from '../hooks/useFileUpload';
 
 export default function UploadPage({ onSwitch }) {
   const [file, setFile] = useState(null);
-  
-  // We use the handleUpload function from your custom hook
+  const [isReady, setIsReady] = useState(false); // Track if backend finished
   const { handleUpload, loading, error } = useFileUpload();
 
-  const onFileChange = (e) => {
-    setFile(e.target.files[0]);
+  // 1. Upload happens automatically when file is chosen
+  const onFileChange = async (e) => {
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
+
+    setFile(selectedFile);
+    setIsReady(false); // Reset for new file
+
+    const success = await handleUpload(selectedFile);
+    if (success) {
+      setIsReady(true); // Backend printed "OK", we are ready to move
+    }
   };
 
-  const onImportClick = async () => {
-    if (!file) return;
-
-    // 1. Upload the file to Python
-    const isDone = await handleUpload(file); 
-    
-    // 2. If successful, immediately trigger the switch to the next tab
-    if (isDone) {
-      onSwitch(); 
+  // 2. Page switch happens ONLY when clicking the button
+  const onImportClick = () => {
+    if (isReady) {
+      onSwitch();
     }
   };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mt: 5 }}>
-      <Typography variant="h4" sx={{ color: '#1f2a40', mb: 4, fontWeight: 'bold' }}>
-        Friction Evaluation
+      <Typography variant="h6" sx={{ color: '#1f2a40', mb: 4, fontWeight: 'bold' }}>
+        Upload your file and press Import to continue
       </Typography>
 
       <Stack spacing={3} sx={{ width: 450 }}>
-        {/* Upload Area */}
-        <UploadBox file={file} onFileChange={onFileChange} />
+        <UploadBox 
+          file={file} 
+          onFileChange={onFileChange} 
+        />
 
-        {/* File Details (shows up only when a file is selected) */}
         {file && (
-          <FileInfo file={file} onClear={() => setFile(null)} />
+          <FileInfo file={file} onClear={() => { setFile(null); setIsReady(false); }} />
         )}
 
-        {/* The single "Master" Button */}
-        <Button 
-          disabled={!file || loading}
+        <Button
+          // Button is disabled if no file, if still uploading, or if upload failed
+          disabled={!file || loading || !isReady}
           onClick={onImportClick}
-          sx={{ bgcolor: '#3e4396' }}
+          sx={{ bgcolor: '#3e4396', color: 'white' }}
         >
-          {loading ? "Processing..." : "Import"}
+          {loading ? <CircularProgress size={24} color="inherit" /> : 'Import'}
         </Button>
 
-        {/* Error message if Python connection fails */}
         {error && <Alert severity="error">{error}</Alert>}
+        
+        {isReady && !loading && (
+          <Alert severity="success">File processed successfully. Ready to Import.</Alert>
+        )}
       </Stack>
     </Box>
   );

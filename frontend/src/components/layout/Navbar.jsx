@@ -15,10 +15,10 @@ export default function Navbar() {
     >
       <Toolbar>
         <Typography variant="h6" sx={{ color: '#4cceac', fontWeight: 'bold' }}>
-          FRICTION LAB <span style={{ color: '#fff', fontSize: '0.8rem', marginLeft: '10px' }}>v1.0</span>
+          FRICTION EVALUATION <span style={{ color: '#fff', fontSize: '0.8rem', marginLeft: '10px' }}>v1.0</span>
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
-        <Typography variant="body2" sx={{ color: '#aaa' }}>User: MD Luffy</Typography>
+        <Typography variant="body2" sx={{ color: '#aaa' }}>User: ??</Typography>
       </Toolbar>
     </AppBar>
   );

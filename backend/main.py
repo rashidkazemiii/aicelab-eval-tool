@@ -5,7 +5,7 @@ from physics import utility_functions
 import json
 import logging
 import os
-
+logger = logging.getLogger(__name__)
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,7 +26,7 @@ app = FastAPI()
 # ---------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,7 +45,10 @@ FILTER_WINDOW = 25
 # ---------------------------------------------------
 @app.get("/")
 def read_root():
+    print("Test");
     return {"message": "Hello World! Your Backend is Live"}
+    
+    
 
 # ---------------------------------------------------
 # Upload endpoint
@@ -53,104 +56,25 @@ def read_root():
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     global latest_file_path
-
     try:
-        # Save uploaded file
+        # 1. Define save path
         file_location = f"temp_uploads/{file.filename}"
-
+        
+        # 2. Save the physical file
         with open(file_location, "wb+") as file_object:
             file_object.write(await file.read())
 
+        # 3. Update the global path
+        # This ensures 'load_data' will pull the fresh file next time
         latest_file_path = file_location
-
-        print(f"File saved at: {file_location}")
-
-        # ---------------------------------------------------
-        # Load dataframe immediately after upload
-        # ---------------------------------------------------
+        
+        # 4. Update/Verify the three variables immediately (optional logging)
         df, step_df, header = load.load_data(latest_file_path, DATA_TYPE)
-
-        # Optional processing
-        df_offset = utility_functions.offset(df.copy(), step_df)
-        df_filtered = utility_functions.filter(
-            df_offset.copy(),
-            step_df,
-            FILTER_WINDOW
-        )
-
-        # ---------------------------------------------------
-        # Return chart data directly
-        # ---------------------------------------------------
-        return {
-            "status": "success",
-
-            "zeit": df_filtered['Zeit [s]'].tolist(),
-
-            "cof_raw": df_offset['CoF'].tolist(),
-
-            "cof_filtered": df_filtered['CoF'].tolist(),
-
-            "metadata": {
-                "rows": len(df_filtered),
-                "filename": file.filename
-            }
-        }
-
+       
+        print("OK");
+        return {"status": "success", "message": f"{file.filename} is now the active file"}
+    
     except Exception as e:
-        logging.exception("Upload failed")
-
-        return {
-            "status": "error",
-            "message": str(e)
-        }
-
-# ---------------------------------------------------
-# Analysis endpoint (KEEP for future use)
-# ---------------------------------------------------
-@app.get("/analyze")
-def analyze_data():
-
-    global latest_file_path
-
-    try:
-
-        if latest_file_path is None:
-            return {
-                "status": "error",
-                "message": "No file uploaded yet"
-            }
-
-        df, step_df, header = load.load_data(
-            latest_file_path,
-            DATA_TYPE
-        )
-
-        df_offset = utility_functions.offset(df.copy(), step_df)
-
-        df_filtered = utility_functions.filter(
-            df_offset.copy(),
-            step_df,
-            FILTER_WINDOW
-        )
-
-        return {
-            "status": "success",
-
-            "zeit": df_filtered['Zeit [s]'].tolist(),
-
-            "cof_raw": df_offset['CoF'].tolist(),
-
-            "cof_filtered": df_filtered['CoF'].tolist(),
-
-            "metadata": {
-                "rows": len(df_filtered),
-                "filter_window": FILTER_WINDOW
-            }
-        }
-
-    except Exception as e:
-
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        print(f"Upload failed: {e}")
+       
+        return {"status": "error", "message": str(e)}
