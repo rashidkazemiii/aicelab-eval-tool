@@ -3,12 +3,9 @@ import React, { createContext, useState, useContext } from 'react';
 const DataContext = createContext();
 
 export const DataProvider = ({ children }) => {
-  const [analysisData, setAnalysisData] = useState({
-    zeit: [],
-    raw: [],
-    filtered: [],
-    fileName: ""
-  });
+
+  // Recharts needs an array of objects
+  const [analysisData, setAnalysisData] = useState([]);
 
   return (
     <DataContext.Provider value={{ analysisData, setAnalysisData }}>

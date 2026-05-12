@@ -1,59 +1,96 @@
-import React from 'react';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts';
+import React, { useMemo } from 'react';
+import ReactECharts from 'echarts-for-react';
 import { Box, Typography } from '@mui/material';
 
-export default function Chart({ data, xAxisKey, lines = [] }) {
-  // If no data is provided yet
+function Chart({ data, xAxisKey, lines = [] }) {
+
+  // If no data
   if (!data || data.length === 0) {
     return (
-      <Box sx={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography color="text.secondary">No data to display</Typography>
+      <Box
+        sx={{
+          display: 'flex',
+          height: '100%',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      >
+        <Typography color="text.secondary">
+          No data to display
+        </Typography>
       </Box>
     );
   }
 
+  // 🔥 Memoized chart option (VERY important for performance)
+  const option = useMemo(() => {
+
+    // X values
+    const xData = data.map(item => item[xAxisKey]);
+
+    // Series generation
+    const series = lines.map(line => ({
+      name: line.label || line.key,
+      type: 'line',
+      data: data.map(item => item[line.key]),
+      showSymbol: false,
+      smooth: true,
+      lineStyle: {
+        width: line.width || 2,
+        color: line.color || '#8884d8'
+      }
+    }));
+
+    return {
+      tooltip: {
+        trigger: 'axis'
+      },
+
+      legend: {
+        top: 10
+      },
+
+      grid: {
+        left: 50,
+        right: 20,
+        top: 50,
+        bottom: 90 // space for zoom slider
+      },
+
+      xAxis: {
+        type: 'category',
+        data: xData,
+        boundaryGap: false
+      },
+
+      yAxis: {
+        type: 'value'
+      },
+
+      // 🔥 Zoom slider (this is the bar you remember)
+      dataZoom: [
+        {
+          type: 'inside'
+        },
+        {
+          type: 'slider'
+        }
+      ],
+
+      series
+    };
+
+  }, [data, xAxisKey, lines]);
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
-        <XAxis 
-          dataKey={xAxisKey} 
-          tick={{ fontSize: 11 }} 
-          tickLine={false}
-          axisLine={{ stroke: '#eee' }}
-        />
-        <YAxis 
-          tick={{ fontSize: 11 }} 
-          tickLine={false}
-          axisLine={{ stroke: '#eee' }}
-        />
-        <Tooltip 
-          contentStyle={{ fontSize: '12px', borderRadius: '8px', border: 'none', boxShadow: '0px 4px 10px rgba(0,0,0,0.1)' }}
-        />
-        <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-        
-        {lines.map((line, index) => (
-          <Line
-            key={index}
-            type="monotone"
-            dataKey={line.key}
-            stroke={line.color || "#8884d8"}
-            dot={false}
-            strokeWidth={line.width || 2}
-            name={line.label || line.key}
-            animationDuration={300}
-          />
-        ))}
-      </LineChart>
-    </ResponsiveContainer>
+    <ReactECharts
+      option={option}
+      style={{ height: '100%', width: '100%' }}
+      notMerge={true}
+      lazyUpdate={true}
+    />
   );
 }
+
+// 🔥 Prevent unnecessary rerenders from parent
+export default React.memo(Chart);

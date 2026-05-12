@@ -3,9 +3,10 @@ import { Box, Paper, Typography } from '@mui/material';
 import Chart from '../components/charts/Chart';
 import CoFResult from '../components/analysis/CoFResult';
 import Controls from '../components/analysis/Controls';
+import { useData } from '../context/DataContext';
 
 export default function AnalysisPage() {
-  const [cofData, setCofData] = useState([]);
+  const { analysisData } = useData();
   const [inputs, setInputs] = useState({
     filterPoints: '',
     staticRange: '',
@@ -65,7 +66,7 @@ export default function AnalysisPage() {
           </Typography>
           <Box sx={{ flexGrow: 1, minHeight: 0 }}>
             <Chart 
-              data={cofData} 
+              data={analysisData}
               xAxisKey="zeit" 
               lines={[
                 { key: 'raw', color: '#bdc3c7', label: 'Raw' },
