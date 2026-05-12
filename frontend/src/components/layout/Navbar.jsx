@@ -6,7 +6,7 @@ export default function Navbar() {
     <AppBar 
       position="fixed" 
       sx={{ 
-        height: 64, // Explicit fixed height
+        height: 50, // Explicit fixed height
         zIndex: 1201, // Highest layer
         bgcolor: '#1f2a40', 
         boxShadow: 'none', 

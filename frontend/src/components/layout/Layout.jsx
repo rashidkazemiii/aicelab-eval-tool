@@ -4,8 +4,8 @@ import Navbar from './Navbar';
 import Sidebar from './Sidebar';
 
 // Standard Dashboard Constants
-const SIDEBAR_WIDTH = 240;
-const NAVBAR_HEIGHT = 64;
+const SIDEBAR_WIDTH = 180;
+const NAVBAR_HEIGHT = 50;
 
 export default function Layout({ children, activeTab, setActiveTab }) {
   return (

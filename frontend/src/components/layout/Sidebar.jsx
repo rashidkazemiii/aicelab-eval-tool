@@ -6,12 +6,12 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 export default function Sidebar({ activeTab, setActiveTab }) {
   const menuItems = [
     { id: 'upload', text: 'Upload Data', icon: <UploadFileIcon /> },
-    { id: 'analysis', text: 'Friction Analysis', icon: <AssessmentIcon /> },
+    { id: 'analysis', text: 'CoF Analysis', icon: <AssessmentIcon /> },
   ];
 
   return (
     <Box sx={{ 
-      width: 240, 
+      width: 180, 
       height: '100vh', 
       bgcolor: '#1f2a40', 
       borderRight: '1px solid #2d3748', 
