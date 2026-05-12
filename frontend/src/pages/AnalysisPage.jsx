@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import Chart from '../components/charts/Chart';
-import CoFResult from '../components/analysis/CoFResult';
 import Controls from '../components/analysis/Controls';
 import { useData } from '../context/DataContext';
 
@@ -94,7 +93,6 @@ export default function AnalysisPage() {
             Results Summary
           </Typography>
           <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-            <CoFResult results={null} /> 
           </Box>
         </Paper>
       </Box>
