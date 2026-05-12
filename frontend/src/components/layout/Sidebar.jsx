@@ -10,8 +10,20 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   ];
 
   return (
-    <Box sx={{ width: 240, height: '100vh', bgcolor: '#1f2a40', borderRight: '1px solid #2d3748', pt: 8 }}>
-      <Typography variant="overline" sx={{ px: 3, color: '#4cceac', fontWeight: 'bold' }}>MENU</Typography>
+    <Box sx={{ 
+      width: 240, 
+      height: '100vh', 
+      bgcolor: '#1f2a40', 
+      borderRight: '1px solid #2d3748', 
+      pt: 8,
+      position: 'fixed', // Pins sidebar to the left
+      left: 0,
+      top: 0,
+      zIndex: 1200 // Sits under the Navbar but above main content
+    }}>
+      <Typography variant="overline" sx={{ px: 3, color: '#4cceac', fontWeight: 'bold' }}>
+        MENU
+      </Typography>
       <List>
         {menuItems.map((item) => (
           <ListItem key={item.id} disablePadding>

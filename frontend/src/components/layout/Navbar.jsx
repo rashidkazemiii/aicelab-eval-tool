@@ -3,7 +3,16 @@ import { AppBar, Toolbar, Typography, Box } from '@mui/material';
 
 export default function Navbar() {
   return (
-    <AppBar position="fixed" sx={{ zIndex: 1201, bgcolor: '#1f2a40', boxShadow: 'none', borderBottom: '1px solid #2d3748' }}>
+    <AppBar 
+      position="fixed" 
+      sx={{ 
+        height: 64, // Explicit fixed height
+        zIndex: 1201, // Highest layer
+        bgcolor: '#1f2a40', 
+        boxShadow: 'none', 
+        borderBottom: '1px solid #2d3748' 
+      }}
+    >
       <Toolbar>
         <Typography variant="h6" sx={{ color: '#4cceac', fontWeight: 'bold' }}>
           FRICTION LAB <span style={{ color: '#fff', fontSize: '0.8rem', marginLeft: '10px' }}>v1.0</span>
