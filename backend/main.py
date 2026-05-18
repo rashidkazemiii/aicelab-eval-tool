@@ -7,7 +7,8 @@ import os
 logger = logging.getLogger(__name__)
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+import io
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,9 +41,9 @@ latest_file_path = None
 DATA_TYPE = "OFT"
 FILTER_WINDOW = 25
 
-df_raw = None
-df_calc = None
-df_offset = None
+df_raw = None           # raw data from file, never modified
+df_result = None        # working copy: CoF calculated, offset applied, CoF_Filtered added
+df_dynamicCoF = None    # result from Evaluate(): dynamic/static CoF per cycle
 step_df_global = None
 header_global = None
 
@@ -59,7 +60,7 @@ def read_root():
 # ---------------------------------------------------
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    global latest_file_path, df_raw, df_calc, df_offset, step_df_global, header_global
+    global latest_file_path, df_raw, df_result, df_dynamicCoF, step_df_global, header_global
     try:
         file_location = f"temp_uploads/{file.filename}"
 
@@ -68,8 +69,8 @@ async def upload_file(file: UploadFile = File(...)):
 
         latest_file_path = file_location
         df_raw, step_df_global, header_global = load.load_data(latest_file_path, DATA_TYPE)
-        df_calc = None
-        df_offset = None
+        df_result = None
+        df_dynamicCoF = None
 
         return {"status": "success", "message": f"{file.filename} is now the active file"}
 
@@ -79,50 +80,108 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------
-# Calculate endpoint — computes CoF from force channels into df_calc
+# Calculate endpoint — computes CoF from force channels into df_result
 # ---------------------------------------------------
 @app.post("/calculate")
 def calculate():
-    global df_calc
+    global df_result, df_dynamicCoF
     if df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
-    df_calc = CoF_module.calculate(df_raw.copy(), None)
+    df_result = CoF_module.calculate(df_raw.copy(), None)
+    df_dynamicCoF = None
     return {"status": "success"}
 
 
 # ---------------------------------------------------
-# Data endpoint — returns calculated CoF for initial chart
+# Data endpoint — returns initial CoF for chart
 # ---------------------------------------------------
 @app.get("/data")
 def get_data():
-    if df_calc is None:
+    if df_result is None:
         return JSONResponse(status_code=400, content={"error": "No calculated data yet"})
-    data = df_calc[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
+    data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
     return json.loads(data.to_json(orient="records"))
 
 
 # ---------------------------------------------------
-# Offset endpoint
+# Offset endpoint — applies offset to df_result
 # ---------------------------------------------------
 @app.post("/offset")
 def apply_offset():
-    global df_offset
-    if df_calc is None:
+    global df_result
+    if df_result is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
-    df_offset = utility_functions.offset(df_calc.copy(), step_df_global)
-    data = df_offset[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "offset"})
+    df_result = utility_functions.offset(df_result.copy(), step_df_global)
+    data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
     return json.loads(data.to_json(orient="records"))
 
 
 # ---------------------------------------------------
-# Filter endpoint — applies filter on top of df_offset
-# Returns both offset series and filtered series
+# Filter endpoint — adds CoF_Filtered column to df_result
+# CoF_Filtered is kept in df_result for minima finding in evaluate
 # ---------------------------------------------------
 @app.post("/filter")
 def apply_filter(window: int = FILTER_WINDOW):
-    if df_offset is None:
+    global df_result
+    if df_result is None:
         return JSONResponse(status_code=400, content={"error": "Apply offset first"})
-    df_filtered = utility_functions.filter(df_offset.copy(), step_df_global, window)
-    data = df_offset[["Zeit [s]", "CoF"]].copy().rename(columns={"Zeit [s]": "zeit", "CoF": "offset"})
-    data["filtered"] = df_filtered["CoF"].values
+    df_result["CoF_Filtered"] = utility_functions.filter(df_result.copy(), step_df_global, window)["CoF"].values
+    data = df_result[["Zeit [s]", "CoF", "CoF_Filtered"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof", "CoF_Filtered": "filtered"})
     return json.loads(data.to_json(orient="records"))
+
+
+# ---------------------------------------------------
+# Evaluate endpoint — finds minima, stores in df_dynamicCoF
+# ---------------------------------------------------
+@app.post("/evaluate")
+def evaluate(
+    static_cof_range: float = 10,
+    beginning_dynamic_range: float = 20,
+    ending_dynamic_range: float = 80
+):
+    global df_dynamicCoF
+    if df_result is None:
+        return JSONResponse(status_code=400, content={"error": "Apply offset first"})
+    column = "CoF_Filtered" if "CoF_Filtered" in df_result.columns else "CoF"
+    minima = utility_functions.Find_minima(df_result, column)
+
+    df_dynamicCoF = utility_functions.Evaluate(
+        df_result, minima, "CoF",
+        static_cof_range, beginning_dynamic_range, ending_dynamic_range
+    )
+
+    return json.loads(df_dynamicCoF.to_json(orient="records"))
+
+
+# ---------------------------------------------------
+# Export endpoint — returns df_result as CSV download
+# ---------------------------------------------------
+@app.get("/export")
+def export_result():
+    if df_result is None:
+        return JSONResponse(status_code=400, content={"error": "No result to export"})
+    buffer = io.StringIO()
+    df_result.to_csv(buffer, index=False, sep=';')
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=df_result.csv"}
+    )
+
+
+# ---------------------------------------------------
+# Export dynamic endpoint — returns df_dynamicCoF as CSV download
+# ---------------------------------------------------
+@app.get("/export/dynamic")
+def export_dynamic():
+    if df_dynamicCoF is None:
+        return JSONResponse(status_code=400, content={"error": "No dynamic CoF data yet. Run evaluate first."})
+    buffer = io.StringIO()
+    df_dynamicCoF.to_csv(buffer, index=False, sep=';')
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=df_dynamicCoF.csv"}
+    )

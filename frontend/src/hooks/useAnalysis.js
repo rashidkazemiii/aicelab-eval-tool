@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useData } from '../context/DataContext';
-import { getData, applyOffset, applyFilter } from '../services/api';
+import { getData, applyOffset, applyFilter, applyEvaluate, exportResult, exportDynamic } from '../services/api';
 
 export const useAnalysis = () => {
   const { setAnalysisData } = useData();
   const [loading, setLoading] = useState(false);
   const [chartLines, setChartLines] = useState([]);
   const [offsetApplied, setOffsetApplied] = useState(false);
+  const [evaluateApplied, setEvaluateApplied] = useState(false);
+  const [minimaData, setMinimaData] = useState([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -26,7 +28,7 @@ export const useAnalysis = () => {
     try {
       const res = await applyOffset();
       setAnalysisData(res.data);
-      setChartLines([{ key: 'offset', color: '#1e88e5', label: 'Offset CoF' }]);
+      setChartLines([{ key: 'cof', color: '#1e88e5', label: 'Offset CoF' }]);
       setOffsetApplied(true);
     } catch (e) {
       console.error('Failed to apply offset:', e);
@@ -42,7 +44,7 @@ export const useAnalysis = () => {
       const res = await applyFilter(window);
       setAnalysisData(res.data);
       setChartLines([
-        { key: 'offset', color: '#1e88e5', label: 'Offset' },
+        { key: 'cof', color: '#1e88e5', label: 'Offset' },
         { key: 'filtered', color: '#e53935', label: 'Filtered' },
       ]);
     } catch (e) {
@@ -52,5 +54,51 @@ export const useAnalysis = () => {
     }
   };
 
-  return { fetchData, offset, filter, loading, chartLines, offsetApplied };
+  const evaluate = async (staticRange, dynamicMin, dynamicMax) => {
+    setLoading(true);
+    try {
+      const res = await applyEvaluate({
+        static_cof_range: parseFloat(staticRange) || 10,
+        beginning_dynamic_range: parseFloat(dynamicMin) || 20,
+        ending_dynamic_range: parseFloat(dynamicMax) || 80,
+      });
+      setMinimaData(res.data);
+      setEvaluateApplied(true);
+    } catch (e) {
+      console.error('Failed to evaluate:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const triggerDownload = (data, filename) => {
+    const url = window.URL.createObjectURL(new Blob([data]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+  };
+
+  const exportData = async () => {
+    try {
+      const res = await exportResult();
+      triggerDownload(res.data, 'df_result.csv');
+    } catch (e) {
+      console.error('Failed to export result:', e);
+    }
+  };
+
+  const exportDynamicData = async () => {
+    try {
+      const res = await exportDynamic();
+      triggerDownload(res.data, 'df_dynamicCoF.csv');
+    } catch (e) {
+      console.error('Failed to export dynamic CoF:', e);
+    }
+  };
+
+  return { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, offsetApplied, evaluateApplied, minimaData };
 };

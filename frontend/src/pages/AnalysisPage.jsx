@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Paper, Typography } from '@mui/material';
+import { Box, Paper, Typography, Table, TableBody, TableCell, TableHead, TableRow } from '@mui/material';
 import Chart from '../components/charts/Chart';
 import Controls from '../components/analysis/Controls';
 import { useData } from '../context/DataContext';
@@ -7,13 +7,13 @@ import { useAnalysis } from '../hooks/useAnalysis';
 
 export default function AnalysisPage() {
   const { analysisData, fileName } = useData();
-  const { fetchData, offset, filter, loading, chartLines, offsetApplied } = useAnalysis();
+  const { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, offsetApplied, evaluateApplied, minimaData } = useAnalysis();
 
   const [inputs, setInputs] = useState({
     filterPoints: '25',
-    staticRange: '',
-    dynamicMin: '',
-    dynamicMax: ''
+    staticRange: '10',
+    dynamicMin: '20',
+    dynamicMax: '80'
   });
 
   useEffect(() => {
@@ -41,8 +41,12 @@ export default function AnalysisPage() {
         handleInputChange={handleInputChange}
         onOffset={offset}
         onFilter={() => filter(inputs.filterPoints)}
+        onEvaluate={() => evaluate(inputs.staticRange, inputs.dynamicMin, inputs.dynamicMax)}
+        onExport={exportData}
+        onExportDynamic={exportDynamicData}
         loading={loading}
         offsetApplied={offsetApplied}
+        evaluateApplied={evaluateApplied}
       />
 
       <Box sx={{
@@ -101,6 +105,28 @@ export default function AnalysisPage() {
             Results Summary
           </Typography>
           <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+            {minimaData.length > 0 && (
+              <Table size="small" stickyHeader>
+                <TableHead>
+                  <TableRow>
+                    {Object.keys(minimaData[0]).map(col => (
+                      <TableCell key={col} sx={{ fontWeight: 'bold', fontSize: '0.7rem' }}>{col}</TableCell>
+                    ))}
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {minimaData.map((row, i) => (
+                    <TableRow key={i}>
+                      {Object.values(row).map((val, j) => (
+                        <TableCell key={j} sx={{ fontSize: '0.7rem' }}>
+                          {typeof val === 'number' ? parseFloat(val.toFixed(7)) : val}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </Box>
         </Paper>
       </Box>

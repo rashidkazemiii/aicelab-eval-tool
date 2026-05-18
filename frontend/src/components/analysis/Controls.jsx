@@ -3,7 +3,7 @@ import { Box, Paper, Typography, Stack, Divider, CircularProgress } from '@mui/m
 import Button from '../common/Button';
 import InputField from '../common/InputField';
 
-export default function Controls({ inputs, handleInputChange, onOffset, onFilter, loading, offsetApplied }) {
+export default function Controls({ inputs, handleInputChange, onOffset, onFilter, onEvaluate, onExport, onExportDynamic, loading, offsetApplied, evaluateApplied }) {
   return (
     <Paper
         elevation={1}
@@ -39,7 +39,7 @@ export default function Controls({ inputs, handleInputChange, onOffset, onFilter
             <Button fullWidth sx={{ bgcolor: '#3e4396' }} onClick={onFilter} disabled={loading || !offsetApplied}>
               {loading ? <CircularProgress size={16} color="inherit" /> : 'Filter'}
             </Button>
-            <Button fullWidth sx={{ bgcolor: '#3e4396' }} disabled={loading || !offsetApplied}>
+            <Button fullWidth sx={{ bgcolor: '#3e4396' }} onClick={onEvaluate} disabled={loading || !offsetApplied}>
               Evaluate
             </Button>
             <Button fullWidth sx={{ bgcolor: '#4cceac', mt: 0.5 }} disabled={loading || !offsetApplied}>
@@ -77,6 +77,15 @@ export default function Controls({ inputs, handleInputChange, onOffset, onFilter
             />
           </Stack>
         </Box>
+
+        <Divider />
+
+        <Button fullWidth sx={{ bgcolor: '#e67e22' }} onClick={onExport} disabled={loading || !offsetApplied}>
+          Export
+        </Button>
+        <Button fullWidth sx={{ bgcolor: '#e67e22' }} onClick={onExportDynamic} disabled={loading || !evaluateApplied}>
+          Export Dynamic
+        </Button>
       </Stack>
     </Paper>
   );
