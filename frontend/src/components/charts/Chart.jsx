@@ -38,6 +38,9 @@ function Chart({ data, xAxisKey, lines = [] }) {
       lineStyle: {
         width: line.width || 2,
         color: line.color || '#8884d8'
+      },
+      itemStyle: {
+        color: line.color || '#8884d8'
       }
     }));
 

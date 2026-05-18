@@ -4,11 +4,14 @@ import UploadBox from '../components/upload/UploadBox';
 import FileInfo from '../components/upload/FileInfo';
 import Button from '../components/common/Button';
 import { useFileUpload } from '../hooks/useFileUpload';
+import { useData } from '../context/DataContext';
+import { calculate } from '../services/api';
 
 export default function UploadPage({ onSwitch }) {
   const [file, setFile] = useState(null);
   const [isReady, setIsReady] = useState(false); // Track if backend finished
   const { handleUpload, loading, error } = useFileUpload();
+  const { setFileName } = useData();
 
   // 1. Upload happens automatically when file is chosen
   const onFileChange = async (e) => {
@@ -16,6 +19,7 @@ export default function UploadPage({ onSwitch }) {
     if (!selectedFile) return;
 
     setFile(selectedFile);
+    setFileName(selectedFile.name);
     setIsReady(false); // Reset for new file
 
     const success = await handleUpload(selectedFile);
@@ -24,10 +28,19 @@ export default function UploadPage({ onSwitch }) {
     }
   };
 
+  const handleClear = () => {
+    setFile(null);
+    setIsReady(false);
+  };
+
   // 2. Page switch happens ONLY when clicking the button
-  const onImportClick = () => {
-    if (isReady) {
+  const onImportClick = async () => {
+    if (!isReady) return;
+    try {
+      await calculate();
       onSwitch();
+    } catch (err) {
+      console.error('Calculate failed:', err);
     }
   };
 
@@ -53,7 +66,7 @@ export default function UploadPage({ onSwitch }) {
           onClick={onImportClick}
           sx={{ bgcolor: '#3e4396', color: 'white' }}
         >
-          {loading ? <CircularProgress size={24} color="inherit" /> : 'Import'}
+          {loading ? <CircularProgress size={24} color="inherit" /> : 'Calculate'}
         </Button>
 
         {error && <Alert severity="error">{error}</Alert>}

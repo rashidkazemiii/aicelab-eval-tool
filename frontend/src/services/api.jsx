@@ -6,10 +6,10 @@ const api = axios.create({
   baseURL: API_BASE_URL,
 });
 
-// Endpoint for uploading the laboratory file
 export const uploadFile = (formData) => api.post('/upload', formData);
-
-// Endpoint for triggering analysis (if needed separately)
-export const getAnalysis = () => api.get('/analyze');
+export const calculate = () => api.post('/calculate');
+export const getData = () => api.get('/data');
+export const applyOffset = () => api.post('/offset');
+export const applyFilter = (window) => api.post(`/filter?window=${window}`);
 
 export default api;
