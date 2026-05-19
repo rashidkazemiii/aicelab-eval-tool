@@ -148,7 +148,7 @@ def evaluate(
 
     except Exception as e:
         logger.error(f"Evaluate failed: {e}\n{traceback.format_exc()}")
-        state._last_error = str(e)
+        state.last_error = str(e)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -165,7 +165,7 @@ def get_result_json():
 @router.get("/result/html")
 def get_result_html():
     if state.df_result is None:
-        last_err = getattr(state, "_last_error", None)
+        last_err = state.last_error
         msg = f"<p style='color:#c0392b'><b>Last error:</b> {last_err}</p>" if last_err else ""
         return HTMLResponse(content=f"""<!DOCTYPE html><html><head><title>Result</title>
 <style>body{{font-family:monospace;padding:40px;background:#f4f6f8;color:#1f2a40}}</style></head>

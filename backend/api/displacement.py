@@ -88,7 +88,9 @@ def evaluate_displacement():
              if c in state.df_filter.columns),
             None
         )
-        minima = stroke_module.find_minima(state.df_filter)
+        if col is None:
+            return JSONResponse(status_code=400, content={"error": "No stroke column available"})
+        minima = utility_functions.Find_minima(state.df_filter, col)
         return {"status": "success", "cycles": len(minima)}
     except Exception as e:
         logger.error(f"Displacement evaluate failed: {e}")
