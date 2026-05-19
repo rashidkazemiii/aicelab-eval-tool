@@ -223,16 +223,14 @@ def Evaluate(
             enddynamicCoF.append(Stroke[enddynamicIndex[-1]])
 
             movingdynamicRange = Stroke[startdynamicIndex[-1] : enddynamicIndex[-1]]
-            dynamicCoFTime.append(
-                startdynamicTime[-1] + (enddynamicTime[-1] + startdynamicTime[-1]) / 2
-            )
+            dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
             dynamicCoFSD.append(np.std((movingdynamicRange)))
             dynamicCoFn.append(len((movingdynamicRange)))
             dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
             dynamicCoFvariance.append(
-                (dynamicCoFSD[-1] ** 2)
-                * ((dynamicCoFn[-1] - 1 + dynamicCoFsigma[-1] ** 2) / dynamicCoFn[-1])
+                dynamicCoFSD[-1] ** 2 * (dynamicCoFn[-1] - 1)
+                + dynamicCoFsigma[-1] ** 2 / dynamicCoFn[-1]
             )
         except Exception as e:
             print(e)
