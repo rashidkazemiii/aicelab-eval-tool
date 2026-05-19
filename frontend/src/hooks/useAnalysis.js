@@ -30,7 +30,9 @@ export const useAnalysis = () => {
     try {
       const res = await applyOffset();
       setAnalysisData(res.data);
-      setChartLines([{ key: 'cof', color: '#1e88e5', label: 'Offset CoF' }]);
+      setChartLines([
+        { key: 'cof_shifted', color: '#43a047', label: 'CoF Shifted' },
+      ]);
       setOffsetApplied(true);
     } catch (e) {
       console.error('Failed to apply offset:', e);
@@ -46,7 +48,7 @@ export const useAnalysis = () => {
       const res = await applyFilter(window);
       setAnalysisData(res.data);
       setChartLines([
-        { key: 'cof', color: '#1e88e5', label: 'Offset' },
+        { key: 'cof_shifted', color: '#43a047', label: 'CoF Shifted' },
         { key: 'filtered', color: '#e53935', label: 'Filtered' },
       ]);
     } catch (e) {

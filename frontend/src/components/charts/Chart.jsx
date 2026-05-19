@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Box, Typography } from '@mui/material';
 
-function Chart({ data, xAxisKey, lines = [] }) {
+function Chart({ data, xAxisKey, lines = [], precision = 8 }) {
 
   // If no data
   if (!data || data.length === 0) {
@@ -46,7 +46,12 @@ function Chart({ data, xAxisKey, lines = [] }) {
 
     return {
       tooltip: {
-        trigger: 'axis'
+        trigger: 'axis',
+        formatter: (params) => {
+          const x = params[0].axisValue;
+          const lines = params.map(p => `${p.marker}${p.seriesName}: ${Number(p.value).toFixed(precision)}`).join('<br/>');
+          return `${x}<br/>${lines}`;
+        }
       },
 
       legend: {

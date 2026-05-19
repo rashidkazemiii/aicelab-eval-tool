@@ -27,6 +27,31 @@ def offset(df, step_df=None):
     return df
 
 
+def filter_vb_style(series, n):
+    """Centered rolling median matching the VB CoFFilter macro exactly.
+    Edge handling: window grows 1,3,5,...,n-2 at start and shrinks symmetrically at end."""
+    N = len(series)
+    half_n = n / 2.0
+    result = series.copy().astype(float)
+
+    for i in range(1, N + 1):  # 1-indexed like VB
+        if i <= half_n:
+            start = 0
+            end = 2 * i - 2
+        elif i > N - half_n:
+            start = 2 * i - N - 1
+            end = N - 1
+        else:
+            start = round(i - half_n) - 1
+            end = round(i + half_n) - 1
+
+        start = max(0, start)
+        end = min(N - 1, end)
+        result.iloc[i - 1] = series.iloc[start:end + 1].median()
+
+    return result
+
+
 def filter(df, step_df, window):
     if step_df is None:
         df["CoF"] = df["CoF"].rolling(window).median()
@@ -34,14 +59,11 @@ def filter(df, step_df, window):
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
-                # Filter rows based on conditions
                 filtered_rows = df[
                     (df["Zeit [s]"] < row["Endzeit [s]"])
                     & (df["Zeit [s]"] > row["Startzeit [s]"])
                 ]
-                # Select "CoF" column from filtered rows
                 cof_column = filtered_rows["CoF"]
-                # Assign adjusted values back to the original DataFrame
                 df.loc[filtered_rows.index, "CoF"] = cof_column.rolling(
                     window, center=True, min_periods=1
                 ).median()

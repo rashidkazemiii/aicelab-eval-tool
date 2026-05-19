@@ -7,7 +7,7 @@ import os
 logger = logging.getLogger(__name__)
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 import io
 
 logging.basicConfig(level=logging.INFO)
@@ -101,7 +101,7 @@ def get_data():
     if df_result is None:
         return JSONResponse(status_code=400, content={"error": "No calculated data yet"})
     data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
-    return json.loads(data.to_json(orient="records", double_precision=15))
+    return Response(content=data.to_json(orient="records", double_precision=5), media_type="application/json")
 
 
 # ---------------------------------------------------
@@ -112,9 +112,10 @@ def apply_offset():
     global df_result
     if df_result is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
-    df_result = utility_functions.offset(df_result.copy(), step_df_global)
-    data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
-    return json.loads(data.to_json(orient="records", double_precision=15))
+    df_offset = utility_functions.offset(df_result.copy(), None)
+    df_result["CoF_shifted"] = df_offset["CoF"].values
+    data = df_result[["Zeit [s]", "CoF", "CoF_shifted"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof", "CoF_shifted": "cof_shifted"})
+    return Response(content=data.to_json(orient="records", double_precision=8), media_type="application/json")
 
 
 # ---------------------------------------------------
@@ -126,9 +127,10 @@ def apply_filter(window: int = FILTER_WINDOW):
     global df_result
     if df_result is None:
         return JSONResponse(status_code=400, content={"error": "Apply offset first"})
-    df_result["CoF_Filtered"] = utility_functions.filter(df_result.copy(), step_df_global, window)["CoF"].values
-    data = df_result[["Zeit [s]", "CoF", "CoF_Filtered"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof", "CoF_Filtered": "filtered"})
-    return json.loads(data.to_json(orient="records", double_precision=15))
+    source_col = "CoF_shifted" if "CoF_shifted" in df_result.columns else "CoF"
+    df_result["CoF_Filtered"] = utility_functions.filter_vb_style(df_result[source_col], window).values
+    data = df_result[["Zeit [s]", "CoF", "CoF_shifted", "CoF_Filtered"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof", "CoF_shifted": "cof_shifted", "CoF_Filtered": "filtered"})
+    return Response(content=data.to_json(orient="records", double_precision=8), media_type="application/json")
 
 
 # ---------------------------------------------------
@@ -146,8 +148,11 @@ def evaluate(
     column = "CoF_Filtered" if "CoF_Filtered" in df_result.columns else "CoF"
     minima = utility_functions.Find_minima(df_result, column)
 
+    df_eval = df_result.copy()
+    if "CoF_shifted" in df_eval.columns:
+        df_eval["CoF"] = df_eval["CoF_shifted"]
     df_dynamicCoF = utility_functions.Evaluate(
-        df_result, minima, "CoF",
+        df_eval, minima, "CoF",
         static_cof_range, beginning_dynamic_range, ending_dynamic_range
     )
 
@@ -161,8 +166,15 @@ def evaluate(
 def export_result():
     if df_result is None:
         return JSONResponse(status_code=400, content={"error": "No result to export"})
+    df_export = df_result.copy()
+    if "CoF" in df_export.columns:
+        df_export["CoF"] = df_export["CoF"].apply(lambda x: f"{x:.5f}")
+    if "CoF_shifted" in df_export.columns:
+        df_export["CoF_shifted"] = df_export["CoF_shifted"].apply(lambda x: f"{x:.15f}")
+    if "CoF_Filtered" in df_export.columns:
+        df_export["CoF_Filtered"] = df_export["CoF_Filtered"].apply(lambda x: f"{x:.15f}")
     buffer = io.StringIO()
-    df_result.to_csv(buffer, index=False, sep=';')
+    df_export.to_csv(buffer, index=False, sep=';')
     buffer.seek(0)
     return StreamingResponse(
         buffer,
