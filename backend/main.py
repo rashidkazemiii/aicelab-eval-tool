@@ -88,6 +88,7 @@ def calculate():
     if df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     df_result = CoF_module.calculate(df_raw.copy(), None)
+    df_result["CoF"] = df_result["CoF"].round(5)
     df_dynamicCoF = None
     return {"status": "success"}
 
@@ -100,7 +101,7 @@ def get_data():
     if df_result is None:
         return JSONResponse(status_code=400, content={"error": "No calculated data yet"})
     data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
-    return json.loads(data.to_json(orient="records"))
+    return json.loads(data.to_json(orient="records", double_precision=15))
 
 
 # ---------------------------------------------------
@@ -113,7 +114,7 @@ def apply_offset():
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     df_result = utility_functions.offset(df_result.copy(), step_df_global)
     data = df_result[["Zeit [s]", "CoF"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof"})
-    return json.loads(data.to_json(orient="records"))
+    return json.loads(data.to_json(orient="records", double_precision=15))
 
 
 # ---------------------------------------------------
@@ -127,7 +128,7 @@ def apply_filter(window: int = FILTER_WINDOW):
         return JSONResponse(status_code=400, content={"error": "Apply offset first"})
     df_result["CoF_Filtered"] = utility_functions.filter(df_result.copy(), step_df_global, window)["CoF"].values
     data = df_result[["Zeit [s]", "CoF", "CoF_Filtered"]].rename(columns={"Zeit [s]": "zeit", "CoF": "cof", "CoF_Filtered": "filtered"})
-    return json.loads(data.to_json(orient="records"))
+    return json.loads(data.to_json(orient="records", double_precision=15))
 
 
 # ---------------------------------------------------
@@ -150,7 +151,7 @@ def evaluate(
         static_cof_range, beginning_dynamic_range, ending_dynamic_range
     )
 
-    return json.loads(df_dynamicCoF.to_json(orient="records"))
+    return json.loads(df_dynamicCoF.to_json(orient="records", double_precision=15))
 
 
 # ---------------------------------------------------

@@ -3,7 +3,7 @@ import { Box, Paper, Typography, Stack, Divider, CircularProgress } from '@mui/m
 import Button from '../common/Button';
 import InputField from '../common/InputField';
 
-export default function Controls({ inputs, handleInputChange, onOffset, onFilter, onEvaluate, onExport, onExportDynamic, loading, offsetApplied, evaluateApplied }) {
+export default function Controls({ inputs, handleInputChange, onOffset, onFilter, onEvaluate, onExport, onExportDynamic, loading, calculated, offsetApplied, evaluateApplied }) {
   return (
     <Paper
         elevation={1}
@@ -80,7 +80,7 @@ export default function Controls({ inputs, handleInputChange, onOffset, onFilter
 
         <Divider />
 
-        <Button fullWidth sx={{ bgcolor: '#e67e22' }} onClick={onExport} disabled={loading || !offsetApplied}>
+        <Button fullWidth sx={{ bgcolor: '#e67e22' }} onClick={onExport} disabled={loading || !calculated}>
           Export
         </Button>
         <Button fullWidth sx={{ bgcolor: '#e67e22' }} onClick={onExportDynamic} disabled={loading || !evaluateApplied}>

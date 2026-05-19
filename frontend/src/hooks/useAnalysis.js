@@ -6,6 +6,7 @@ export const useAnalysis = () => {
   const { setAnalysisData } = useData();
   const [loading, setLoading] = useState(false);
   const [chartLines, setChartLines] = useState([]);
+  const [calculated, setCalculated] = useState(false);
   const [offsetApplied, setOffsetApplied] = useState(false);
   const [evaluateApplied, setEvaluateApplied] = useState(false);
   const [minimaData, setMinimaData] = useState([]);
@@ -16,6 +17,7 @@ export const useAnalysis = () => {
       const res = await getData();
       setAnalysisData(res.data);
       setChartLines([{ key: 'cof', color: '#1e88e5', label: 'CoF' }]);
+      setCalculated(true);
     } catch (e) {
       console.error('Failed to fetch data:', e);
     } finally {
@@ -100,5 +102,5 @@ export const useAnalysis = () => {
     }
   };
 
-  return { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, offsetApplied, evaluateApplied, minimaData };
+  return { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, calculated, offsetApplied, evaluateApplied, minimaData };
 };

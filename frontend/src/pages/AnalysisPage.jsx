@@ -7,7 +7,7 @@ import { useAnalysis } from '../hooks/useAnalysis';
 
 export default function AnalysisPage() {
   const { analysisData, fileName } = useData();
-  const { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, offsetApplied, evaluateApplied, minimaData } = useAnalysis();
+  const { fetchData, offset, filter, evaluate, exportData, exportDynamicData, loading, chartLines, calculated, offsetApplied, evaluateApplied, minimaData } = useAnalysis();
 
   const [inputs, setInputs] = useState({
     filterPoints: '25',
@@ -45,6 +45,7 @@ export default function AnalysisPage() {
         onExport={exportData}
         onExportDynamic={exportDynamicData}
         loading={loading}
+        calculated={calculated}
         offsetApplied={offsetApplied}
         evaluateApplied={evaluateApplied}
       />
