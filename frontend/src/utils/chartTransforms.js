@@ -41,7 +41,7 @@ export function buildCofMarkers(rows) {
       label: 'CoF Minima',
       color: COLORS.minima,
       size:  12,
-      data:  rows.map(r => makePoint(r['Min Zeit'], r['Min CoF'])).filter(Boolean),
+      data:  rows.map(r => makePoint(r['zero_time'], r['Min CoF'])).filter(Boolean),
     },
   ];
 }

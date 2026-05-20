@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 def cof_calculate(df, normal_load_correction_factor):
     """Compute CoF from friction force and normal load."""
     if normal_load_correction_factor is None:
-        df["CoF"] = (df["friction force left"] + df["friction force right"]) / df["normal load"]
+        df["cof"] = (df["friction force left"] + df["friction force right"]) / df["normal load"]
     elif normal_load_correction_factor == 0:
         warnings.warn("CoF is not the real CoF. Careful with units.")
-        df["CoF"] = df["friction force left"] + df["friction force right"]
+        df["cof"] = df["friction force left"] + df["friction force right"]
     else:
         def _corrected(row):
             NL = max(0, row["normal load"] - normal_load_correction_factor)
             return (row["friction force left"] + row["friction force right"]) / NL
-        df["CoF"] = df.apply(_corrected, axis=1)
+        df["cof"] = df.apply(_corrected, axis=1)
     return df
 
 
@@ -39,13 +39,13 @@ def cof_calculate(df, normal_load_correction_factor):
 def cof_offset(df, step_df=None):
     """Mean-center CoF per active step (CoF column only)."""
     if step_df is None:
-        df["CoF"] = df["CoF"] - df["CoF"].mean()
+        df["cof"] = df["cof"] - df["cof"].mean()
     else:
         for _, row in step_df.iterrows():
             if not row["inactive"]:
-                mask = (df["Zeit [s]"] > row["Startzeit [s]"]) & (df["Zeit [s]"] < row["Endzeit [s]"])
-                col = df.loc[mask, "CoF"]
-                df.loc[mask, "CoF"] = col - col.mean()
+                mask = (df["time"] > row["step_start"]) & (df["time"] < row["step_end"])
+                col = df.loc[mask, "cof"]
+                df.loc[mask, "cof"] = col - col.mean()
     return df
 
 
@@ -62,7 +62,7 @@ def cof_filter(series: pd.Series, n: int) -> pd.Series:
 # CoF_Minima
 # ---------------------------------------------------------------------------
 
-def cof_find_minima(df: pd.DataFrame, column: str = "CoF") -> pd.DataFrame:
+def cof_find_minima(df: pd.DataFrame, column: str = "cof") -> pd.DataFrame:
     """
     Zero-crossing boundary detection for CoF waveform.
 
@@ -70,7 +70,7 @@ def cof_find_minima(df: pd.DataFrame, column: str = "CoF") -> pd.DataFrame:
     Returns a DataFrame with one row per detected cycle containing times and
     values of negative peak, positive peak, and interpolated zero-crossing.
     """
-    times  = df["Zeit [s]"].values
+    times  = df["time"].values
     values = df[column].values
 
     dt         = np.diff(times)
@@ -120,11 +120,11 @@ def cof_find_minima(df: pd.DataFrame, column: str = "CoF") -> pd.DataFrame:
             logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
     return pd.DataFrame({
-        "-Min Zeit":      negativeTime,
+        "neg_time":       negativeTime,
         "-Min " + column: negativeArray,
-        "+Min Zeit":      positiveTime,
+        "pos_time":       positiveTime,
         "+Min " + column: positiveArray,
-        "Min Zeit":       theoreticalTime,
+        "zero_time":      theoreticalTime,
         "Min " + column:  [0] * len(positiveArray),
     })
 
@@ -145,9 +145,9 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
     b = 0.01 * beginning_dynamic_range
     c = 0.01 * ending_dynamic_range
 
-    Time       = df["Zeit [s]"].tolist()
-    Stroke     = df["CoF"].tolist()
-    negMinTime = minima["-Min Zeit"].tolist()
+    Time       = df["time"].tolist()
+    Stroke     = df["cof"].tolist()
+    negMinTime = minima["neg_time"].tolist()
 
     startIndex         = []
     maxStrokeIndex     = []
@@ -253,8 +253,8 @@ def CoF_Stat(CoF, step_df):
 
     for i, row in step_df.iterrows():
         if not row["inactive"]:
-            lowerLimit = row["Startzeit [s]"]
-            upperLimit = row["Endzeit [s]"]
+            lowerLimit = row["step_start"]
+            upperLimit = row["step_end"]
             mask = (staticTime >= lowerLimit) & (staticTime <= upperLimit)
             absoluteCoF       = np.abs(staticCoF[mask])
             stepdynamicStdDev = dynamicStdDev[mask]
@@ -307,8 +307,8 @@ def CoF_Statisticspersecond(CoF, step_df):
 
     reference_time = [
         i for i in range(
-            int(step_df["Startzeit [s]"].to_numpy()[0]),
-            int(step_df["Endzeit [s]"].to_numpy()[-1]) + 1,
+            int(step_df["step_start"].to_numpy()[0]),
+            int(step_df["step_end"].to_numpy()[-1]) + 1,
         )
     ]
 
@@ -383,7 +383,7 @@ def CoF_Contsepstatistics(CoF, step_df):
     dynamiccount  = CoF["dynamicCoFn"].to_numpy()
     dynamicAvgxN  = CoF["dynamicCoFsigma"].to_numpy()
     dynamicVar    = CoF["dynamicCoFvariance"].to_numpy()
-    referenceTime = step_df["Startzeit [s]"].to_numpy()
+    referenceTime = step_df["step_start"].to_numpy()
 
     temptimeRange = []
     tempstaticAvgL = []; tempstaticAvgR = []
@@ -496,7 +496,7 @@ def CoF_Discontsepstatistics(CoF, step_df):
     dynamiccount  = CoF["dynamicCoFn"].to_numpy()
     dynamicAvgxN  = CoF["dynamicCoFsigma"].to_numpy()
     dynamicVar    = CoF["dynamicCoFvariance"].to_numpy()
-    referenceTime = step_df["Startzeit [s]"].to_numpy()
+    referenceTime = step_df["step_start"].to_numpy()
 
     temptimeRange = []
     tempstaticAvgL = []; tempstaticAvgR = []

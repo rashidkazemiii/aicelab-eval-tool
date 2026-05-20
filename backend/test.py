@@ -1,11 +1,11 @@
-from read_files import load
-from physics import utility_functions
+from parsers import loader
+from physics import cof
 import matplotlib.pyplot as plt
 
-df, step_df, header = load.load_data("data/OFT07935.txt", "OFT")
-df_offset = utility_functions.offset(df.copy(), step_df)
-df_filtered = utility_functions.filter(df_offset.copy(), step_df, 25)
+df, step_df, header = loader.load_data("data/OFT07935.txt", "OFT")
+df_offset = cof.cof_offset(df.copy(), step_df)
+df_filtered = df_offset.copy()
+df_filtered["cof_filtered"] = cof.cof_filter(df_filtered["cof"], 25)
 
-# Use the correct column names
-plt.plot(df_filtered['Zeit [s]'], df_filtered['CoF'])
+plt.plot(df_filtered["time"], df_filtered["cof_filtered"])
 plt.show()

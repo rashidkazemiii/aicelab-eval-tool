@@ -9,18 +9,17 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
         sep="\t",
         skiprows=1,
         decimal=",",
-        names=["Zeit [s]", "stroke", "cof"],
+        names=["time", "stroke", "cof"],
     )
-    data = data.rename(columns={"cof": "CoF"})
-    data["diff"] = data["Zeit [s]"].diff().fillna(0)
+    data["diff"] = data["time"].diff().fillna(0)
     time_greater_than_1 = data[data["diff"] > 1]
     start_time = []
     end_time = []
     inactive = []
     previous_end = 0
     for index, row in time_greater_than_1.iterrows():
-        start = data.iloc[index - 1]["Zeit [s]"]
-        end = data.iloc[index]["Zeit [s]"]
+        start = data.iloc[index - 1]["time"]
+        end = data.iloc[index]["time"]
         if not start - previous_end <= 0:
             end_time.append(start)
             start_time.append(previous_end)
@@ -33,6 +32,6 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
         step_df = None
     else:
         step_df = pd.DataFrame(
-            {"Startzeit [s]": start_time, "Endzeit [s]": end_time, "inactive": inactive}
+            {"step_start": start_time, "step_end": end_time, "inactive": inactive}
         )
     return data, step_df

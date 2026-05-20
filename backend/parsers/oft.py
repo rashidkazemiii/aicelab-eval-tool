@@ -102,6 +102,7 @@ def clean_step_df(step_df):
     step_df["Endzeit [s]"] = step_df["Startzeit [s]"].shift(-1)
     step_df = step_df[step_df["Endzeit [s]"] != step_df["Startzeit [s]"]]
     step_df["inactive"] = step_df["Drehzahl [U/min]"] == 0
+    step_df = step_df.rename(columns={"Startzeit [s]": "step_start", "Endzeit [s]": "step_end"})
 
     return step_df
 
@@ -132,14 +133,14 @@ def clean_main_df(df):
     df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_", regex=True)
 
     rename_map = {
-        "zeit": "Zeit [s]",
+        "zeit": "time",
         "drehzahl": "rotation speed",
         "belastung": "normal load",
         "rk_oft_links": "friction force left",
         "rk_oft_rechts": "friction force right",
         "reibungskraft": "friction force",
         "verschleiss": "Wear",
-        "reibungszahl": "CoF",
+        "reibungszahl": "cof",
         "temperatur": "Temperature",
         "externer_eingang_1": "external temperature",
         "externer_eingang_2": "external displacement",
@@ -165,10 +166,10 @@ def clean_main_df(df):
 def remove_inactive_data(df, step_df):
     if step_df is None:
         return df
-    inactive_periods = step_df[step_df["inactive"] == True][["Startzeit [s]", "Endzeit [s]"]]
+    inactive_periods = step_df[step_df["inactive"] == True][["step_start", "step_end"]]
     for _, row in inactive_periods.iterrows():
         df = df[
-            (df["Zeit [s]"] < row["Startzeit [s]"]) | (df["Zeit [s]"] >= row["Endzeit [s]"])
+            (df["time"] < row["step_start"]) | (df["time"] >= row["step_end"])
         ]
     return df.reset_index(drop=True)
 
@@ -182,5 +183,5 @@ def readRawFile(filename: str):
     df = stroke.stroke_calculate(df, header["stroke"])
     df = remove_inactive_data(df, step_df)
     if step_df is not None:
-        step_df.loc[step_df.index[-1], "Endzeit [s]"] = df["Zeit [s]"].max()
+        step_df.loc[step_df.index[-1], "step_end"] = df["time"].max()
     return df, step_df, header

@@ -22,7 +22,7 @@ def stroke_calculate(df, stroke, threshold=1):
     Unwraps the phase accumulated from RPM data, then projects it onto
     a cosine wave scaled by the stroke amplitude from the file header.
     """
-    df["phase"] = 2 * np.pi * df["rotation speed"] / 60 * df["Zeit [s]"]
+    df["phase"] = 2 * np.pi * df["rotation speed"] / 60 * df["time"]
     diff = df["phase"].diff()
     mask = (diff < -threshold) | (diff > threshold)
     corrections = diff.where(mask, 0).cumsum()
@@ -42,7 +42,7 @@ def stroke_offset(df, step_df=None):
     else:
         for _, row in step_df.iterrows():
             if not row["inactive"]:
-                mask = (df["Zeit [s]"] > row["Startzeit [s]"]) & (df["Zeit [s]"] < row["Endzeit [s]"])
+                mask = (df["time"] > row["step_start"]) & (df["time"] < row["step_end"])
                 col = df.loc[mask, "stroke"]
                 df.loc[mask, "stroke"] = col - col.mean()
     return df
@@ -69,7 +69,7 @@ def stroke_find_minima(df: pd.DataFrame, column: str = "stroke") -> pd.DataFrame
     Returns a DataFrame with one row per detected cycle containing times and
     values of negative peak, positive peak, and interpolated zero-crossing.
     """
-    times  = df["Zeit [s]"].values
+    times  = df["time"].values
     values = df[column].values
 
     dt         = np.diff(times)
@@ -119,11 +119,11 @@ def stroke_find_minima(df: pd.DataFrame, column: str = "stroke") -> pd.DataFrame
             logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
     return pd.DataFrame({
-        "-Min Zeit":      negativeTime,
+        "neg_time":       negativeTime,
         "-Min " + column: negativeArray,
-        "+Min Zeit":      positiveTime,
+        "pos_time":       positiveTime,
         "+Min " + column: positiveArray,
-        "Min Zeit":       theoreticalTime,
+        "zero_time":      theoreticalTime,
         "Min " + column:  [0] * len(positiveArray),
     })
 
@@ -140,9 +140,9 @@ def stroke_evaluate(df, minima, column: str = "stroke"):
     """
     a = 1.0  # use full cycle for stroke peak
 
-    Time       = df["Zeit [s]"].tolist()
+    Time       = df["time"].tolist()
     Stroke     = df[column].tolist()
-    negMinTime = minima["-Min Zeit"].tolist()
+    negMinTime = minima["neg_time"].tolist()
 
     startIndex    = []
     maxStroke     = []

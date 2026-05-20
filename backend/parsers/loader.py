@@ -30,10 +30,10 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
     if step_df is None:
         if df is not None and not df.empty:
             step_df = pd.DataFrame({
-                'Step':           [0],
-                'Startzeit [s]':  [0],
-                'Endzeit [s]':    [df["Zeit [s]"].max()],
-                'inactive':       [False],
+                'Step':       [0],
+                'step_start': [0],
+                'step_end':   [df["time"].max()],
+                'inactive':   [False],
             })
         else:
             logger.warning("Loaded DataFrame is empty — step_df could not be generated.")

@@ -9,7 +9,7 @@ class SessionState:
     data_type: str = "OFT"
 
     df_raw:    Optional[pd.DataFrame] = None
-    df_filter: Optional[pd.DataFrame] = None   # Zeit, CoF, CoF_shifted, CoF_Filtered, stroke, stroke_shifted, stroke_filtered
+    df_filter: Optional[pd.DataFrame] = None   # time, cof, cof_shifted, cof_filtered, stroke, stroke_shifted, stroke_filtered
     df_result: Optional[pd.DataFrame] = None   # per-cycle stats, schema = RESULT_COLUMNS
     step_df:   Optional[pd.DataFrame] = None
     header:     Optional[dict] = None

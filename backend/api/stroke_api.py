@@ -16,9 +16,7 @@ def get_displacement_data():
     if "stroke" not in state.df_filter.columns:
         return JSONResponse(status_code=400, content={"error": "No stroke data available"})
 
-    data = state.df_filter[["Zeit [s]", "stroke"]].rename(
-        columns={"Zeit [s]": "zeit"}
-    )
+    data = state.df_filter[["time", "stroke"]]
     return Response(
         content=data.to_json(orient="records", double_precision=8),
         media_type="application/json"
@@ -35,8 +33,8 @@ def apply_displacement_offset():
         df_offset = stroke_offset(state.df_filter.copy(), state.step_df)
         state.df_filter["stroke_shifted"] = df_offset["stroke"].values
 
-        cols = ["Zeit [s]", "stroke", "stroke_shifted"]
-        data = state.df_filter[cols].rename(columns={"Zeit [s]": "zeit"})
+        cols = ["time", "stroke", "stroke_shifted"]
+        data = state.df_filter[cols]
         return Response(
             content=data.to_json(orient="records", double_precision=8),
             media_type="application/json"
@@ -56,9 +54,9 @@ def apply_displacement_filter(window: int = DEFAULT_FILTER_WINDOW):
         source = "stroke_shifted" if "stroke_shifted" in state.df_filter.columns else "stroke"
         state.df_filter["stroke_filtered"] = stroke_filter(state.df_filter[source], window).values
 
-        cols = ["Zeit [s]", "stroke", "stroke_shifted", "stroke_filtered"]
+        cols = ["time", "stroke", "stroke_shifted", "stroke_filtered"]
         present = [c for c in cols if c in state.df_filter.columns]
-        data = state.df_filter[present].rename(columns={"Zeit [s]": "zeit"})
+        data = state.df_filter[present]
         return Response(
             content=data.to_json(orient="records", double_precision=8),
             media_type="application/json"

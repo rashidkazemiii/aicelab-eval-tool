@@ -60,7 +60,7 @@ export default function AnalysisPage() {
           <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>CoF</Typography>
           <Box sx={{ flexGrow: 1, minHeight: 0 }}>
             <ErrorBoundary>
-              <Chart data={analysisData} xAxisKey="zeit" lines={cof.chartLines} markers={cof.cofMarkers} />
+              <Chart data={analysisData} xAxisKey="time" lines={cof.chartLines} markers={cof.cofMarkers} />
             </ErrorBoundary>
           </Box>
         </Paper>
@@ -70,7 +70,7 @@ export default function AnalysisPage() {
           <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>Displacement</Typography>
           <Box sx={{ flexGrow: 1, minHeight: 0 }}>
             <ErrorBoundary>
-              <Chart data={disp.dispData} xAxisKey="zeit" lines={disp.dispLines} />
+              <Chart data={disp.dispData} xAxisKey="time" lines={disp.dispLines} />
             </ErrorBoundary>
           </Box>
         </Paper>
