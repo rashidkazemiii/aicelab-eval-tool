@@ -36,17 +36,18 @@ def cof_calculate(df, normal_load_correction_factor):
 # CoF_Shift / CoF_StepShift
 # ---------------------------------------------------------------------------
 
-def cof_offset(df, step_df=None):
-    """Mean-center CoF per active step (CoF column only)."""
+def cof_offset(series: pd.Series, time: pd.Series, step_df=None) -> pd.Series:
+    """Mean-center CoF per active step."""
+    result = series.copy()
     if step_df is None:
-        df["cof"] = df["cof"] - df["cof"].mean()
+        result -= result.mean()
     else:
         for _, row in step_df.iterrows():
             if not row["inactive"]:
-                mask = (df["time"] > row["step_start"]) & (df["time"] < row["step_end"])
-                col = df.loc[mask, "cof"]
-                df.loc[mask, "cof"] = col - col.mean()
-    return df
+                mask = (time >= row["step_start"]) & (time <= row["step_end"])
+                col = result[mask]
+                result[mask] = col - col.mean()
+    return result
 
 
 # ---------------------------------------------------------------------------

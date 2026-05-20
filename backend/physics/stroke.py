@@ -35,17 +35,18 @@ def stroke_calculate(df, stroke, threshold=1):
 # Stroke_Shift / Stroke_StepShift
 # ---------------------------------------------------------------------------
 
-def stroke_offset(df, step_df=None):
-    """Mean-center stroke per active step (stroke column only)."""
+def stroke_offset(series: pd.Series, time: pd.Series, step_df=None) -> pd.Series:
+    """Mean-center stroke per active step."""
+    result = series.copy()
     if step_df is None:
-        df["stroke"] = df["stroke"] - df["stroke"].mean()
+        result -= result.mean()
     else:
         for _, row in step_df.iterrows():
             if not row["inactive"]:
-                mask = (df["time"] > row["step_start"]) & (df["time"] < row["step_end"])
-                col = df.loc[mask, "stroke"]
-                df.loc[mask, "stroke"] = col - col.mean()
-    return df
+                mask = (time >= row["step_start"]) & (time <= row["step_end"])
+                col = result[mask]
+                result[mask] = col - col.mean()
+    return result
 
 
 # ---------------------------------------------------------------------------

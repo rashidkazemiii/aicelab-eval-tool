@@ -24,28 +24,31 @@ def get_displacement_data():
 
 
 @router.post("/offset")
-def apply_displacement_offset():
+def offset():
     if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     if "stroke" not in state.df_work.columns:
         return JSONResponse(status_code=400, content={"error": "No stroke data available"})
     try:
-        df_offset = stroke_offset(state.df_work.copy(), state.step_df)
-        state.df_work["stroke_shifted"] = df_offset["stroke"].values
-
-        cols = ["time", "stroke", "stroke_shifted"]
-        data = state.df_work[cols]
-        return Response(
-            content=data.to_json(orient="records", double_precision=8),
-            media_type="application/json"
-        )
+        state.df_work["stroke_shifted"] = stroke_offset(state.df_work["stroke"], state.df_work["time"], state.step_df).values
+        return {"status": "success"}
     except Exception as e:
         logger.error(f"Displacement offset failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@router.get("/offset")
+def get_offset():
+    if state.df_work is None or "stroke_shifted" not in state.df_work.columns:
+        return JSONResponse(status_code=400, content={"error": "Run offset first"})
+    return Response(
+        content=state.df_work[["time", "stroke", "stroke_shifted"]].to_json(orient="records", double_precision=8),
+        media_type="application/json"
+    )
+
+
 @router.post("/filter")
-def apply_displacement_filter(window: int = DEFAULT_FILTER_WINDOW):
+def filter(window: int = DEFAULT_FILTER_WINDOW):
     if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     if "stroke" not in state.df_work.columns:
@@ -53,17 +56,22 @@ def apply_displacement_filter(window: int = DEFAULT_FILTER_WINDOW):
     try:
         source = "stroke_shifted" if "stroke_shifted" in state.df_work.columns else "stroke"
         state.df_work["stroke_filtered"] = stroke_filter(state.df_work[source], window).values
-
-        cols = ["time", "stroke", "stroke_shifted", "stroke_filtered"]
-        present = [c for c in cols if c in state.df_work.columns]
-        data = state.df_work[present]
-        return Response(
-            content=data.to_json(orient="records", double_precision=8),
-            media_type="application/json"
-        )
+        return {"status": "success"}
     except Exception as e:
         logger.error(f"Displacement filter failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.get("/filter")
+def get_filter():
+    if state.df_work is None or "stroke_filtered" not in state.df_work.columns:
+        return JSONResponse(status_code=400, content={"error": "Run filter first"})
+    cols = ["time", "stroke", "stroke_shifted", "stroke_filtered"]
+    present = [c for c in cols if c in state.df_work.columns]
+    return Response(
+        content=state.df_work[present].to_json(orient="records", double_precision=8),
+        media_type="application/json"
+    )
 
 
 @router.post("/evaluate")

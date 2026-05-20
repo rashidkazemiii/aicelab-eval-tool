@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getDisplacementData, applyDispOffset, applyDispFilter, applyDispEvaluate } from '../services/api';
+import { getDisplacementData, applyDispOffset, getDispOffset, applyDispFilter, getDispFilter, applyDispEvaluate } from '../services/api';
 import { COLORS } from '../constants/colors';
 import { DEFAULTS } from '../constants/defaults';
 
@@ -32,7 +32,8 @@ export const useDisplacement = () => {
   const offset = async () => {
     setLoading(true);
     try {
-      const res = await applyDispOffset();
+      await applyDispOffset();
+      const res = await getDispOffset();
       setDispData(res.data);
       setDispLines([
         { key: 'stroke',         color: COLORS.stroke,      label: 'Stroke'         },
@@ -50,7 +51,8 @@ export const useDisplacement = () => {
     const window = parseInt(filterPoints) || parseInt(DEFAULTS.filterPoints);
     setLoading(true);
     try {
-      const res = await applyDispFilter(window);
+      await applyDispFilter(window);
+      const res = await getDispFilter();
       setDispData(res.data);
       setDispLines([
         { key: 'stroke',          color: COLORS.stroke,      label: 'Stroke'          },

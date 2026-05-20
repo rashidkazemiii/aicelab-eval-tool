@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useData } from '../context/DataContext';
-import { getData, applyOffset, applyFilter, applyEvaluate, getResult, viewResult as openResult } from '../services/api';
+import { getData, applyOffset, getOffset, applyFilter, getFilter, applyEvaluate, getResult, viewResult as openResult } from '../services/api';
 import { buildCofMarkers } from '../utils/chartTransforms';
 import { COLORS } from '../constants/colors';
 import { DEFAULTS } from '../constants/defaults';
@@ -37,7 +37,8 @@ export const useCoF = () => {
   const offset = async () => {
     setLoading(true);
     try {
-      const res = await applyOffset();
+      await applyOffset();
+      const res = await getOffset();
       setAnalysisData(res.data);
       setChartLines([{ key: 'cof_shifted', color: COLORS.cofShifted, label: 'CoF Shifted' }]);
       setOffsetApplied(true);
@@ -52,7 +53,8 @@ export const useCoF = () => {
     const window = parseInt(filterPoints) || parseInt(DEFAULTS.filterPoints);
     setLoading(true);
     try {
-      const res = await applyFilter(window);
+      await applyFilter(window);
+      const res = await getFilter();
       setAnalysisData(res.data);
       setChartLines([
         { key: 'cof_shifted', color: COLORS.cofShifted, label: 'CoF Shifted' },

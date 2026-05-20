@@ -4,15 +4,14 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
-from physics import cof as CoF_module
-from physics.cof import cof_offset, cof_filter, cof_find_minima, cof_evaluate
+from physics.cof import cof_calculate, cof_offset, cof_filter, cof_find_minima, cof_evaluate
 from config import (
     DEFAULT_FILTER_WINDOW, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX,
     RESULT_COLUMNS, RESULT_COL_MAP,
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(prefix="/cof")
 
 
 # ---------------------------------------------------------------------------
@@ -24,7 +23,9 @@ def calculate():
     if state.df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     try:
-        state.df_work = CoF_module.cof_calculate(state.df_raw.copy(), None)
+        df = cof_calculate(state.df_raw.copy(), None)
+        keep = ["time", "cof", "stroke", "external displacement"]
+        state.df_work = df[[c for c in keep if c in df.columns]].copy()
         state.df_work["cof"] = state.df_work["cof"].round(5)
         state.df_result = None
         return {"status": "success"}
@@ -33,8 +34,8 @@ def calculate():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@router.get("/data")
-def get_data():
+@router.get("/calculated")
+def get_calculated():
     if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     data = state.df_work[["time", "cof"]]
@@ -45,40 +46,50 @@ def get_data():
 
 
 @router.post("/offset")
-def apply_offset():
+def offset():
     if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        df_offset = cof_offset(state.df_work.copy(), state.step_df)
-        state.df_work["cof_shifted"] = df_offset["cof"].values
-        data = state.df_work[["time", "cof", "cof_shifted"]]
-        return Response(
-            content=data.to_json(orient="records", double_precision=8),
-            media_type="application/json"
-        )
+        state.df_work["cof_shifted"] = cof_offset(state.df_work["cof"], state.df_work["time"], state.step_df).values
+        return {"status": "success"}
     except Exception as e:
         logger.error(f"Offset failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@router.get("/offset")
+def get_offset():
+    if state.df_work is None or "cof_shifted" not in state.df_work.columns:
+        return JSONResponse(status_code=400, content={"error": "Run offset first"})
+    return Response(
+        content=state.df_work[["time", "cof_shifted"]].to_json(orient="records", double_precision=8),
+        media_type="application/json"
+    )
+
+
 @router.post("/filter")
-def apply_filter(window: int = DEFAULT_FILTER_WINDOW):
+def filter(window: int = DEFAULT_FILTER_WINDOW):
     if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         source = "cof_shifted" if "cof_shifted" in state.df_work.columns else "cof"
         state.df_work["cof_filtered"] = cof_filter(state.df_work[source], window).values
-
-        cols = ["time", "cof", "cof_shifted", "cof_filtered"]
-        present = [c for c in cols if c in state.df_work.columns]
-        data = state.df_work[present].rename(columns={"cof_filtered": "filtered"})
-        return Response(
-            content=data.to_json(orient="records", double_precision=8),
-            media_type="application/json"
-        )
+        return {"status": "success"}
     except Exception as e:
         logger.error(f"Filter failed: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.get("/filter")
+def get_filter():
+    if state.df_work is None or "cof_filtered" not in state.df_work.columns:
+        return JSONResponse(status_code=400, content={"error": "Run filter first"})
+    cols = ["time", "cof_shifted", "cof_filtered"]
+    present = [c for c in cols if c in state.df_work.columns]
+    return Response(
+        content=state.df_work[present].rename(columns={"cof_filtered": "filtered"}).to_json(orient="records", double_precision=8),
+        media_type="application/json"
+    )
 
 
 # ---------------------------------------------------------------------------
