@@ -56,27 +56,7 @@ def filter(df, step_df, window):
 
 
 def filter_vb_style(series, n):
-    """Centered rolling median matching the VB CoFFilter macro exactly."""
-    N = len(series)
-    half_n = n / 2.0
-    result = series.copy().astype(float)
-
-    for i in range(1, N + 1):
-        if i <= half_n:
-            start = 0
-            end = 2 * i - 2
-        elif i > N - half_n:
-            start = 2 * i - N - 1
-            end = N - 1
-        else:
-            start = round(i - half_n) - 1
-            end = round(i + half_n) - 1
-
-        start = max(0, start)
-        end = min(N - 1, end)
-        result.iloc[i - 1] = series.iloc[start:end + 1].median()
-
-    return result
+    return series.rolling(n, center=True, min_periods=1).median()
 
 
 def trim(df, trim_start, trim_end):
@@ -84,80 +64,63 @@ def trim(df, trim_start, trim_end):
 
 
 def Find_minima(df, column):
-    firstIteration = True
-    negativeTime = []
+    times  = df["Zeit [s]"].values
+    values = df[column].values
+
+    dt         = np.diff(times)
+    prev_vals  = values[:-1]
+    curr_vals  = values[1:]
+    prev_times = times[:-1]
+    curr_times = times[1:]
+
+    sign_change = ((prev_vals < 0) & (curr_vals >= 0)) | ((prev_vals >= 0) & (curr_vals < 0))
+    mask = sign_change & (dt < 0.002)
+    indices = np.where(mask)[0]
+
+    negativeTime  = []
     negativeArray = []
-    positiveTime = []
+    positiveTime  = []
     positiveArray = []
 
-    for index, row in df.iterrows():
-        if firstIteration:
-            prevValue = row[column]
-            prevTime = row["Zeit [s]"]
-            firstIteration = False
+    for idx in indices:
+        pv, cv = prev_vals[idx], curr_vals[idx]
+        pt, ct = prev_times[idx], curr_times[idx]
+        if pv < 0:
+            negativeArray.append(pv); negativeTime.append(pt)
         else:
-            currentValue = row[column]
-            currentTime = row["Zeit [s]"]
-            if currentTime - prevTime < 0.002:
-                if (prevValue < 0 and currentValue >= 0) or (
-                    prevValue >= 0 and currentValue < 0
-                ):
-                    if prevValue < 0:
-                        negativeArray.append(prevValue)
-                        negativeTime.append(prevTime)
-                    else:
-                        positiveArray.append(prevValue)
-                        positiveTime.append(prevTime)
-                    if currentValue < 0:
-                        negativeArray.append(currentValue)
-                        negativeTime.append(currentTime)
-                    else:
-                        positiveArray.append(currentValue)
-                        positiveTime.append(currentTime)
-            prevValue = currentValue
-            prevTime = currentTime
+            positiveArray.append(pv); positiveTime.append(pt)
+        if cv < 0:
+            negativeArray.append(cv); negativeTime.append(ct)
+        else:
+            positiveArray.append(cv); positiveTime.append(ct)
+
     if len(negativeTime) > len(positiveTime):
-        negativeTime.pop()
-        negativeArray.pop()
+        negativeTime.pop(); negativeArray.pop()
     elif len(negativeTime) < len(positiveTime):
-        positiveTime.pop()
-        positiveArray.pop()
+        positiveTime.pop(); positiveArray.pop()
 
-    theoreticalTime = []
-    for i in range(len(negativeTime)):
-        theoreticalTime.append(
-            (positiveTime[i] * negativeArray[i] - negativeTime[i] * positiveArray[i])
-            / (negativeArray[i] - positiveArray[i])
-        )
+    theoreticalTime = [
+        (positiveTime[i] * negativeArray[i] - negativeTime[i] * positiveArray[i])
+        / (negativeArray[i] - positiveArray[i])
+        for i in range(len(negativeTime))
+    ]
 
-    # check if filtering is necessary
-
-    # pauseTime = pauseTime
-
-    timetocheck = negativeTime
-    timeSpan = []
-    for i in range(len(timetocheck) - 1):
-        timeSpan.append(timetocheck[i + 1] - timetocheck[i])
-    if not len(timeSpan) == 0:
-        averagetimeSpan = sum(timeSpan) / len(timeSpan)
-    else:
-        averagetimeSpan = 1
+    timeSpan = np.diff(negativeTime)
+    if len(timeSpan) == 0:
         logger.warning("No time spans found in zero-crossing detection — check data continuity")
-    for i in range(len(timeSpan)):
-        if timeSpan[i] < 0.5 * averagetimeSpan and timeSpan[i] != 0:
+    else:
+        avg = timeSpan.mean()
+        if np.any((timeSpan < 0.5 * avg) & (timeSpan != 0)):
             logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
-    res = pd.DataFrame(
-        {
-            "-Min Zeit": negativeTime,
-            "-Min " + column: negativeArray,
-            "+Min Zeit": positiveTime,
-            "+Min " + column: positiveArray,
-            "Min Zeit": theoreticalTime,
-            "Min " + column: [0] * len(positiveArray),
-        }
-    )
-    return res
+    return pd.DataFrame({
+        "-Min Zeit":       negativeTime,
+        "-Min " + column:  negativeArray,
+        "+Min Zeit":       positiveTime,
+        "+Min " + column:  positiveArray,
+        "Min Zeit":        theoreticalTime,
+        "Min " + column:   [0] * len(positiveArray),
+    })
 
 
 def Evaluate(
@@ -189,8 +152,9 @@ def Evaluate(
     dynamicCoFsigma = []
     dynamicCoFvariance = []
 
-    for i in range(len(negMinTime)):
-        startIndex.append(Time.index(negMinTime[i]) + 1)
+    time_to_idx = {t: i for i, t in enumerate(Time)}
+    for t in negMinTime:
+        startIndex.append(time_to_idx[t] + 1)
 
     for i in range(1, len(negMinTime)):
         try:
