@@ -18,7 +18,6 @@ export default function Navbar() {
           FRICTION LAB <span style={{ color: '#fff', fontSize: '0.8rem', marginLeft: '10px' }}>v1.0</span>
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
-        <Typography variant="body2" sx={{ color: '#aaa' }}>User: MD Luffy</Typography>
       </Toolbar>
     </AppBar>
   );

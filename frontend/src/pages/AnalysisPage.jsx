@@ -15,8 +15,8 @@ export default function AnalysisPage() {
   } = useAnalysis();
 
   const [inputs, setInputs] = useState({
-    filterPoints: '25',
-    staticRange:  '10',
+    filterPoints: '100',
+    staticRange:  '15',
     dynamicMin:   '20',
     dynamicMax:   '80',
   });
