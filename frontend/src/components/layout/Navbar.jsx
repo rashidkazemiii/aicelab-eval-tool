@@ -1,5 +1,6 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, Box } from '@mui/material';
+import vResearchLogo from '../../assets/V-Research.png';
 
 export default function Navbar() {
   return (
@@ -18,6 +19,7 @@ export default function Navbar() {
           FRICTION LAB <span style={{ color: '#fff', fontSize: '0.8rem', marginLeft: '10px' }}>v1.0</span>
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
+        <Box component="img" src={vResearchLogo} alt="V-Research" sx={{ height: 32, objectFit: 'contain' }} />
       </Toolbar>
     </AppBar>
   );
