@@ -10,7 +10,8 @@ Benefits:
 """
 import logging
 import pandas as pd
-from physics import utility_functions
+from physics.cof    import cof_offset, cof_filter, cof_find_minima, cof_evaluate
+from physics.stroke import stroke_offset, stroke_filter
 from config import DEFAULT_FILTER_WINDOW
 
 logger = logging.getLogger(__name__)
@@ -18,29 +19,32 @@ logger = logging.getLogger(__name__)
 
 class SignalProcessor:
 
-    def apply_offset(self, df: pd.DataFrame, step_df: pd.DataFrame) -> pd.DataFrame:
-        """Mean-center CoF and stroke per active test step."""
-        return utility_functions.offset(df, step_df)
+    def apply_cof_offset(self, df: pd.DataFrame, step_df: pd.DataFrame) -> pd.DataFrame:
+        """Mean-center CoF per active test step."""
+        return cof_offset(df, step_df)
+
+    def apply_stroke_offset(self, df: pd.DataFrame, step_df: pd.DataFrame) -> pd.DataFrame:
+        """Mean-center stroke per active test step."""
+        return stroke_offset(df, step_df)
 
     def apply_filter(self, series: pd.Series, window: int = DEFAULT_FILTER_WINDOW) -> pd.Series:
         """Rolling median filter for noise reduction."""
-        return utility_functions.filter_vb_style(series, window)
+        return cof_filter(series, window)
 
     def find_minima(self, df: pd.DataFrame, column: str) -> pd.DataFrame:
         """Zero-crossing detection: finds half-cycle boundaries in a waveform."""
-        return utility_functions.Find_minima(df, column)
+        return cof_find_minima(df, column)
 
-    def evaluate_cycles(
+    def evaluate_cof_cycles(
         self,
         df: pd.DataFrame,
         minima: pd.DataFrame,
-        column: str,
         static_range: float,
         dyn_min: float,
         dyn_max: float,
     ) -> pd.DataFrame:
         """Extract per-cycle static and dynamic CoF statistics."""
-        return utility_functions.Evaluate(df, minima, column, static_range, dyn_min, dyn_max)
+        return cof_evaluate(df, minima, static_range, dyn_min, dyn_max)
 
 
 # Module-level singleton — import this in all API modules

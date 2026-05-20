@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
-from physics import CoF as CoF_module
+from physics import cof as CoF_module
 from services.signal_processor import processor
 from config import (
     DEFAULT_FILTER_WINDOW, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX,
@@ -24,7 +24,7 @@ def calculate():
     if state.df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     try:
-        state.df_filter = CoF_module.calculate(state.df_raw.copy(), None)
+        state.df_filter = CoF_module.cof_calculate(state.df_raw.copy(), None)
         state.df_filter["CoF"] = state.df_filter["CoF"].round(5)
         state.df_result = None
         return {"status": "success"}
@@ -51,7 +51,7 @@ def apply_offset():
     if state.df_filter is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        df_offset = processor.apply_offset(state.df_filter.copy(), state.step_df)
+        df_offset = processor.apply_cof_offset(state.df_filter.copy(), state.step_df)
         state.df_filter["CoF_shifted"] = df_offset["CoF"].values
         cols = ["Zeit [s]", "CoF", "CoF_shifted"]
         data = state.df_filter[cols].rename(
@@ -105,7 +105,7 @@ def _cof_minima(df, column):
 
 def _per_cycle_stats(df_eval, minima, static_range, dyn_min, dyn_max):
     """Compute per-cycle static and dynamic CoF statistics."""
-    return processor.evaluate_cycles(df_eval, minima, "CoF", static_range, dyn_min, dyn_max)
+    return processor.evaluate_cof_cycles(df_eval, minima, static_range, dyn_min, dyn_max)
 
 
 def _aggregate_stats(per_cycle, time_range):

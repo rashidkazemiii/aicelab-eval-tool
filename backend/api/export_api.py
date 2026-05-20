@@ -13,9 +13,6 @@ def export_timeseries():
     if state.df_filter is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        float_cols = [c for c in state.df_filter.columns if c != "Zeit [s]"]
-        fmt = {c: "%.15f" for c in float_cols}
-        fmt["Zeit [s]"] = "%.5f"
         buf = io.StringIO()
         state.df_filter.to_csv(buf, sep=";", index=False, float_format="%.15f")
         buf.seek(0)

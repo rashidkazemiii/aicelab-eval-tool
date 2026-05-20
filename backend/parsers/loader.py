@@ -1,6 +1,6 @@
 import logging
 import pandas as pd
-from read_files import SRV, SRV_FSA, OFT
+from parsers import srv, srv_fsa, oft
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +19,11 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
     header:  dict | None         = None
 
     if data_origin == "SRV":
-        df, step_df = SRV.readRawFile(filename)
+        df, step_df = srv.readRawFile(filename)
     elif data_origin == "SRV_FSA":
-        df, step_df = SRV_FSA.readRawFile(filename)
+        df, step_df = srv_fsa.readRawFile(filename)
     elif data_origin == "OFT":
-        df, step_df, header = OFT.readRawFile(filename)
+        df, step_df, header = oft.readRawFile(filename)
     else:
         raise ValueError(f"File format '{data_origin}' is not supported. Filename: {filename}")
 

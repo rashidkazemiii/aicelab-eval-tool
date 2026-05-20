@@ -29,4 +29,3 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
             {"Startzeit [s]": start_time, "Endzeit [s]": end_time, "inactive": inactive}
         )
     return data, step_df
-

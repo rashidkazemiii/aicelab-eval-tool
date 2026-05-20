@@ -12,7 +12,6 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
         names=["Zeit [s]", "stroke", "cof"],
     )
     data = data.rename(columns={"cof": "CoF"})
-    # create a df like step_df
     data["diff"] = data["Zeit [s]"].diff().fillna(0)
     time_greater_than_1 = data[data["diff"] > 1]
     start_time = []
@@ -37,4 +36,3 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
             {"Startzeit [s]": start_time, "Endzeit [s]": end_time, "inactive": inactive}
         )
     return data, step_df
-

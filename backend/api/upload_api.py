@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 from session import state
-from read_files import load
+from parsers import loader
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,7 +27,7 @@ async def upload_file(file: UploadFile = File(...), data_type: str = "OFT"):
 
         state.file_path = file_location
         state.data_type = data_type
-        state.df_raw, state.step_df, state.header = load.load_data(file_location, data_type)
+        state.df_raw, state.step_df, state.header = loader.load_data(file_location, data_type)
         state.df_filter = None
         state.df_result = None
 
