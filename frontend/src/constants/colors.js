@@ -8,7 +8,7 @@ export const COLORS = {
 
   // CoF chart series
   cof:        '#1e88e5',
-  cofShifted: '#43a047',
+  cofShifted: '#1e88e5',
   filtered:   '#e53935',
 
   // Displacement chart series

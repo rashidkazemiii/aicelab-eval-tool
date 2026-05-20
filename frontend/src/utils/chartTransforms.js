@@ -16,31 +16,31 @@ export function buildCofMarkers(rows) {
     {
       label: 'Static CoF',
       color: COLORS.staticCof,
-      size:  7,
+      size:  11,
       data:  rows.map(r => makePoint(r.staticCoFTime,    r.staticCoF)).filter(Boolean),
     },
     {
       label: 'Dynamic CoF',
       color: COLORS.dynamicCof,
-      size:  7,
+      size:  11,
       data:  rows.map(r => makePoint(r.dynamicCoFTime,   r.dynamicCoF)).filter(Boolean),
     },
     {
       label: 'Dyn CoF Start',
       color: COLORS.dynStart,
-      size:  6,
+      size:  9,
       data:  rows.map(r => makePoint(r.startdynamicTime, r.startdynamicCoF)).filter(Boolean),
     },
     {
       label: 'Dyn CoF End',
       color: COLORS.dynEnd,
-      size:  6,
+      size:  9,
       data:  rows.map(r => makePoint(r.enddynamicTime,   r.enddynamicCoF)).filter(Boolean),
     },
     {
       label: 'CoF Minima',
       color: COLORS.minima,
-      size:  8,
+      size:  12,
       data:  rows.map(r => makePoint(r['Min Zeit'], r['Min CoF'])).filter(Boolean),
     },
   ];
