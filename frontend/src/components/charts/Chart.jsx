@@ -2,85 +2,70 @@ import React, { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Box, Typography } from '@mui/material';
 
-function Chart({ data, xAxisKey, lines = [] }) {
+function Chart({ data, xAxisKey, lines = [], markers = [], precision = 8 }) {
 
-  // If no data
   if (!data || data.length === 0) {
     return (
-      <Box
-        sx={{
-          display: 'flex',
-          height: '100%',
-          alignItems: 'center',
-          justifyContent: 'center'
-        }}
-      >
-        <Typography color="text.secondary">
-          No data to display
-        </Typography>
+      <Box sx={{ display: 'flex', height: '100%', alignItems: 'center', justifyContent: 'center' }}>
+        <Typography color="text.secondary">No data to display</Typography>
       </Box>
     );
   }
 
-  // 🔥 Memoized chart option (VERY important for performance)
   const option = useMemo(() => {
 
-    // X values
-    const xData = data.map(item => item[xAxisKey]);
-
-    // Series generation
-    const series = lines.map(line => ({
+    const lineSeries = lines.map(line => ({
       name: line.label || line.key,
       type: 'line',
-      data: data.map(item => item[line.key]),
+      data: data.map(item => [item[xAxisKey], item[line.key]]),
       showSymbol: false,
-      smooth: true,
-      lineStyle: {
-        width: line.width || 2,
-        color: line.color || '#8884d8'
-      }
+      lineStyle: { width: line.width || 2, color: line.color || '#8884d8' },
+      itemStyle: { color: line.color || '#8884d8' },
+    }));
+
+    const scatterSeries = markers.map(m => ({
+      name: m.label,
+      type: 'scatter',
+      data: m.data,
+      symbolSize: m.size || 7,
+      itemStyle: { color: m.color },
+      tooltip: {
+        trigger: 'item',
+        formatter: (p) =>
+          `${p.marker}${p.seriesName}<br/>t = ${Number(p.value[0]).toFixed(3)} s<br/>CoF = ${Number(p.value[1]).toFixed(precision)}`,
+      },
     }));
 
     return {
       tooltip: {
-        trigger: 'axis'
-      },
-
-      legend: {
-        top: 10
-      },
-
-      grid: {
-        left: 50,
-        right: 20,
-        top: 50,
-        bottom: 90 // space for zoom slider
-      },
-
-      xAxis: {
-        type: 'category',
-        data: xData,
-        boundaryGap: false
-      },
-
-      yAxis: {
-        type: 'value'
-      },
-
-      // 🔥 Zoom slider (this is the bar you remember)
-      dataZoom: [
-        {
-          type: 'inside'
+        trigger: 'axis',
+        formatter: (params) => {
+          if (!params.length) return '';
+          const x = Array.isArray(params[0].value) ? params[0].value[0] : params[0].axisValue;
+          const rows = params
+            .map(p => {
+              const y = Array.isArray(p.value) ? p.value[1] : p.value;
+              return `${p.marker}${p.seriesName}: ${Number(y).toFixed(precision)}`;
+            })
+            .join('<br/>');
+          return `${Number(x).toFixed(3)} s<br/>${rows}`;
         },
-        {
-          type: 'slider'
-        }
-      ],
+      },
 
-      series
+      legend: { top: 10 },
+
+      grid: { left: 55, right: 20, top: 50, bottom: 90 },
+
+      xAxis: { type: 'value', scale: true, name: 's', nameLocation: 'end' },
+
+      yAxis: { type: 'value' },
+
+      dataZoom: [{ type: 'inside' }, { type: 'slider' }],
+
+      series: [...lineSeries, ...scatterSeries],
     };
 
-  }, [data, xAxisKey, lines]);
+  }, [data, xAxisKey, lines, markers]);
 
   return (
     <ReactECharts
@@ -92,5 +77,4 @@ function Chart({ data, xAxisKey, lines = [] }) {
   );
 }
 
-// 🔥 Prevent unnecessary rerenders from parent
 export default React.memo(Chart);

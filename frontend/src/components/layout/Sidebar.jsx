@@ -6,7 +6,7 @@ import AssessmentIcon from '@mui/icons-material/Assessment';
 export default function Sidebar({ activeTab, setActiveTab }) {
   const menuItems = [
     { id: 'upload', text: 'Upload Data', icon: <UploadFileIcon /> },
-    { id: 'analysis', text: 'CoF Analysis', icon: <AssessmentIcon /> },
+    { id: 'analysis', text: 'Analysis', icon: <AssessmentIcon /> },
   ];
 
   return (

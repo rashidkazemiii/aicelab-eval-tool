@@ -1,5 +1,8 @@
+import logging
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 def offset(df, step_df=None):
@@ -111,16 +114,14 @@ def Find_minima(df, column):
     timeSpan = []
     for i in range(len(timetocheck) - 1):
         timeSpan.append(timetocheck[i + 1] - timetocheck[i])
-        # if timeSpan[i] > pauseTime:
-        #    timeSpan[i] = 0
     if not len(timeSpan) == 0:
         averagetimeSpan = sum(timeSpan) / len(timeSpan)
     else:
         averagetimeSpan = 1
-        print("timeSpan has a len of 0 - ask Fevsi what to do with it")
+        logger.warning("No time spans found in zero-crossing detection — check data continuity")
     for i in range(len(timeSpan)):
         if timeSpan[i] < 0.5 * averagetimeSpan and timeSpan[i] != 0:
-            print("The data is too noisy! Please apply the filter and try again.")
+            logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
     res = pd.DataFrame(
         {
@@ -168,8 +169,6 @@ def Evaluate(
         startIndex.append(Time.index(negMinTime[i]) + 1)
 
     for i in range(1, len(negMinTime)):
-        # if negMinTime[i] - negMinTime[i - 1] > self.pauseTime:
-        #    continue
         try:
             endIndex = startIndex[i - 1] + round(
                 a * (startIndex[i] - startIndex[i - 1])
@@ -213,7 +212,7 @@ def Evaluate(
                 * ((dynamicCoFn[-1] - 1 + dynamicCoFsigma[-1] ** 2) / dynamicCoFn[-1])
             )
         except Exception as e:
-            print(e)
+            logger.warning("Skipping cycle %d: %s", i, e)
             continue
 
     ###
