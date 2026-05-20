@@ -24,8 +24,8 @@ def calculate():
     if state.df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     try:
-        state.df_filter = CoF_module.cof_calculate(state.df_raw.copy(), None)
-        state.df_filter["cof"] = state.df_filter["cof"].round(5)
+        state.df_work = CoF_module.cof_calculate(state.df_raw.copy(), None)
+        state.df_work["cof"] = state.df_work["cof"].round(5)
         state.df_result = None
         return {"status": "success"}
     except Exception as e:
@@ -35,9 +35,9 @@ def calculate():
 
 @router.get("/data")
 def get_data():
-    if state.df_filter is None:
+    if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
-    data = state.df_filter[["time", "cof"]]
+    data = state.df_work[["time", "cof"]]
     return Response(
         content=data.to_json(orient="records", double_precision=5),
         media_type="application/json"
@@ -46,12 +46,12 @@ def get_data():
 
 @router.post("/offset")
 def apply_offset():
-    if state.df_filter is None:
+    if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        df_offset = cof_offset(state.df_filter.copy(), state.step_df)
-        state.df_filter["cof_shifted"] = df_offset["cof"].values
-        data = state.df_filter[["time", "cof", "cof_shifted"]]
+        df_offset = cof_offset(state.df_work.copy(), state.step_df)
+        state.df_work["cof_shifted"] = df_offset["cof"].values
+        data = state.df_work[["time", "cof", "cof_shifted"]]
         return Response(
             content=data.to_json(orient="records", double_precision=8),
             media_type="application/json"
@@ -63,15 +63,15 @@ def apply_offset():
 
 @router.post("/filter")
 def apply_filter(window: int = DEFAULT_FILTER_WINDOW):
-    if state.df_filter is None:
+    if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        source = "cof_shifted" if "cof_shifted" in state.df_filter.columns else "cof"
-        state.df_filter["cof_filtered"] = cof_filter(state.df_filter[source], window).values
+        source = "cof_shifted" if "cof_shifted" in state.df_work.columns else "cof"
+        state.df_work["cof_filtered"] = cof_filter(state.df_work[source], window).values
 
         cols = ["time", "cof", "cof_shifted", "cof_filtered"]
-        present = [c for c in cols if c in state.df_filter.columns]
-        data = state.df_filter[present].rename(columns={"cof_filtered": "filtered"})
+        present = [c for c in cols if c in state.df_work.columns]
+        data = state.df_work[present].rename(columns={"cof_filtered": "filtered"})
         return Response(
             content=data.to_json(orient="records", double_precision=8),
             media_type="application/json"
@@ -118,17 +118,17 @@ def _aggregate_stats(per_cycle, time_range):
     }
 
 
-def _displacement_data(df_filter, neg_times):
+def _displacement_data(df_work, neg_times):
     """Find displacement minima and per-cycle maxima aligned to CoF cycle boundaries."""
     disp_col = next(
         (c for c in ("external displacement", "stroke_filtered", "stroke_shifted", "stroke")
-         if c in df_filter.columns),
+         if c in df_work.columns),
         None
     )
     if disp_col is None:
         return pd.DataFrame()
 
-    dm = cof_find_minima(df_filter, disp_col)
+    dm = cof_find_minima(df_work, disp_col)
     dm = dm.rename(columns={
         "neg_time":         "disp_neg_time",
         f"-Min {disp_col}": "-Min disp",
@@ -138,7 +138,7 @@ def _displacement_data(df_filter, neg_times):
         f"Min {disp_col}":  "Min disp",
     }).reset_index(drop=True)
 
-    disp_df = df_filter[["time", disp_col]]
+    disp_df = df_work[["time", disp_col]]
     max_times, max_vals = [], []
     for i in range(len(neg_times) - 1):
         seg = disp_df[
@@ -167,17 +167,17 @@ def evaluate(
     beginning_dynamic_range: float = DEFAULT_DYN_MIN,
     ending_dynamic_range:    float = DEFAULT_DYN_MAX,
 ):
-    if state.df_filter is None:
+    if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         column = (
-            "cof_filtered" if "cof_filtered" in state.df_filter.columns else
-            "cof_shifted"  if "cof_shifted"  in state.df_filter.columns else
+            "cof_filtered" if "cof_filtered" in state.df_work.columns else
+            "cof_shifted"  if "cof_shifted"  in state.df_work.columns else
             "cof"
         )
 
-        minima  = _cof_minima(state.df_filter, column)
-        df_eval = state.df_filter.copy()
+        minima  = _cof_minima(state.df_work, column)
+        df_eval = state.df_work.copy()
         if "cof_shifted" in df_eval.columns:
             df_eval["cof"] = df_eval["cof_shifted"]
 
@@ -187,9 +187,9 @@ def evaluate(
         )
         agg  = _aggregate_stats(
             per_cycle,
-            state.df_filter["time"].max() - state.df_filter["time"].min()
+            state.df_work["time"].max() - state.df_work["time"].min()
         )
-        disp = _displacement_data(state.df_filter, minima["neg_time"].tolist())
+        disp = _displacement_data(state.df_work, minima["neg_time"].tolist())
 
         n = len(per_cycle)
         state.df_result = pd.DataFrame(float("nan"), index=range(n), columns=RESULT_COLUMNS)

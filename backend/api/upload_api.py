@@ -28,7 +28,7 @@ async def upload_file(file: UploadFile = File(...), data_type: str = "OFT"):
         state.file_path = file_location
         state.data_type = data_type
         state.df_raw, state.step_df, state.header = loader.load_data(file_location, data_type)
-        state.df_filter = None
+        state.df_work = None
         state.df_result = None
 
         return {"status": "success", "message": f"{safe_name} loaded ({data_type})"}

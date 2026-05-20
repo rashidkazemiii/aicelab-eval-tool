@@ -10,11 +10,11 @@ router = APIRouter()
 
 @router.get("/export/timeseries")
 def export_timeseries():
-    if state.df_filter is None:
+    if state.df_work is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         buf = io.StringIO()
-        state.df_filter.to_csv(buf, sep=";", index=False, float_format="%.15f")
+        state.df_work.to_csv(buf, sep=";", index=False, float_format="%.15f")
         buf.seek(0)
         return StreamingResponse(
             iter([buf.getvalue()]),
