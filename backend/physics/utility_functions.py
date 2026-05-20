@@ -55,6 +55,30 @@ def filter(df, step_df, window):
     return df
 
 
+def filter_vb_style(series, n):
+    """Centered rolling median matching the VB CoFFilter macro exactly."""
+    N = len(series)
+    half_n = n / 2.0
+    result = series.copy().astype(float)
+
+    for i in range(1, N + 1):
+        if i <= half_n:
+            start = 0
+            end = 2 * i - 2
+        elif i > N - half_n:
+            start = 2 * i - N - 1
+            end = N - 1
+        else:
+            start = round(i - half_n) - 1
+            end = round(i + half_n) - 1
+
+        start = max(0, start)
+        end = min(N - 1, end)
+        result.iloc[i - 1] = series.iloc[start:end + 1].median()
+
+    return result
+
+
 def trim(df, trim_start, trim_end):
     return df[(df["Zeit [s]"] < trim_end) & (df["Zeit [s]"] > trim_start)]
 
@@ -200,16 +224,14 @@ def Evaluate(
             enddynamicCoF.append(Stroke[enddynamicIndex[-1]])
 
             movingdynamicRange = Stroke[startdynamicIndex[-1] : enddynamicIndex[-1]]
-            dynamicCoFTime.append(
-                startdynamicTime[-1] + (enddynamicTime[-1] + startdynamicTime[-1]) / 2
-            )
+            dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
             dynamicCoFSD.append(np.std((movingdynamicRange)))
             dynamicCoFn.append(len((movingdynamicRange)))
             dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
             dynamicCoFvariance.append(
-                (dynamicCoFSD[-1] ** 2)
-                * ((dynamicCoFn[-1] - 1 + dynamicCoFsigma[-1] ** 2) / dynamicCoFn[-1])
+                dynamicCoFSD[-1] ** 2 * (dynamicCoFn[-1] - 1)
+                + dynamicCoFsigma[-1] ** 2 / dynamicCoFn[-1]
             )
         except Exception as e:
             logger.warning("Skipping cycle %d: %s", i, e)
