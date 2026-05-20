@@ -2,7 +2,7 @@ import os
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api import upload, process, displacement, evaluate, export
+from api import upload, cof, displacement, export
 
 logging.basicConfig(level=logging.INFO)
 os.makedirs("temp_uploads", exist_ok=True)
@@ -18,9 +18,8 @@ app.add_middleware(
 )
 
 app.include_router(upload.router)
-app.include_router(process.router)
+app.include_router(cof.router)
 app.include_router(displacement.router)
-app.include_router(evaluate.router)
 app.include_router(export.router)
 
 
