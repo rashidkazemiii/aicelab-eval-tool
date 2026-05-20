@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
 from physics import cof as CoF_module
-from services.signal_processor import processor
+from physics.cof import cof_offset, cof_filter, cof_find_minima, cof_evaluate
 from config import (
     DEFAULT_FILTER_WINDOW, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX,
     RESULT_COLUMNS, RESULT_COL_MAP,
@@ -51,7 +51,7 @@ def apply_offset():
     if state.df_filter is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        df_offset = processor.apply_cof_offset(state.df_filter.copy(), state.step_df)
+        df_offset = cof_offset(state.df_filter.copy(), state.step_df)
         state.df_filter["CoF_shifted"] = df_offset["CoF"].values
         cols = ["Zeit [s]", "CoF", "CoF_shifted"]
         data = state.df_filter[cols].rename(
@@ -72,9 +72,7 @@ def apply_filter(window: int = DEFAULT_FILTER_WINDOW):
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         source = "CoF_shifted" if "CoF_shifted" in state.df_filter.columns else "CoF"
-        state.df_filter["CoF_Filtered"] = processor.apply_filter(
-            state.df_filter[source], window
-        ).values
+        state.df_filter["CoF_Filtered"] = cof_filter(state.df_filter[source], window).values
 
         cols = ["Zeit [s]", "CoF", "CoF_shifted", "CoF_Filtered"]
         present = [c for c in cols if c in state.df_filter.columns]
@@ -95,7 +93,7 @@ def apply_filter(window: int = DEFAULT_FILTER_WINDOW):
 
 def _cof_minima(df, column):
     """Find zero-crossing minima and rename columns to the standard CoF schema."""
-    m = processor.find_minima(df, column)
+    m = cof_find_minima(df, column)
     return m.rename(columns={
         f"-Min {column}": "-Min CoF",
         f"+Min {column}": "+Min CoF",
@@ -105,7 +103,7 @@ def _cof_minima(df, column):
 
 def _per_cycle_stats(df_eval, minima, static_range, dyn_min, dyn_max):
     """Compute per-cycle static and dynamic CoF statistics."""
-    return processor.evaluate_cof_cycles(df_eval, minima, static_range, dyn_min, dyn_max)
+    return cof_evaluate(df_eval, minima, static_range, dyn_min, dyn_max)
 
 
 def _aggregate_stats(per_cycle, time_range):
@@ -136,7 +134,7 @@ def _displacement_data(df_filter, neg_times):
     if disp_col is None:
         return pd.DataFrame()
 
-    dm = processor.find_minima(df_filter, disp_col)
+    dm = cof_find_minima(df_filter, disp_col)
     dm = dm.rename(columns={
         "-Min Zeit":        "dispMinZeit_neg",
         f"-Min {disp_col}": "-Min disp",

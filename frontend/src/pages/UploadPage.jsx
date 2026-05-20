@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { Box, Typography, Stack, Alert } from '@mui/material';
+import { Box, Typography, Stack, Alert, ToggleButtonGroup, ToggleButton } from '@mui/material';
 
-// Import your components
 import UploadBox from '../components/upload/UploadBox';
 import { useFileUpload } from '../hooks/useFileUpload';
 import FileInfo from '../components/upload/FileInfo';
 import Button from '../components/common/Button';
 
+const FILE_TYPES = ['OFT', 'SRV', 'SRV_FSA'];
+
 export default function UploadPage({ onSwitch }) {
-  const [file, setFile] = useState(null);
-  
-  // We use the handleUpload function from your custom hook
+  const [file, setFile]         = useState(null);
+  const [dataType, setDataType] = useState('OFT');
+
   const { handleUpload, loading, error } = useFileUpload();
 
   const onFileChange = (e) => {
@@ -19,14 +20,8 @@ export default function UploadPage({ onSwitch }) {
 
   const onImportClick = async () => {
     if (!file) return;
-
-    // 1. Upload the file to Python
-    const isDone = await handleUpload(file); 
-    
-    // 2. If successful, immediately trigger the switch to the next tab
-    if (isDone) {
-      onSwitch(); 
-    }
+    const isDone = await handleUpload(file, dataType);
+    if (isDone) onSwitch();
   };
 
   return (
@@ -39,13 +34,41 @@ export default function UploadPage({ onSwitch }) {
         {/* Upload Area */}
         <UploadBox file={file} onFileChange={onFileChange} />
 
+        {/* File Type Selector */}
+        <Box>
+          <Typography variant="body2" sx={{ mb: 0.5, color: '#555', fontWeight: 500 }}>
+            File Type
+          </Typography>
+          <ToggleButtonGroup
+            value={dataType}
+            exclusive
+            onChange={(_, val) => { if (val) setDataType(val); }}
+            size="small"
+            fullWidth
+          >
+            {FILE_TYPES.map(type => (
+              <ToggleButton
+                key={type}
+                value={type}
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  '&.Mui-selected': { bgcolor: '#3e4396', color: '#fff', '&:hover': { bgcolor: '#3e4396' } },
+                }}
+              >
+                {type}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </Box>
+
         {/* File Details (shows up only when a file is selected) */}
         {file && (
           <FileInfo file={file} onClear={() => setFile(null)} />
         )}
 
         {/* The single "Master" Button */}
-        <Button 
+        <Button
           disabled={!file || loading}
           onClick={onImportClick}
           sx={{ bgcolor: '#3e4396' }}
