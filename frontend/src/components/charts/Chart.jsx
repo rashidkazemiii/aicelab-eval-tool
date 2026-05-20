@@ -56,7 +56,7 @@ function Chart({ data, xAxisKey, lines = [], markers = [], precision = 8 }) {
 
       grid: { left: 55, right: 20, top: 50, bottom: 90 },
 
-      xAxis: { type: 'value', scale: true, name: 's', nameLocation: 'end' },
+      xAxis: { type: 'value', min: 'dataMin', max: 'dataMax', name: 's', nameLocation: 'end' },
 
       yAxis: { type: 'value' },
 

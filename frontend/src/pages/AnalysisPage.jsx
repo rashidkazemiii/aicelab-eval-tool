@@ -21,7 +21,7 @@ export default function AnalysisPage() {
     dynamicMax:   '80',
   });
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { if (fileName) fetchData(); }, []);
 
   const handleInputChange = (key) => (e) => setInputs({ ...inputs, [key]: e.target.value });
 

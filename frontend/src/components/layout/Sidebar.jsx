@@ -2,8 +2,11 @@ import React from 'react';
 import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import { useData } from '../../context/DataContext';
 
 export default function Sidebar({ activeTab, setActiveTab }) {
+  const { setAnalysisData, setFileName } = useData();
+
   const menuItems = [
     { id: 'upload', text: 'Upload Data', icon: <UploadFileIcon /> },
     { id: 'analysis', text: 'Analysis', icon: <AssessmentIcon /> },
@@ -29,7 +32,10 @@ export default function Sidebar({ activeTab, setActiveTab }) {
           <ListItem key={item.id} disablePadding>
             <ListItemButton 
               selected={activeTab === item.id}
-              onClick={() => setActiveTab(item.id)}
+              onClick={() => {
+                if (item.id === 'upload') { setAnalysisData([]); setFileName(null); }
+                setActiveTab(item.id);
+              }}
               sx={{
                 '&.Mui-selected': { bgcolor: '#3e4396', color: '#fff' },
                 color: '#a3a3a3', py: 1.5
