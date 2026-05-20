@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react'; // Added useRef and useEffect
-import { Box, Typography, Paper } from '@mui/material';
+import { Typography, Paper } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 
 export default function UploadBox({ file, onFileChange }) {
@@ -49,7 +49,7 @@ export default function UploadBox({ file, onFileChange }) {
       </Typography>
 
       <Typography variant="body2" color="#666">
-        Supported formats: .txt, .csv (OFT Lab Export)
+        Supported formats: .txt, .csv
       </Typography>
 
     </Paper>
