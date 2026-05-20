@@ -3,6 +3,13 @@ DEFAULT_STATIC_RANGE   = 10.0
 DEFAULT_DYN_MIN        = 20.0
 DEFAULT_DYN_MAX        = 80.0
 
+# Zero-crossing detection thresholds (used in Find_minima)
+ZERO_CROSSING_DT_THRESHOLD = 0.002   # seconds; rejects slow drifts (assumes ~500 Hz sampling)
+CYCLE_NOISE_RATIO           = 0.5    # warn if any cycle spacing is < 50% of the average
+
+# File parsing
+SRV_TIME_GAP_THRESHOLD = 1.0         # seconds; time gap larger than this marks a new test step
+
 RESULT_COLUMNS = [
     "staticCoFTime", "staticCoF",
     "dynamicCoFTime", "dynamicCoF", "dynamicCoFSD", "dynamicCoFn",

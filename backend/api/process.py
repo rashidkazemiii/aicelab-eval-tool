@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response
 from session import state
 from physics import CoF as CoF_module
-from physics import utility_functions
+from services.signal_processor import processor
 from config import DEFAULT_FILTER_WINDOW
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def apply_offset():
     if state.df_filter is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
-        df_offset = utility_functions.offset(state.df_filter.copy(), state.step_df)
+        df_offset = processor.apply_offset(state.df_filter.copy(), state.step_df)
         state.df_filter["CoF_shifted"] = df_offset["CoF"].values
         cols = ["Zeit [s]", "CoF", "CoF_shifted"]
         data = state.df_filter[cols].rename(
@@ -63,7 +63,7 @@ def apply_filter(window: int = DEFAULT_FILTER_WINDOW):
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         source = "CoF_shifted" if "CoF_shifted" in state.df_filter.columns else "CoF"
-        state.df_filter["CoF_Filtered"] = utility_functions.filter_vb_style(
+        state.df_filter["CoF_Filtered"] = processor.apply_filter(
             state.df_filter[source], window
         ).values
 

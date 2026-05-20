@@ -1,69 +1,42 @@
 import logging
 import pandas as pd
 import numpy as np
+from config import ZERO_CROSSING_DT_THRESHOLD, CYCLE_NOISE_RATIO
 
 logger = logging.getLogger(__name__)
 
 
 def offset(df, step_df=None):
+    """Mean-center CoF and stroke. Per active step if step_df is provided, else globally."""
     if step_df is None:
         df["CoF"] = df["CoF"] - df["CoF"].mean()
         df["stroke"] = df["stroke"] - df["stroke"].mean()
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
-                # Filter rows based on conditions
                 filtered_rows = df[
                     (df["Zeit [s]"] < row["Endzeit [s]"])
                     & (df["Zeit [s]"] > row["Startzeit [s]"])
                 ]
-                # Select "CoF" column from filtered rows
-                cof_column = filtered_rows["CoF"]
-                # Subtract the mean of "CoF" column from values in "CoF" column
-                cof_column_adjusted = cof_column - cof_column.mean()
-                # Assign adjusted values back to the original DataFrame
-                df.loc[filtered_rows.index, "CoF"] = cof_column_adjusted
-                # do the same with stroke
-                stroke_column = filtered_rows["stroke"]
-                stroke_column_adjusted = stroke_column - stroke_column.mean()
-                df.loc[filtered_rows.index, "stroke"] = stroke_column_adjusted
-    return df
-
-
-def filter(df, step_df, window):
-    if step_df is None:
-        df["CoF"] = df["CoF"].rolling(window).median()
-        df["stroke"] = df["stroke"].rolling(window).median()
-    else:
-        for index, row in step_df.iterrows():
-            if not row["inactive"]:
-                # Filter rows based on conditions
-                filtered_rows = df[
-                    (df["Zeit [s]"] < row["Endzeit [s]"])
-                    & (df["Zeit [s]"] > row["Startzeit [s]"])
-                ]
-                # Select "CoF" column from filtered rows
-                cof_column = filtered_rows["CoF"]
-                # Assign adjusted values back to the original DataFrame
-                df.loc[filtered_rows.index, "CoF"] = cof_column.rolling(
-                    window, center=True, min_periods=1
-                ).median()
-                stroke_column = filtered_rows["stroke"]
-                df.loc[filtered_rows.index, "stroke"] = stroke_column.rolling(
-                    window, min_periods=1
-                ).median()
+                cof_col = filtered_rows["CoF"]
+                df.loc[filtered_rows.index, "CoF"] = cof_col - cof_col.mean()
+                stroke_col = filtered_rows["stroke"]
+                df.loc[filtered_rows.index, "stroke"] = stroke_col - stroke_col.mean()
     return df
 
 
 def filter_vb_style(series, n):
+    """Rolling median filter centered on each point."""
     return series.rolling(n, center=True, min_periods=1).median()
 
 
-def trim(df, trim_start, trim_end):
-    return df[(df["Zeit [s]"] < trim_end) & (df["Zeit [s]"] > trim_start)]
-
-
 def Find_minima(df, column):
+    """
+    Zero-crossing detection for cycle boundary identification.
+
+    Returns a DataFrame with one row per detected cycle, containing the times
+    and values of the negative peak, positive peak, and interpolated zero-crossing.
+    """
     times  = df["Zeit [s]"].values
     values = df[column].values
 
@@ -74,7 +47,7 @@ def Find_minima(df, column):
     curr_times = times[1:]
 
     sign_change = ((prev_vals < 0) & (curr_vals >= 0)) | ((prev_vals >= 0) & (curr_vals < 0))
-    mask = sign_change & (dt < 0.002)
+    mask = sign_change & (dt < ZERO_CROSSING_DT_THRESHOLD)
     indices = np.where(mask)[0]
 
     negativeTime  = []
@@ -110,7 +83,7 @@ def Find_minima(df, column):
         logger.warning("No time spans found in zero-crossing detection — check data continuity")
     else:
         avg = timeSpan.mean()
-        if np.any((timeSpan < 0.5 * avg) & (timeSpan != 0)):
+        if np.any((timeSpan < CYCLE_NOISE_RATIO * avg) & (timeSpan != 0)):
             logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
     return pd.DataFrame({
@@ -123,33 +96,37 @@ def Find_minima(df, column):
     })
 
 
-def Evaluate(
-    df, minima, column, static_cof_range, beginning_dynamic_range, ending_dynamic_range
-):
+def Evaluate(df, minima, column, static_cof_range, beginning_dynamic_range, ending_dynamic_range):
+    """
+    Extract per-cycle static and dynamic CoF statistics.
+
+    For each cycle (between consecutive zero-crossings):
+    - Static CoF: peak value in the first `static_cof_range`% of the cycle
+    - Dynamic CoF: mean/SD/count in the middle band (beginning_dynamic_range% to ending_dynamic_range%)
+    """
     a = 0.01 * static_cof_range
     b = 0.01 * beginning_dynamic_range
     c = 0.01 * ending_dynamic_range
 
-    Time = df["Zeit [s]"].tolist()
+    Time   = df["Zeit [s]"].tolist()
     Stroke = df[column].tolist()
     negMinTime = minima["-Min Zeit"].tolist()
 
-    startIndex = []
-    maxStrokeIndex = []
-    maxStroke = []
-    maxStrokeTime = []
-    startdynamicIndex = []
-    enddynamicIndex = []
-    startdynamicTime = []
-    enddynamicTime = []
-    startdynamicCoF = []
-    enddynamicCoF = []
-
-    dynamicCoFTime = []
-    dynamicCoF = []
-    dynamicCoFSD = []
-    dynamicCoFn = []
-    dynamicCoFsigma = []
+    startIndex         = []
+    maxStrokeIndex     = []
+    maxStroke          = []
+    maxStrokeTime      = []
+    startdynamicIndex  = []
+    enddynamicIndex    = []
+    startdynamicTime   = []
+    enddynamicTime     = []
+    startdynamicCoF    = []
+    enddynamicCoF      = []
+    dynamicCoFTime     = []
+    dynamicCoF         = []
+    dynamicCoFSD       = []
+    dynamicCoFn        = []
+    dynamicCoFsigma    = []
     dynamicCoFvariance = []
 
     time_to_idx = {t: i for i, t in enumerate(Time)}
@@ -158,15 +135,15 @@ def Evaluate(
 
     for i in range(1, len(negMinTime)):
         try:
-            endIndex = startIndex[i - 1] + round(
-                a * (startIndex[i] - startIndex[i - 1])
-            )
+            endIndex = startIndex[i - 1] + round(a * (startIndex[i] - startIndex[i - 1]))
             if startIndex[i - 1] == endIndex:
                 raise Exception(
-                    f"The starting and ending index are the same : {endIndex}. Check that {startIndex[i]} and {startIndex[i - 1]} are not too close. This happend for time = {Time[startIndex[i - 1]]}"
+                    f"Start and end index are equal ({endIndex}). "
+                    f"Indices {startIndex[i]} and {startIndex[i-1]} may be too close "
+                    f"(t = {Time[startIndex[i-1]]})."
                 )
             movingTimeRange = Time[startIndex[i - 1] : endIndex]
-            movingRange = Stroke[startIndex[i - 1] : endIndex]
+            movingRange     = Stroke[startIndex[i - 1] : endIndex]
             if Stroke[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 index, element = max(enumerate(movingRange), key=lambda x: x[1])
@@ -176,22 +153,18 @@ def Evaluate(
             else:
                 continue
             maxStrokeTime.append(movingTimeRange[index])
-            startdynamicIndex.append(
-                startIndex[i - 1] + round(b * (startIndex[i] - startIndex[i - 1]))
-            )
-            enddynamicIndex.append(
-                startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1]))
-            )
+            startdynamicIndex.append(startIndex[i - 1] + round(b * (startIndex[i] - startIndex[i - 1])))
+            enddynamicIndex.append(  startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1])))
             startdynamicTime.append(Time[startdynamicIndex[-1]])
-            enddynamicTime.append(Time[enddynamicIndex[-1]])
-            startdynamicCoF.append(Stroke[startdynamicIndex[-1]])
-            enddynamicCoF.append(Stroke[enddynamicIndex[-1]])
+            enddynamicTime.append(  Time[enddynamicIndex[-1]])
+            startdynamicCoF.append( Stroke[startdynamicIndex[-1]])
+            enddynamicCoF.append(   Stroke[enddynamicIndex[-1]])
 
             movingdynamicRange = Stroke[startdynamicIndex[-1] : enddynamicIndex[-1]]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
-            dynamicCoFSD.append(np.std((movingdynamicRange)))
-            dynamicCoFn.append(len((movingdynamicRange)))
+            dynamicCoFSD.append(np.std(movingdynamicRange))
+            dynamicCoFn.append(len(movingdynamicRange))
             dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
             dynamicCoFvariance.append(
                 dynamicCoFSD[-1] ** 2 * (dynamicCoFn[-1] - 1)
@@ -201,37 +174,22 @@ def Evaluate(
             logger.warning("Skipping cycle %d: %s", i, e)
             continue
 
-    ###
     if column == "CoF":
-        lists_to_check = [
-            startdynamicTime,
-            startdynamicCoF,
-            enddynamicTime,
-            dynamicCoF,
-            maxStroke,
-        ]
-        res_df = pd.DataFrame(
-            data={
-                "startdynamicTime": startdynamicTime,
-                "startdynamicCoF": startdynamicCoF,
-                "enddynamicTime": enddynamicTime,
-                "enddynamicCoF": enddynamicCoF,
-                "dynamicCoFTime": dynamicCoFTime,
-                "dynamicCoF": dynamicCoF,
-                "dynamicCoFSD": dynamicCoFSD,
-                "dynamicCoFn": dynamicCoFn,
-                "dynamicCoFsigma": dynamicCoFsigma,
-                "dynamicCoFvariance": dynamicCoFvariance,
-                "staticCoF": maxStroke,
-                "staticCoFTime": maxStrokeTime,
-            }
-        )
+        return pd.DataFrame({
+            "startdynamicTime":  startdynamicTime,
+            "startdynamicCoF":   startdynamicCoF,
+            "enddynamicTime":    enddynamicTime,
+            "enddynamicCoF":     enddynamicCoF,
+            "dynamicCoFTime":    dynamicCoFTime,
+            "dynamicCoF":        dynamicCoF,
+            "dynamicCoFSD":      dynamicCoFSD,
+            "dynamicCoFn":       dynamicCoFn,
+            "dynamicCoFsigma":   dynamicCoFsigma,
+            "dynamicCoFvariance":dynamicCoFvariance,
+            "staticCoF":         maxStroke,
+            "staticCoFTime":     maxStrokeTime,
+        })
     elif column == "stroke":
-        res_df = pd.DataFrame(
-            data={"maxstroke": maxStroke, "maxstrokeTime": maxStrokeTime}
-        )
+        return pd.DataFrame({"maxstroke": maxStroke, "maxstrokeTime": maxStrokeTime})
     else:
-        raise Exception(column + " not implemented")
-
-    return res_df
-
+        raise Exception(f"Column '{column}' is not implemented in Evaluate.")

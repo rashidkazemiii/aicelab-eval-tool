@@ -2,26 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { Box, Paper, Typography, Alert } from '@mui/material';
 import Chart from '../components/charts/Chart';
 import Controls from '../components/analysis/Controls';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 import { useData } from '../context/DataContext';
-import { useAnalysis } from '../hooks/useAnalysis';
+import { useCoF } from '../hooks/useCoF';
+import { useDisplacement } from '../hooks/useDisplacement';
+import { DEFAULTS } from '../constants/defaults';
 
 export default function AnalysisPage() {
   const { analysisData, fileName } = useData();
-  const {
-    fetchData, offset, filter, evaluate, viewResult,
-    loading, error, chartLines, calculated, offsetApplied, cofMarkers,
-    generateDisplacement, displacementOffset, displacementFilter, displacementEvaluate,
-    dispData, dispLines, dispOffsetApplied,
-  } = useAnalysis();
+  const cof  = useCoF();
+  const disp = useDisplacement();
 
   const [inputs, setInputs] = useState({
-    filterPoints: '100',
-    staticRange:  '15',
-    dynamicMin:   '20',
-    dynamicMax:   '80',
+    filterPoints: DEFAULTS.filterPoints,
+    staticRange:  DEFAULTS.staticRange,
+    dynamicMin:   DEFAULTS.dynamicMin,
+    dynamicMax:   DEFAULTS.dynamicMax,
   });
 
-  useEffect(() => { if (fileName) fetchData(); }, []);
+  useEffect(() => { if (fileName) cof.fetchData(); }, []);
 
   const handleInputChange = (key) => (e) => setInputs({ ...inputs, [key]: e.target.value });
 
@@ -34,42 +33,45 @@ export default function AnalysisPage() {
       <Controls
         inputs={inputs}
         handleInputChange={handleInputChange}
-        onOffset={offset}
-        onFilter={() => filter(inputs.filterPoints)}
-        onEvaluate={() => evaluate(inputs.staticRange, inputs.dynamicMin, inputs.dynamicMax)}
-        onDispGenerate={generateDisplacement}
-        onDispOffset={displacementOffset}
-        onDispFilter={() => displacementFilter(inputs.filterPoints)}
-        onDispEvaluate={displacementEvaluate}
         fileName={fileName}
-        onViewResult={viewResult}
-        loading={loading}
-        calculated={calculated}
-        offsetApplied={offsetApplied}
-        dispOffsetApplied={dispOffsetApplied}
+        onOffset={cof.offset}
+        onFilter={() => cof.filter(inputs.filterPoints)}
+        onEvaluate={() => cof.evaluate(inputs.staticRange, inputs.dynamicMin, inputs.dynamicMax)}
+        onDispGenerate={disp.generate}
+        onDispOffset={disp.offset}
+        onDispFilter={() => disp.filter(inputs.filterPoints)}
+        onDispEvaluate={disp.evaluate}
+        onViewResult={cof.viewResult}
+        loading={cof.loading || disp.loading}
+        calculated={cof.calculated}
+        offsetApplied={cof.offsetApplied}
+        dispOffsetApplied={disp.offsetApplied}
       />
 
-      <Box sx={{ flexGrow: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', gap: 1.5, overflowY: 'auto' }}>
+      <Box sx={{
+        flexGrow: 1, minWidth: 0, height: '100%',
+        display: 'flex', flexDirection: 'column', gap: 1.5, overflowY: 'auto',
+      }}>
 
-        {error && <Alert severity="error" sx={{ flexShrink: 0 }}>{error}</Alert>}
+        {cof.error && <Alert severity="error" sx={{ flexShrink: 0 }}>{cof.error}</Alert>}
 
         {/* CoF Chart */}
         <Paper elevation={1} sx={{ flexShrink: 0, height: '55vh', p: 2, borderRadius: 3, display: 'flex', flexDirection: 'column' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>
-            CoF
-          </Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>CoF</Typography>
           <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-            <Chart data={analysisData} xAxisKey="zeit" lines={chartLines} markers={cofMarkers} />
+            <ErrorBoundary>
+              <Chart data={analysisData} xAxisKey="zeit" lines={cof.chartLines} markers={cof.cofMarkers} />
+            </ErrorBoundary>
           </Box>
         </Paper>
 
         {/* Displacement Chart */}
         <Paper elevation={1} sx={{ flexShrink: 0, height: '55vh', p: 2, borderRadius: 3, display: 'flex', flexDirection: 'column' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>
-            Displacement
-          </Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 'bold', color: '#1f2a40', mb: 1 }}>Displacement</Typography>
           <Box sx={{ flexGrow: 1, minHeight: 0 }}>
-            <Chart data={dispData} xAxisKey="zeit" lines={dispLines} />
+            <ErrorBoundary>
+              <Chart data={disp.dispData} xAxisKey="zeit" lines={disp.dispLines} />
+            </ErrorBoundary>
           </Box>
         </Paper>
 

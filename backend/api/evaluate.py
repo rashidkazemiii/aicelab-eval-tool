@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
-from physics import utility_functions
+from services.signal_processor import processor
 from config import RESULT_COLUMNS, RESULT_COL_MAP, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,8 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 def _cof_minima(df, column):
-    m = utility_functions.Find_minima(df, column)
+    """Find zero-crossing minima and rename columns to the standard CoF schema."""
+    m = processor.find_minima(df, column)
     return m.rename(columns={
         f"-Min {column}": "-Min CoF",
         f"+Min {column}": "+Min CoF",
@@ -25,10 +26,12 @@ def _cof_minima(df, column):
 
 
 def _per_cycle_stats(df_eval, minima, static_range, dyn_min, dyn_max):
-    return utility_functions.Evaluate(df_eval, minima, "CoF", static_range, dyn_min, dyn_max)
+    """Compute per-cycle static and dynamic CoF statistics."""
+    return processor.evaluate_cycles(df_eval, minima, "CoF", static_range, dyn_min, dyn_max)
 
 
 def _aggregate_stats(per_cycle, time_range):
+    """Compute aggregate statistics across all cycles."""
     return {
         "timeRange":        time_range,
         "staticMeanCoF":    per_cycle["staticCoF"].mean(),
@@ -46,6 +49,7 @@ def _aggregate_stats(per_cycle, time_range):
 
 
 def _displacement_data(df_filter, neg_times):
+    """Find displacement minima and per-cycle maxima aligned to CoF cycle boundaries."""
     disp_col = next(
         (c for c in ("external displacement", "stroke_filtered", "stroke_shifted", "stroke")
          if c in df_filter.columns),
@@ -54,7 +58,7 @@ def _displacement_data(df_filter, neg_times):
     if disp_col is None:
         return pd.DataFrame()
 
-    dm = utility_functions.Find_minima(df_filter, disp_col)
+    dm = processor.find_minima(df_filter, disp_col)
     dm = dm.rename(columns={
         "-Min Zeit":          "dispMinZeit_neg",
         f"-Min {disp_col}":   "-Min disp",
@@ -93,9 +97,9 @@ def _displacement_data(df_filter, neg_times):
 
 @router.post("/evaluate")
 def evaluate(
-    static_cof_range:       float = DEFAULT_STATIC_RANGE,
-    beginning_dynamic_range:float = DEFAULT_DYN_MIN,
-    ending_dynamic_range:   float = DEFAULT_DYN_MAX,
+    static_cof_range:        float = DEFAULT_STATIC_RANGE,
+    beginning_dynamic_range: float = DEFAULT_DYN_MIN,
+    ending_dynamic_range:    float = DEFAULT_DYN_MAX,
 ):
     if state.df_filter is None:
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
@@ -106,8 +110,8 @@ def evaluate(
             "CoF"
         )
 
-        minima    = _cof_minima(state.df_filter, column)
-        df_eval   = state.df_filter.copy()
+        minima  = _cof_minima(state.df_filter, column)
+        df_eval = state.df_filter.copy()
         if "CoF_shifted" in df_eval.columns:
             df_eval["CoF"] = df_eval["CoF_shifted"]
 

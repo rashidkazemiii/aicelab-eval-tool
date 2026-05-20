@@ -1,8 +1,13 @@
 import numpy as np
-from .utility_functions import Find_minima, Evaluate
 
 
 def calculate(df, stroke, threshold=1):
+    """
+    Compute displacement (stroke) from rotational speed.
+
+    Unwraps the phase accumulated from RPM data, then projects it onto
+    a cosine wave scaled by the stroke amplitude from the file header.
+    """
     df["phase"] = 2 * np.pi * df["rotation speed"] / 60 * df["Zeit [s]"]
     diff = df["phase"].diff()
     mask = (diff < -threshold) | (diff > threshold)
@@ -10,21 +15,3 @@ def calculate(df, stroke, threshold=1):
     df["phase"] -= corrections
     df["stroke"] = 0.5 * stroke * np.cos(df["phase"])
     return df
-
-
-def find_minima(df):
-    return Find_minima(df, "stroke")
-
-
-def find_maxima(
-    df, stroke_minima, static_cof_range, beginning_dynamic_range, ending_dynamic_range
-):
-    return Evaluate(
-        df,
-        stroke_minima,
-        "stroke",
-        static_cof_range,
-        beginning_dynamic_range,
-        ending_dynamic_range,
-    )
-

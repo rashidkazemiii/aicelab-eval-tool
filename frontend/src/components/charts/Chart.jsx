@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Box, Typography } from '@mui/material';
+import { DEFAULTS } from '../../constants/defaults';
 
-function Chart({ data, xAxisKey, lines = [], markers = [], precision = 8 }) {
+function Chart({ data, xAxisKey, lines = [], markers = [], precision = DEFAULTS.chartPrecision }) {
 
   if (!data || data.length === 0) {
     return (
@@ -51,17 +52,11 @@ function Chart({ data, xAxisKey, lines = [], markers = [], precision = 8 }) {
           return `${Number(x).toFixed(3)} s<br/>${rows}`;
         },
       },
-
       legend: { top: 10 },
-
       grid: { left: 55, right: 20, top: 50, bottom: 90 },
-
       xAxis: { type: 'value', min: 'dataMin', max: 'dataMax', name: 's', nameLocation: 'end' },
-
       yAxis: { type: 'value' },
-
       dataZoom: [{ type: 'inside' }, { type: 'slider' }],
-
       series: [...lineSeries, ...scatterSeries],
     };
 
