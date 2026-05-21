@@ -218,7 +218,7 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
             movingdynamicRange = CoF[startdynamicIndex[-1] - 3 : enddynamicIndex[-1] - 2]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
-            dynamicCoFSD.append(np.std(movingdynamicRange))
+            dynamicCoFSD.append(np.std(movingdynamicRange, ddof=1))
             dynamicCoFn.append(len(movingdynamicRange))
             dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
             dynamicCoFvariance.append(
@@ -285,7 +285,7 @@ def CoF_Stat(CoF, step_df):
                 tempcount.append(count)
                 temptimeRange.append(f"{round(lowerLimit, 1)}–{round(upperLimit, 1)}")
                 tempstaticAvg.append(np.mean(absoluteCoF))
-                tempstaticStdDev.append(np.std(absoluteCoF))
+                tempstaticStdDev.append(np.std(absoluteCoF, ddof=1))
                 tempstaticAvgxN.append(tempstaticAvg[-1] * count)
                 tempstaticVar.append(
                     (tempstaticStdDev[-1]) ** 2 * (count - 1)
@@ -358,7 +358,7 @@ def CoF_Statisticspersecond(CoF, step_df):
             temp_count.append(count)
             temp_time_range.append(str(round(lower_limit, 1)) + "–" + str(round(upper_limit, 1)))
             temp_static_avg.append(np.mean(absolute_CoF))
-            temp_static_std_dev.append(np.std(absolute_CoF))
+            temp_static_std_dev.append(np.std(absolute_CoF, ddof=1))
             temp_static_avg_x_n.append(temp_static_avg[-1] * count)
             temp_static_var.append(
                 (temp_static_std_dev[-1]) ** 2 * (count - 1)
@@ -386,6 +386,12 @@ def CoF_Statisticspersecond(CoF, step_df):
         "Dynamic Avg * n": temp_dynamic_avg_x_n,
         "Dynamic Var":     temp_dynamic_var,
     })
+
+
+def CoF_StatContCheck(CoF, step_df, data_origin):
+    if data_origin == "SRV_FSA":
+        return CoF_Discontstatistics(CoF, step_df)
+    return CoF_Stat(CoF, step_df)
 
 
 def CoF_StatsepContCheck(CoF, step_df, data_origin):
@@ -450,8 +456,8 @@ def CoF_Contsepstatistics(CoF, step_df):
             temptimeRange.append(f"{round(lowerLimit, 1)}–{round(upperLimit, 1)}")
             tempstaticAvgL.append(np.mean(absoluteCoFL))
             tempstaticAvgR.append(np.mean(absoluteCoFR))
-            tempstaticStdDevL.append(np.std(absoluteCoFL))
-            tempstaticStdDevR.append(np.std(absoluteCoFR))
+            tempstaticStdDevL.append(np.std(absoluteCoFL, ddof=1))
+            tempstaticStdDevR.append(np.std(absoluteCoFR, ddof=1))
             tempstaticAvgxNL.append(np.mean(absoluteCoFL) * countL)
             tempstaticAvgxNR.append(np.mean(absoluteCoFR) * countR)
             tempstaticVarL.append(
@@ -561,8 +567,8 @@ def CoF_Discontsepstatistics(CoF, step_df):
             temptimeRange.append(str(round(lowerLimit, 1)) + "–" + str(round(upperLimit, 1)))
             tempstaticAvgL.append(np.mean(absoluteCoFL))
             tempstaticAvgR.append(np.mean(absoluteCoFR))
-            tempstaticStdDevL.append(np.std(absoluteCoFL))
-            tempstaticStdDevR.append(np.std(absoluteCoFR))
+            tempstaticStdDevL.append(np.std(absoluteCoFL, ddof=1))
+            tempstaticStdDevR.append(np.std(absoluteCoFR, ddof=1))
             tempstaticAvgxNL.append(tempstaticAvgL[-1] * countL)
             tempstaticAvgxNR.append(tempstaticAvgR[-1] * countR)
             tempstaticVarL.append(
@@ -618,4 +624,81 @@ def CoF_Discontsepstatistics(CoF, step_df):
         "Dynamic Count (Right)":   tempdynamiccountR,
         "Dynamic AvgxN (Right)":   tempdynamicAvgxNR,
         "Dynamic Variance (Right)":tempdynamicVarR,
+    })
+
+
+def CoF_Discontstatistics(CoF, step_df):
+    staticTime    = CoF["staticCoFTime"].to_numpy()
+    staticCoF     = CoF["staticCoF"].to_numpy()
+    dynamicStdDev = CoF["dynamicCoFSD"].to_numpy()
+    dynamiccount  = CoF["dynamicCoFn"].to_numpy()
+    dynamicAvgxN  = CoF["dynamicCoFsigma"].to_numpy()
+    dynamicVar    = CoF["dynamicCoFvariance"].to_numpy()
+    referenceTime = step_df["step_start"].to_numpy()
+
+    temptimeRange    = []
+    tempstaticAvg    = []
+    tempstaticStdDev = []
+    tempcount        = []
+    tempstaticAvgxN  = []
+    tempstaticVar    = []
+    tempdynamicAvg      = []
+    tempdynamiccount    = []
+    tempdynamicStdDev   = []
+    tempdynamicAvgxN    = []
+    tempdynamicVar      = []
+
+    for i in range(0, len(referenceTime) - 1, 2):
+        lowerLimit = referenceTime[i]
+        upperLimit = referenceTime[i + 1]
+
+        absoluteCoF        = []
+        stepdynamicStdDev  = []
+        stepdynamiccount   = []
+        stepdynamicAvgxN   = []
+        stepdynamicVar     = []
+
+        for j in range(len(staticTime)):
+            if pd.notnull(staticTime[j]) and lowerLimit <= staticTime[j] <= upperLimit:
+                absoluteCoF.append(abs(staticCoF[j]))
+                stepdynamicStdDev.append(dynamicStdDev[j])
+                stepdynamiccount.append(dynamiccount[j])
+                stepdynamicAvgxN.append(dynamicAvgxN[j])
+                stepdynamicVar.append(dynamicVar[j])
+
+        count = len(absoluteCoF)
+        if count != 0:
+            tempcount.append(count)
+            temptimeRange.append(str(round(lowerLimit, 1)) + "–" + str(round(upperLimit, 1)))
+            tempstaticAvg.append(np.mean(absoluteCoF))
+            tempstaticStdDev.append(np.std(absoluteCoF, ddof=1))
+            tempstaticAvgxN.append(tempstaticAvg[-1] * count)
+            tempstaticVar.append(
+                (tempstaticStdDev[-1]) ** 2 * (count - 1)
+                + (tempstaticAvgxN[-1]) ** 2 / count
+            )
+            tempdynamiccount.append(sum(stepdynamiccount))
+            tempdynamicAvgxN.append(sum(stepdynamicAvgxN))
+            tempdynamicVar.append(sum(stepdynamicVar))
+            tempdynamicAvg.append(
+                tempdynamicAvgxN[-1] / tempdynamiccount[-1] if tempdynamiccount[-1] != 0 else 0
+            )
+            tempdynamicStdDev.append(
+                ((tempdynamicVar[-1] - (tempdynamicAvgxN[-1]) ** 2 / tempdynamiccount[-1])
+                 / (tempdynamiccount[-1] - 1)) ** 0.5
+                if tempdynamiccount[-1] > 1 else 0
+            )
+
+    return pd.DataFrame({
+        "Time Range":      temptimeRange,
+        "Static Avg":      tempstaticAvg,
+        "Static Std Dev":  tempstaticStdDev,
+        "Static N":        tempcount,
+        "Static Avg x N":  tempstaticAvgxN,
+        "Static Var":      tempstaticVar,
+        "Dynamic Avg":     tempdynamicAvg,
+        "Dynamic Std Dev": tempdynamicStdDev,
+        "Dynamic N":       tempdynamiccount,
+        "Dynamic Avg x N": tempdynamicAvgxN,
+        "Dynamic Var":     tempdynamicVar,
     })
