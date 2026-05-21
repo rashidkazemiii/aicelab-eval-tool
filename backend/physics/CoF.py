@@ -197,8 +197,8 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
                     f"Indices {startIndex[i]} and {startIndex[i-1]} may be too close "
                     f"(t = {Time[startIndex[i-1]]})."
                 )
-            movingTimeRange = Time[startIndex[i - 1] - 1 : endIndex]
-            movingRange     = CoF[startIndex[i - 1] - 1 : endIndex]
+            movingTimeRange = Time[startIndex[i - 1] - 3 : endIndex - 2]
+            movingRange     = CoF[startIndex[i - 1] - 3 : endIndex - 2]
             if CoF[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 index, element = max(enumerate(movingRange), key=lambda x: x[1])

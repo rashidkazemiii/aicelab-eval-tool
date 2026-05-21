@@ -115,7 +115,7 @@ def _aggregate_stats(per_cycle, time_range):
     """Compute aggregate statistics across all cycles."""
     return {
         "timeRange":         time_range,
-        "staticMeanCoF":     per_cycle["staticCoF"].mean(),
+        "staticMeanCoF":     per_cycle["staticCoF"].abs().mean(),
         "staticCoFSD_agg":   per_cycle["staticCoF"].std(),
         "staticCoFN_agg":    int(per_cycle["staticCoF"].count()),
         "staticCoFSum_agg":  per_cycle["staticCoF"].sum(),
