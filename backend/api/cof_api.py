@@ -203,22 +203,22 @@ def evaluate(
         disp = _displacement_data(state.df_work, minima["neg_time"].tolist())
 
         n = len(per_cycle)
-        state.df_result = pd.DataFrame(float("nan"), index=range(n), columns=RESULT_COLUMNS)
+        n_rows = max(n, len(minima))
+        state.df_result = pd.DataFrame(float("nan"), index=range(n_rows), columns=RESULT_COLUMNS)
 
         for col in per_cycle.columns:
             if col in state.df_result.columns:
-                state.df_result[col] = per_cycle[col].values
+                state.df_result.loc[:n - 1, col] = per_cycle[col].values
 
-        m = min(len(minima), n)
         for col in minima.columns:
             if col in state.df_result.columns:
-                state.df_result.loc[:m - 1, col] = minima[col].values[:m]
+                state.df_result.loc[:len(minima) - 1, col] = minima[col].values
 
         if n > 0:
             for col, val in agg.items():
                 state.df_result.loc[0, col] = val
 
-        d = min(len(disp), n)
+        d = min(len(disp), n_rows)
         for col in disp.columns:
             if col in state.df_result.columns:
                 state.df_result.loc[:d - 1, col] = disp[col].values[:d]

@@ -55,8 +55,25 @@ def cof_offset(series: pd.Series, time: pd.Series, step_df=None) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 def cof_filter(series: pd.Series, n: int) -> pd.Series:
-    """Rolling median filter for CoF signal."""
-    return series.rolling(n, center=True, min_periods=1).median()
+    """Rolling median filter matching VBA CoFFilter: symmetric shrinking window at edges, n+1 wide in middle."""
+    values = series.to_numpy(dtype=float)
+    N = len(values)
+    half = n // 2
+    result = np.empty(N)
+
+    # Middle section: vectorized — one median call over all (n+1)-wide windows
+    mid_lo, mid_hi = half, N - half
+    if mid_hi > mid_lo:
+        windows = np.lib.stride_tricks.sliding_window_view(values, 2 * half + 1)
+        result[mid_lo:mid_hi] = np.median(windows, axis=1)
+
+    # Edge sections: symmetric shrinking window — only ~half iterations each
+    for idx in range(mid_lo):
+        result[idx] = np.median(values[: 2 * idx + 1])
+    for idx in range(mid_hi, N):
+        result[idx] = np.median(values[2 * idx - N + 1 :])
+
+    return pd.Series(result, index=series.index)
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +197,8 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
                     f"Indices {startIndex[i]} and {startIndex[i-1]} may be too close "
                     f"(t = {Time[startIndex[i-1]]})."
                 )
-            movingTimeRange = Time[startIndex[i - 1] : endIndex]
-            movingRange     = Stroke[startIndex[i - 1] : endIndex]
+            movingTimeRange = Time[startIndex[i - 1] - 1 : endIndex]
+            movingRange     = Stroke[startIndex[i - 1] - 1 : endIndex]
             if Stroke[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 index, element = max(enumerate(movingRange), key=lambda x: x[1])
@@ -193,12 +210,12 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
             maxStrokeTime.append(movingTimeRange[index])
             startdynamicIndex.append(startIndex[i - 1] + round(b * (startIndex[i] - startIndex[i - 1])))
             enddynamicIndex.append(  startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1])))
-            startdynamicTime.append(Time[startdynamicIndex[-1]])
-            enddynamicTime.append(  Time[enddynamicIndex[-1]])
-            startdynamicCoF.append( Stroke[startdynamicIndex[-1]])
-            enddynamicCoF.append(   Stroke[enddynamicIndex[-1]])
+            startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
+            enddynamicTime.append(  Time[enddynamicIndex[-1] - 1])
+            startdynamicCoF.append( Stroke[startdynamicIndex[-1] - 1])
+            enddynamicCoF.append(   Stroke[enddynamicIndex[-1] - 1])
 
-            movingdynamicRange = Stroke[startdynamicIndex[-1] : enddynamicIndex[-1]]
+            movingdynamicRange = Stroke[startdynamicIndex[-1] - 1 : enddynamicIndex[-1]]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
             dynamicCoFSD.append(np.std(movingdynamicRange))
