@@ -116,10 +116,10 @@ def _aggregate_stats(per_cycle, time_range):
     return {
         "timeRange":         time_range,
         "staticMeanCoF":     per_cycle["staticCoF"].abs().mean(),
-        "staticCoFSD_agg":   per_cycle["staticCoF"].std(),
+        "staticCoFSD_agg":   per_cycle["staticCoF"].abs().std(),
         "staticCoFN_agg":    int(per_cycle["staticCoF"].count()),
-        "staticCoFSum_agg":  per_cycle["staticCoF"].sum(),
-        "staticCoFVar_agg":  per_cycle["staticCoF"].var(),
+        "staticCoFSum_agg":  per_cycle["staticCoF"].abs().sum(),
+        "staticCoFVar_agg":  (per_cycle["staticCoF"] ** 2).sum(),
         "dynamicMeanCoF":    per_cycle["dynamicCoFsigma"].sum() / per_cycle["dynamicCoFn"].sum(),
         "dynamicCoFSD_agg":  (
             (per_cycle["dynamicCoFvariance"].sum() - per_cycle["dynamicCoFsigma"].sum() ** 2 / per_cycle["dynamicCoFn"].sum())
