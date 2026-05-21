@@ -127,7 +127,7 @@ def _aggregate_stats(per_cycle, time_range):
         ) ** 0.5,
         "dynamicCoFN_agg":   int(per_cycle["dynamicCoFn"].sum()),
         "dynamicCoFSum_agg": per_cycle["dynamicCoFsigma"].sum(),
-        "dynamicCoFVar_agg": per_cycle["dynamicCoF"].var(),
+        "dynamicCoFVar_agg": per_cycle["dynamicCoFvariance"].sum(),
         "integralTimeRange": time_range,
     }
 
