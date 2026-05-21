@@ -151,6 +151,12 @@ def cof_find_minima(df: pd.DataFrame, column: str = "cof") -> pd.DataFrame:
 # CoF_Evaluate
 # ---------------------------------------------------------------------------
 
+def _vba_round(x):
+    """Standard rounding (round half up), matching VBA's WorksheetFunction.Round."""
+    import math
+    return math.floor(x + 0.5)
+
+
 def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_dynamic_range):
     """
     Per-cycle static and dynamic CoF statistics.
@@ -190,7 +196,7 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
 
     for i in range(1, len(negMinTime)):
         try:
-            endIndex = startIndex[i - 1] + round(a * (startIndex[i] - startIndex[i - 1]))
+            endIndex = startIndex[i - 1] + _vba_round(a * (startIndex[i] - startIndex[i - 1]))
             if startIndex[i - 1] == endIndex:
                 raise Exception(
                     f"Start and end index are equal ({endIndex}). "
@@ -208,8 +214,8 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
             else:
                 continue
             maxStrokeTime.append(movingTimeRange[index])
-            startdynamicIndex.append(startIndex[i - 1] + round(b * (startIndex[i] - startIndex[i - 1])))
-            enddynamicIndex.append(  startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1])))
+            startdynamicIndex.append(startIndex[i - 1] + _vba_round(b * (startIndex[i] - startIndex[i - 1])))
+            enddynamicIndex.append(  startIndex[i - 1] + _vba_round(c * (startIndex[i] - startIndex[i - 1])))
             startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
             enddynamicTime.append(  Time[enddynamicIndex[-1] - 1])
             startdynamicCoF.append( CoF[startdynamicIndex[-1] - 1])
