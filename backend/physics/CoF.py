@@ -164,7 +164,7 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
     c = 0.01 * ending_dynamic_range
 
     Time       = df["time"].tolist()
-    Stroke     = df["cof"].tolist()
+    CoF        = df["cof"].tolist()
     negMinTime = minima["neg_time"].tolist()
 
     startIndex         = []
@@ -198,11 +198,11 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
                     f"(t = {Time[startIndex[i-1]]})."
                 )
             movingTimeRange = Time[startIndex[i - 1] - 1 : endIndex]
-            movingRange     = Stroke[startIndex[i - 1] - 1 : endIndex]
-            if Stroke[endIndex - 1] > 0:
+            movingRange     = CoF[startIndex[i - 1] - 1 : endIndex]
+            if CoF[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 index, element = max(enumerate(movingRange), key=lambda x: x[1])
-            elif Stroke[endIndex - 1] < 0:
+            elif CoF[endIndex - 1] < 0:
                 maxStroke.append(min(movingRange))
                 index, element = min(enumerate(movingRange), key=lambda x: x[1])
             else:
@@ -212,10 +212,10 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
             enddynamicIndex.append(  startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1])))
             startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
             enddynamicTime.append(  Time[enddynamicIndex[-1] - 1])
-            startdynamicCoF.append( Stroke[startdynamicIndex[-1] - 1])
-            enddynamicCoF.append(   Stroke[enddynamicIndex[-1] - 1])
+            startdynamicCoF.append( CoF[startdynamicIndex[-1] - 1])
+            enddynamicCoF.append(   CoF[enddynamicIndex[-1] - 1])
 
-            movingdynamicRange = Stroke[startdynamicIndex[-1] - 1 : enddynamicIndex[-1]]
+            movingdynamicRange = CoF[startdynamicIndex[-1] - 3 : enddynamicIndex[-1] - 2]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
             dynamicCoFSD.append(np.std(movingdynamicRange))
