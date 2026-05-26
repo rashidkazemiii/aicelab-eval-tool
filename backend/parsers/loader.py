@@ -29,11 +29,14 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
 
     if step_df is None:
         if df is not None and not df.empty:
+            max_t = df["time"].max()
+            # Two-row structure: active segment + closing marker.
+            # step_df["step_start"] becomes [0, max_t], matching the
+            # [start₁, end₁] paired layout expected by CoF_Discontstatistics.
             step_df = pd.DataFrame({
-                'Step':       [0],
-                'step_start': [0],
-                'step_end':   [df["time"].max()],
-                'inactive':   [False],
+                'step_start': [0,     max_t],
+                'step_end':   [max_t, max_t],
+                'inactive':   [False, True],
             })
         else:
             logger.warning("Loaded DataFrame is empty — step_df could not be generated.")

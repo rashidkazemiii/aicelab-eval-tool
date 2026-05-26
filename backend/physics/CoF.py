@@ -8,7 +8,7 @@ import warnings
 import logging
 import numpy as np
 import pandas as pd
-from config import ZERO_CROSSING_DT_THRESHOLD, CYCLE_NOISE_RATIO
+from config import ZERO_CROSSING_DT_THRESHOLD, CYCLE_NOISE_RATIO, SRV_TIME_GAP_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,11 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
         startIndex.append(time_to_idx[t] + 1)
 
     for i in range(1, len(negMinTime)):
+        # Skip phantom cycles that span an inter-step gap (SRV_FSA discontinuous tests).
+        # A gap larger than SRV_TIME_GAP_THRESHOLD means the two zero-crossings belong
+        # to different steps and should not be treated as a single cycle.
+        if negMinTime[i] - negMinTime[i - 1] > SRV_TIME_GAP_THRESHOLD:
+            continue
         try:
             endIndex = startIndex[i - 1] + _vba_round(a * (startIndex[i] - startIndex[i - 1]))
             if startIndex[i - 1] == endIndex:
@@ -640,6 +645,8 @@ def CoF_Discontstatistics(CoF, step_df):
     dynamiccount  = CoF["dynamicCoFn"].to_numpy()
     dynamicAvgxN  = CoF["dynamicCoFsigma"].to_numpy()
     dynamicVar    = CoF["dynamicCoFvariance"].to_numpy()
+    # step_df["step_start"] is structured as [start₁, end₁, start₂, end₂, …]
+    # matching the VBA referenceTime column D layout.
     referenceTime = step_df["step_start"].to_numpy()
 
     temptimeRange    = []

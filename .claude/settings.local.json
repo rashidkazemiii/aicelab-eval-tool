@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(Get-ChildItem \"c:\\\\Users\\\\kaz\\\\Desktop\\\\Tribology\\\\ICELAB\\\\Eval_Tool\\\\backend\\\\temp_uploads\")",
+      "Bash(head -5 m07168-FSA.txt)",
+      "Bash(powershell -command \"Get-Content m07168-FSA.txt -TotalCount 5\")"
+    ]
+  }
+}

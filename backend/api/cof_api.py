@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
-from physics.cof import cof_calculate, cof_offset, cof_filter, cof_find_minima, cof_evaluate
+from physics.cof import cof_calculate, cof_offset, cof_filter, cof_find_minima, cof_evaluate, CoF_Discontstatistics
 from config import (
     DEFAULT_FILTER_WINDOW, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX,
     RESULT_COLUMNS, RESULT_COL_MAP,
@@ -23,11 +23,16 @@ def calculate():
     if state.df_raw is None:
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     try:
-        df = cof_calculate(state.df_raw.copy(), None)
+        df = state.df_raw.copy()
+        # OFT files need CoF computed from friction-force columns.
+        # SRV / SRV_FSA already export a 'cof' column — skip the calculation.
+        if "cof" not in df.columns:
+            df = cof_calculate(df, None)
         keep = ["time", "cof", "stroke", "external displacement"]
         state.df_work = df[[c for c in keep if c in df.columns]].copy()
         state.df_work["cof"] = state.df_work["cof"].round(5)
-        state.df_result = None
+        state.df_result     = None
+        state.df_step_stats = None
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Calculate failed: {e}")
@@ -217,9 +222,35 @@ def evaluate(
             if col in state.df_result.columns:
                 state.df_result.loc[:len(minima) - 1, col] = minima[col].values
 
-        if n > 0:
+        if state.data_type == "SRV_FSA" and state.step_df is not None and n > 0:
+            # SRV_FSA: fill one aggregate row per active step (N rows instead of 1).
+            # "Time Range" from CoF_Discontstatistics is a string ("0.0–2.5"),
+            # so convert that column to object dtype before writing.
+            step_stats = CoF_Discontstatistics(per_cycle, state.step_df)
+            state.df_step_stats = step_stats
+            state.df_result["timeRange"] = state.df_result["timeRange"].astype(object)
+            _STEP_COL_MAP = {
+                "Time Range":      "timeRange",
+                "Static Avg":      "staticMeanCoF",
+                "Static Std Dev":  "staticCoFSD_agg",
+                "Static N":        "staticCoFN_agg",
+                "Static Avg x N":  "staticCoFSum_agg",
+                "Static Var":      "staticCoFVar_agg",
+                "Dynamic Avg":     "dynamicMeanCoF",
+                "Dynamic Std Dev": "dynamicCoFSD_agg",
+                "Dynamic N":       "dynamicCoFN_agg",
+                "Dynamic Avg x N": "dynamicCoFSum_agg",
+                "Dynamic Var":     "dynamicCoFVar_agg",
+            }
+            for step_i, step_row in step_stats.reset_index(drop=True).iterrows():
+                for src, dst in _STEP_COL_MAP.items():
+                    if src in step_row.index and dst in state.df_result.columns:
+                        state.df_result.loc[step_i, dst] = step_row[src]
+        elif n > 0:
+            # OFT / SRV: single aggregate row (unchanged)
             for col, val in agg.items():
                 state.df_result.loc[0, col] = val
+            state.df_step_stats = None
 
         d = min(len(disp), n_rows)
         for col in disp.columns:
@@ -268,4 +299,42 @@ def get_result_html():
   .data-table tr:hover td {{ background: #eef2ff; }}
 </style></head>
 <body><h2>Evaluation Result</h2>{table}</body></html>"""
+    return HTMLResponse(content=html)
+
+
+# ---------------------------------------------------------------------------
+# SRV_FSA per-step statistics  (new — OFT result above is untouched)
+# ---------------------------------------------------------------------------
+
+@router.get("/step-stats/json")
+def get_step_stats_json():
+    if state.df_step_stats is None:
+        return JSONResponse(status_code=400, content={"error": "No step stats available. Run evaluate on an SRV_FSA file first."})
+    return Response(
+        content=state.df_step_stats.to_json(orient="records", double_precision=8),
+        media_type="application/json",
+    )
+
+
+@router.get("/step-stats/html")
+def get_step_stats_html():
+    if state.df_step_stats is None:
+        last_err = state.last_error
+        msg = f"<p style='color:#c0392b'><b>Last error:</b> {last_err}</p>" if last_err else ""
+        return HTMLResponse(content=f"""<!DOCTYPE html><html><head><title>Step Stats</title>
+<style>body{{font-family:monospace;padding:40px;background:#f4f6f8;color:#1f2a40}}</style></head>
+<body><h2>No step stats yet</h2>
+<p>Run <b>Evaluate</b> on an <b>SRV_FSA</b> file first.</p>{msg}</body></html>""")
+
+    table = state.df_step_stats.to_html(index=False, border=0, classes="data-table", na_rep="")
+    html = f"""<!DOCTYPE html><html><head><title>Step Statistics</title>
+<style>
+  body {{ font-family: monospace; font-size: 12px; padding: 20px; background: #f4f6f8; overflow-x: auto; }}
+  h2 {{ color: #1f2a40; }}
+  .data-table {{ border-collapse: collapse; background: #fff; white-space: nowrap; }}
+  .data-table th {{ background: #1f2a40; color: #fff; padding: 6px 12px; text-align: right; position: sticky; top: 0; }}
+  .data-table td {{ padding: 4px 12px; text-align: right; border-bottom: 1px solid #e0e0e0; }}
+  .data-table tr:hover td {{ background: #eef2ff; }}
+</style></head>
+<body><h2>Per-Step Statistics (SRV_FSA)</h2>{table}</body></html>"""
     return HTMLResponse(content=html)

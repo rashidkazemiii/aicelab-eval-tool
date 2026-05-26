@@ -31,6 +31,21 @@ def readRawFile(filename: str) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
     if len(start_time) == 0:
         step_df = None
     else:
+        # The loop only adds an active segment when a gap follows it.
+        # The final active segment has no trailing gap, so add it explicitly.
+        # Then add a closing marker so step_df["step_start"] is even-length:
+        #   [start₁, end₁, start₂, end₂, …, startN, endN]
+        # This matches the VBA referenceTime structure expected by
+        # CoF_Discontstatistics / CoF_Discontsepstatistics.
+        final_end = data["time"].iloc[-1]
+        if final_end > previous_end:
+            start_time.append(previous_end)
+            end_time.append(final_end)
+            inactive.append(False)
+            # closing marker — zero-duration inactive row that carries endN
+            start_time.append(final_end)
+            end_time.append(final_end)
+            inactive.append(True)
         step_df = pd.DataFrame(
             {"step_start": start_time, "step_end": end_time, "inactive": inactive}
         )

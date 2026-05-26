@@ -8,20 +8,22 @@ class SessionState:
     file_path: Optional[str] = None
     data_type: str = "OFT"
 
-    df_raw:    Optional[pd.DataFrame] = None
-    df_work: Optional[pd.DataFrame] = None   # time, cof, cof_shifted, cof_filtered, stroke, stroke_shifted, stroke_filtered
-    df_result: Optional[pd.DataFrame] = None   # per-cycle stats, schema = RESULT_COLUMNS
-    step_df:   Optional[pd.DataFrame] = None
-    header:     Optional[dict] = None
-    last_error: Optional[str] = None
+    df_raw:        Optional[pd.DataFrame] = None
+    df_work:       Optional[pd.DataFrame] = None   # time, cof, cof_shifted, cof_filtered, stroke, stroke_shifted, stroke_filtered
+    df_result:     Optional[pd.DataFrame] = None   # per-cycle stats, schema = RESULT_COLUMNS
+    df_step_stats: Optional[pd.DataFrame] = None   # SRV_FSA only: one row per active step
+    step_df:       Optional[pd.DataFrame] = None
+    header:        Optional[dict] = None
+    last_error:    Optional[str] = None
 
     def reset(self):
-        self.df_raw     = None
-        self.df_work  = None
-        self.df_result  = None
-        self.step_df    = None
-        self.header     = None
-        self.last_error = None
+        self.df_raw        = None
+        self.df_work       = None
+        self.df_result     = None
+        self.df_step_stats = None
+        self.step_df       = None
+        self.header        = None
+        self.last_error    = None
 
 
 state = SessionState()
