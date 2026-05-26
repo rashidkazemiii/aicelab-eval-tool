@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-const api = axios.create({ baseURL: API_BASE_URL });
+const api = axios.create({ baseURL: API_BASE_URL, timeout: 30000 });
 
 // Upload & calculate
 export const uploadFile        = (formData, dataType = 'OFT') =>
@@ -27,5 +27,11 @@ export const getDispOffset        = () => api.get('/displacement/offset');
 export const applyDispFilter      = (window) => api.post(`/displacement/filter?window=${window}`);
 export const getDispFilter        = () => api.get('/displacement/filter');
 export const applyDispEvaluate    = () => api.post('/displacement/evaluate');
+
+// History / database
+export const getHistory      = ()             => api.get('/history');
+export const getTestCycles   = (testId)       => api.get(`/history/${testId}/cycles`);
+export const deleteTest      = (testId)       => api.delete(`/history/${testId}`);
+export const saveResult      = (force = false) => api.post(`/history/save?force=${force}`);
 
 export default api;

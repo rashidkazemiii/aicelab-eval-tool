@@ -271,6 +271,7 @@ def evaluate(
 
         agg_serializable = {k: (None if pd.isna(v) else v) for k, v in agg.items()
                             if not isinstance(v, pd.Series)}
+
         return {"status": "success", "cycles": n, "aggregate": agg_serializable}
 
     except Exception as e:

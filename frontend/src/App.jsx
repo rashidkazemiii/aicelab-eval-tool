@@ -5,8 +5,9 @@ import { DataProvider } from './context/DataContext';
 import Layout from './components/layout/Layout';
 
 // 2. Import your Pages
-import UploadPage from './pages/UploadPage';
+import UploadPage  from './pages/UploadPage';
 import AnalysisPage from './pages/AnalysisPage';
+import HistoryPage  from './pages/HistoryPage';
 
 function App() {
   const [activeTab, setActiveTab] = useState('upload');
@@ -17,11 +18,9 @@ function App() {
       <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
         
         {/* This logic block is the "children" passed to Layout */}
-        {activeTab === 'upload' ? (
-          <UploadPage onSwitch={() => setActiveTab('analysis')} />
-        ) : (
-          <AnalysisPage />
-        )}
+        {activeTab === 'upload'   && <UploadPage onSwitch={() => setActiveTab('analysis')} />}
+        {activeTab === 'analysis' && <AnalysisPage />}
+        {activeTab === 'history'  && <HistoryPage />}
         
       </Layout>
     </DataProvider>

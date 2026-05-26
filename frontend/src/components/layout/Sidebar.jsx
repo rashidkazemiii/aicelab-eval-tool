@@ -2,14 +2,16 @@ import React from 'react';
 import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Typography } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import AssessmentIcon from '@mui/icons-material/Assessment';
+import HistoryIcon    from '@mui/icons-material/History';
 import { useData } from '../../context/DataContext';
 
 export default function Sidebar({ activeTab, setActiveTab }) {
   const { setAnalysisData, setFileName } = useData();
 
   const menuItems = [
-    { id: 'upload', text: 'Upload Data', icon: <UploadFileIcon /> },
-    { id: 'analysis', text: 'Analysis', icon: <AssessmentIcon /> },
+    { id: 'upload',   text: 'Upload Data', icon: <UploadFileIcon /> },
+    { id: 'analysis', text: 'Analysis',    icon: <AssessmentIcon /> },
+    { id: 'history',  text: 'History',     icon: <HistoryIcon /> },
   ];
 
   return (

@@ -42,9 +42,12 @@ export default function AnalysisPage() {
         onDispFilter={() => disp.filter(inputs.filterPoints)}
         onDispEvaluate={disp.evaluate}
         onViewResult={cof.viewResult}
+        onSave={cof.save}
+        saveStatus={cof.saveStatus}
         loading={cof.loading || disp.loading}
         calculated={cof.calculated}
         offsetApplied={cof.offsetApplied}
+        evaluateApplied={cof.evaluateApplied}
         dispOffsetApplied={disp.offsetApplied}
       />
 

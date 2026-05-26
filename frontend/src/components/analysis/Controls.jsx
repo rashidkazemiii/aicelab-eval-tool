@@ -9,8 +9,8 @@ export default function Controls({
   fileName,
   onOffset, onFilter, onEvaluate,
   onDispGenerate, onDispOffset, onDispFilter, onDispEvaluate,
-  onViewResult,
-  loading, calculated, offsetApplied, dispOffsetApplied,
+  onViewResult, onSave, saveStatus,
+  loading, calculated, offsetApplied, evaluateApplied, dispOffsetApplied,
 }) {
   const busy = loading;
 
@@ -104,9 +104,16 @@ export default function Controls({
         </Button>
 
         {/* ── Save ──────────────────────────────────────────── */}
-        <Button fullWidth sx={{ bgcolor: COLORS.save }} disabled>
-          {/* Future feature */}
-          Save
+        <Button
+          fullWidth
+          sx={{ bgcolor: COLORS.save, '&:hover': { bgcolor: '#1b5e20' } }}
+          onClick={onSave}
+          disabled={busy || !evaluateApplied}
+        >
+          {saveStatus === 'saving' ? <CircularProgress size={16} color="inherit" /> :
+           saveStatus === 'saved'  ? '✓ Saved' :
+           saveStatus === 'error'  ? 'Save failed' :
+           'Save'}
         </Button>
 
       </Stack>

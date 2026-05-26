@@ -305,6 +305,171 @@ def cof_evaluate(df, minima, static_cof_range, beginning_dynamic_range, ending_d
 
 
 # ---------------------------------------------------------------------------
+# CoF_fromStrokeEvaluate
+# ---------------------------------------------------------------------------
+
+def cof_from_stroke_evaluate(
+    df: pd.DataFrame,
+    stroke_maxima: pd.DataFrame,
+    static_cof_range: float,
+    beginning_dynamic_range: float,
+    ending_dynamic_range: float,
+    step_df=None,
+    data_type: str = "OFT",
+) -> pd.DataFrame:
+    """
+    Per-cycle CoF analysis using stroke displacement maxima as cycle boundaries.
+
+    Identical algorithm to cof_evaluate, but instead of CoF zero-crossings
+    (cof_find_minima) the cycle boundaries are defined by the displacement
+    peak times produced by stroke_evaluate ('maxstrokeTime' column).
+
+    Pause-time threshold (inter-cycle gap that marks a step break):
+      - SRV_FSA : 80 % of the time between the first two active step starts
+                  (matches the VBA heuristic: 0.8 × (D5 − D4))
+      - OFT/SRV : 10 s  (fixed, matching VBA's continuous-test branch)
+
+    Output schema is identical to cof_evaluate so the same statistics
+    functions (CoF_Stat, CoF_Discontstatistics, …) consume it directly.
+
+    Parameters
+    ----------
+    df             : DataFrame with 'time' and 'cof' columns (filtered signal).
+    stroke_maxima  : DataFrame from stroke_evaluate — must have 'maxstrokeTime'.
+    static_cof_range        : % of cycle for static CoF window  (e.g. 15).
+    beginning_dynamic_range : % marking dynamic window start    (e.g. 20).
+    ending_dynamic_range    : % marking dynamic window end      (e.g. 80).
+    step_df  : step table (used for SRV_FSA pause-time calculation).
+    data_type: 'OFT', 'SRV', or 'SRV_FSA'.
+    """
+    a = 0.01 * static_cof_range
+    b = 0.01 * beginning_dynamic_range
+    c = 0.01 * ending_dynamic_range
+
+    # ---- pause-time threshold -------------------------------------------
+    if data_type == "SRV_FSA" and step_df is not None:
+        active = step_df[~step_df["inactive"]].reset_index(drop=True)
+        if len(active) >= 2:
+            pause_time = 0.8 * (active.iloc[1]["step_start"] - active.iloc[0]["step_start"])
+        else:
+            pause_time = SRV_TIME_GAP_THRESHOLD
+    else:
+        pause_time = 10.0   # fixed for continuous OFT / SRV tests
+
+    Time = df["time"].tolist()
+    CoF  = df["cof"].tolist()
+
+    # Stroke displacement maxima times (NaN rows dropped — matches VBA's
+    # "remove spaces from the Max time array" block)
+    maxtime = stroke_maxima["maxstrokeTime"].dropna().tolist()
+    if len(maxtime) < 2:
+        logger.warning("cof_from_stroke_evaluate: fewer than 2 stroke maxima — no cycles to evaluate.")
+        return pd.DataFrame()
+
+    # Map each maxtime to its 0-based position in the Time array
+    time_to_idx = {t: i for i, t in enumerate(Time)}
+    startIndex = [time_to_idx[t] for t in maxtime if t in time_to_idx]
+    if len(startIndex) < 2:
+        logger.warning("cof_from_stroke_evaluate: could not match stroke maxima to time array.")
+        return pd.DataFrame()
+
+    # Per-cycle output lists (same schema as cof_evaluate)
+    staticCoFTime_     = []
+    staticCoF_         = []
+    startdynamicTime_  = []
+    startdynamicCoF_   = []
+    enddynamicTime_    = []
+    enddynamicCoF_     = []
+    dynamicCoFTime_    = []
+    dynamicCoF_        = []
+    dynamicCoFSD_      = []
+    dynamicCoFn_       = []
+    dynamicCoFsigma_   = []
+    dynamicCoFvariance_= []
+
+    for i in range(1, len(maxtime)):
+        # Skip phantom inter-step cycles (gap larger than pause threshold)
+        if maxtime[i] - maxtime[i - 1] > pause_time:
+            continue
+        try:
+            si = startIndex[i - 1]   # cycle start index
+            ei = startIndex[i]       # cycle end index
+
+            # Static window: first `a` fraction of the cycle
+            end_static = si + _vba_round(a * (ei - si))
+            if si == end_static:
+                raise ValueError(
+                    f"Static window is zero-length at index {si} (t={Time[si]:.4f})"
+                )
+
+            mov_cof  = CoF[si : end_static + 1]   # inclusive, matching VBA Range
+            mov_time = Time[si : end_static + 1]
+
+            if not mov_cof:
+                continue
+
+            # Sign of CoF at the window boundary determines peak direction
+            cof_at_boundary = CoF[end_static] if end_static < len(CoF) else CoF[-1]
+
+            if cof_at_boundary > 0:
+                peak_val = max(mov_cof)
+                peak_pos = mov_cof.index(peak_val)
+            elif cof_at_boundary < 0:
+                peak_val = min(mov_cof)
+                peak_pos = mov_cof.index(peak_val)
+            else:
+                continue
+
+            staticCoF_.append(peak_val)
+            staticCoFTime_.append(mov_time[peak_pos])
+
+            # Dynamic window: b% → c% of the cycle
+            sd_start = si + _vba_round(b * (ei - si))
+            sd_end   = si + _vba_round(c * (ei - si))
+
+            startdynamicTime_.append(Time[sd_start])
+            enddynamicTime_.append(Time[sd_end])
+            startdynamicCoF_.append(CoF[sd_start])
+            enddynamicCoF_.append(CoF[sd_end])
+
+            dyn = CoF[sd_start : sd_end + 1]   # inclusive
+            n   = len(dyn)
+            if n == 0:
+                raise ValueError(f"Empty dynamic window at cycle {i}")
+
+            mean_dyn = sum(dyn) / n
+            sd_dyn   = float(np.std(dyn, ddof=1)) if n > 1 else 0.0
+            sigma    = abs(mean_dyn) * n
+            variance = sd_dyn ** 2 * (n - 1) + sigma ** 2 / n
+
+            dynamicCoFTime_.append((Time[sd_start] + Time[sd_end]) / 2)
+            dynamicCoF_.append(mean_dyn)
+            dynamicCoFSD_.append(sd_dyn)
+            dynamicCoFn_.append(n)
+            dynamicCoFsigma_.append(sigma)
+            dynamicCoFvariance_.append(variance)
+
+        except Exception as e:
+            logger.warning("cof_from_stroke_evaluate: skipping cycle %d: %s", i, e)
+            continue
+
+    return pd.DataFrame({
+        "staticCoFTime":      staticCoFTime_,
+        "staticCoF":          staticCoF_,
+        "startdynamicTime":   startdynamicTime_,
+        "startdynamicCoF":    startdynamicCoF_,
+        "enddynamicTime":     enddynamicTime_,
+        "enddynamicCoF":      enddynamicCoF_,
+        "dynamicCoFTime":     dynamicCoFTime_,
+        "dynamicCoF":         dynamicCoF_,
+        "dynamicCoFSD":       dynamicCoFSD_,
+        "dynamicCoFn":        dynamicCoFn_,
+        "dynamicCoFsigma":    dynamicCoFsigma_,
+        "dynamicCoFvariance": dynamicCoFvariance_,
+    })
+
+
+# ---------------------------------------------------------------------------
 # CoF statistics modules (merged from statistics.py)
 # ---------------------------------------------------------------------------
 

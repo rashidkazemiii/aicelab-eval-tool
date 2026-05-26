@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useData } from '../context/DataContext';
-import { getData, applyOffset, getOffset, applyFilter, getFilter, applyEvaluate, getResult, viewResult as openResult } from '../services/api';
+import { getData, applyOffset, getOffset, applyFilter, getFilter, applyEvaluate, getResult, viewResult as openResult, saveResult } from '../services/api';
 import { buildCofMarkers } from '../utils/chartTransforms';
 import { COLORS } from '../constants/colors';
 import { DEFAULTS } from '../constants/defaults';
@@ -19,6 +19,7 @@ export const useCoF = () => {
   const [offsetApplied,   setOffsetApplied]   = useState(false);
   const [evaluateApplied, setEvaluateApplied] = useState(false);
   const [cofMarkers,      setCofMarkers]      = useState([]);
+  const [saveStatus,      setSaveStatus]      = useState(null); // null | 'saving' | 'saved' | 'error'
 
   const fetchData = async () => {
     setLoading(true);
@@ -89,8 +90,34 @@ export const useCoF = () => {
 
   const viewResult = () => openResult();
 
+  const save = async () => {
+    setSaveStatus('saving');
+    try {
+      const res = await saveResult(false);
+      if (res.data.status === 'conflict') {
+        const { file_name, existing_date } = res.data;
+        const date = existing_date ? new Date(existing_date).toLocaleString() : '?';
+        const ok = window.confirm(
+          `"${file_name}" was already saved on ${date}.\n\nOverwrite?`
+        );
+        if (ok) {
+          await saveResult(true);
+          setSaveStatus('saved');
+        } else {
+          setSaveStatus(null);
+        }
+      } else {
+        setSaveStatus('saved');
+      }
+    } catch (e) {
+      console.error('save failed:', e);
+      setSaveStatus('error');
+    }
+  };
+
   return {
-    fetchData, offset, filter, evaluate, viewResult,
+    fetchData, offset, filter, evaluate, viewResult, save,
     loading, error, chartLines, calculated, offsetApplied, evaluateApplied, cofMarkers,
+    saveStatus,
   };
 };
