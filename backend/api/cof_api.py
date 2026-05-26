@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 from session import state
-from physics.cof import cof_calculate, cof_offset, cof_filter, cof_find_minima, cof_evaluate, CoF_Discontstatistics
+from physics.cof import cof_calculate, cof_offset, cof_filter, cof_step_filter, cof_find_minima, cof_evaluate, CoF_Discontstatistics
 from config import (
     DEFAULT_FILTER_WINDOW, DEFAULT_STATIC_RANGE, DEFAULT_DYN_MIN, DEFAULT_DYN_MAX,
     RESULT_COLUMNS, RESULT_COL_MAP,
@@ -78,7 +78,15 @@ def filter(window: int = DEFAULT_FILTER_WINDOW):
         return JSONResponse(status_code=400, content={"error": "Run calculate first"})
     try:
         source = "cof_shifted" if "cof_shifted" in state.df_work.columns else "cof"
-        state.df_work["cof_filtered"] = cof_filter(state.df_work[source], window).values
+        # SRV_FSA: use step-aware filter so window never crosses step boundaries
+        # (matches VBA CoFStepFilter / CoFFilterTypeCheck).
+        # OFT / SRV: use global rolling median (VBA CoFFilter).
+        if state.data_type == "SRV_FSA" and state.step_df is not None:
+            state.df_work["cof_filtered"] = cof_step_filter(
+                state.df_work[source], state.df_work["time"], state.step_df, window
+            ).values
+        else:
+            state.df_work["cof_filtered"] = cof_filter(state.df_work[source], window).values
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Filter failed: {e}")

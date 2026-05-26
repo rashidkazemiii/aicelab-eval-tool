@@ -76,6 +76,54 @@ def cof_filter(series: pd.Series, n: int) -> pd.Series:
     return pd.Series(result, index=series.index)
 
 
+def cof_step_filter(series: pd.Series, time: pd.Series, step_df: pd.DataFrame, n: int) -> pd.Series:
+    """
+    Step-aware rolling median filter (VBA CoFStepFilter).
+
+    Each active step is filtered independently so the window never crosses a
+    step boundary.  Within each step:
+      - Near start  : expanding window from step start  (size 1 → n-1)
+      - Middle      : symmetric fixed window             (size n+1)
+      - Near end    : shrinking window to step end       (size n-1 → 1)
+
+    Matches VBA CoFStepFilter exactly (called via CoFFilterTypeCheck for
+    FSA/SRV test files).
+    """
+    values = series.to_numpy(dtype=float)
+    times  = time.to_numpy(dtype=float)
+    result = values.copy()
+    half   = n // 2
+
+    for _, step_row in step_df[~step_df["inactive"]].iterrows():
+        lo, hi = step_row["step_start"], step_row["step_end"]
+        idx    = np.where((times >= lo) & (times <= hi))[0]
+        m      = len(idx)
+        if m == 0:
+            continue
+
+        sv     = values[idx]
+        out    = np.empty(m)
+        mid_lo = half
+        mid_hi = m - half
+
+        # Middle section: fixed n+1 window (vectorized)
+        if mid_hi > mid_lo:
+            windows = np.lib.stride_tricks.sliding_window_view(sv, 2 * half + 1)
+            out[mid_lo:mid_hi] = np.median(windows, axis=1)
+
+        # Near start: expanding window [0 : 2*j0+1]  (j0 = 0 .. half-1)
+        for j0 in range(mid_lo):
+            out[j0] = np.median(sv[0 : 2 * j0 + 1])
+
+        # Near end: shrinking window [2*j0-m+1 : m]  (j0 = m-half .. m-1)
+        for j0 in range(max(mid_hi, 0), m):
+            out[j0] = np.median(sv[max(0, 2 * j0 - m + 1) : m])
+
+        result[idx] = out
+
+    return pd.Series(result, index=series.index)
+
+
 # ---------------------------------------------------------------------------
 # CoF_Minima
 # ---------------------------------------------------------------------------
