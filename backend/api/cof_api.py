@@ -24,9 +24,13 @@ def calculate():
         return JSONResponse(status_code=400, content={"error": "No file uploaded yet"})
     try:
         df = state.df_raw.copy()
-        # OFT files need CoF computed from friction-force columns.
-        # SRV / SRV_FSA already export a 'cof' column — skip the calculation.
-        if "cof" not in df.columns:
+        # OFT: always compute CoF from friction-force columns
+        #      (the file may already contain a 'reibungszahl'/'cof' column but
+        #      that pre-computed value can differ from what the VBA tool uses).
+        # SRV / SRV_FSA: already export the correct 'cof' column — skip.
+        if state.data_type == "OFT":
+            df = cof_calculate(df, None)
+        elif "cof" not in df.columns:
             df = cof_calculate(df, None)
         keep = ["time", "cof", "stroke", "external displacement"]
         state.df_work = df[[c for c in keep if c in df.columns]].copy()
