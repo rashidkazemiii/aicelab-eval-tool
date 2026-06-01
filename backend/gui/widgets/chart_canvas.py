@@ -3,6 +3,7 @@ matplotlib.use("QtAgg")
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.transforms import blended_transform_factory
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
 from PyQt6.QtCore import Qt
 
@@ -80,6 +81,38 @@ class ChartCanvas(FigureCanvasQTAgg):
         self._update_legend()
         self._save_full_limits()
         self.draw()
+
+    def draw_step_lines(self, step_df):
+        """Draw vertical dashed lines at each step boundary.
+        Only drawn when there are 2+ active steps (SRV / SRV_FSA)."""
+        if step_df is None:
+            return
+        active = step_df[~step_df["inactive"]]
+        if len(active) <= 1:
+            return
+
+        # x in data coords, y in axes-fraction coords — labels stay at fixed height
+        trans = blended_transform_factory(self.ax.transData, self.ax.transAxes)
+
+        for i, (_, row) in enumerate(active.iterrows()):
+            t_start = row["step_start"]
+            t_end   = row["step_end"]
+            label   = f"S{i + 1}" if i < len(active) - 1 else None
+
+            # Step-start line (solid amber)
+            self.ax.axvline(t_start, color="#ffa726", linewidth=1.0,
+                            linestyle="-", alpha=0.55, zorder=4)
+            # Step-end line (dashed, dimmer)
+            self.ax.axvline(t_end, color="#ffa726", linewidth=0.8,
+                            linestyle="--", alpha=0.35, zorder=4)
+
+            if label:
+                self.ax.text(t_start + (t_end - t_start) * 0.02, 0.97,
+                             label, transform=trans,
+                             color="#ffa726", fontsize=8, alpha=0.85,
+                             va="top", ha="left")
+
+        self.draw_idle()
 
     def reset_zoom(self):
         if self._full_xlim:

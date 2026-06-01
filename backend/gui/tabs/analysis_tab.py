@@ -99,6 +99,18 @@ class AnalysisTab(QWidget):
                 _STROKE_LINE, "Stroke",
             )
 
+        self._draw_steps()
+
+    # ------------------------------------------------------------------
+    # Step lines helper
+    # ------------------------------------------------------------------
+
+    def _draw_steps(self):
+        """Overlay step boundary lines on both charts."""
+        step_df = app_state.session.step_df
+        self._cof_chart.canvas.draw_step_lines(step_df)
+        self._disp_chart.canvas.draw_step_lines(step_df)
+
     # ------------------------------------------------------------------
     # CoF actions
     # ------------------------------------------------------------------
@@ -126,6 +138,7 @@ class AnalysisTab(QWidget):
         )
         self._panel.btn_cof_offset.setEnabled(True)
         self._panel.on_cof_offset_done()
+        self._draw_steps()
 
     def _cof_filter(self):
         self._panel.btn_cof_filter.setEnabled(False)
@@ -148,6 +161,7 @@ class AnalysisTab(QWidget):
         )
         self._panel.btn_cof_filter.setEnabled(True)
         self._panel.on_cof_filter_done()
+        self._draw_steps()
 
     def _cof_evaluate(self):
         self._panel.btn_cof_evaluate.setEnabled(False)
@@ -219,6 +233,7 @@ class AnalysisTab(QWidget):
                 )
 
         self._panel.btn_cof_evaluate.setEnabled(True)
+        self._draw_steps()
         app_state.evaluated.emit()
 
     # ------------------------------------------------------------------
@@ -246,6 +261,7 @@ class AnalysisTab(QWidget):
         )
         self._panel.btn_disp_offset.setEnabled(True)
         self._panel.on_stroke_offset_done()
+        self._draw_steps()
 
     def _stroke_filter(self):
         self._panel.btn_disp_filter.setEnabled(False)
@@ -268,6 +284,7 @@ class AnalysisTab(QWidget):
         )
         self._panel.btn_disp_filter.setEnabled(True)
         self._panel.on_stroke_filter_done()
+        self._draw_steps()
 
     def _stroke_evaluate(self):
         self._panel.btn_disp_evaluate.setEnabled(False)
