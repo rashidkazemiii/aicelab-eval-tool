@@ -19,7 +19,8 @@ _ZOOM_FACTOR = 1.20   # 20% zoom per scroll tick
 
 class ChartCanvas(FigureCanvasQTAgg):
     def __init__(self, title: str = "", parent=None):
-        self._fig = Figure(facecolor=_BG, tight_layout=True)
+        self._fig = Figure(facecolor=_BG)
+        self._fig.subplots_adjust(left=0.08, right=0.97, top=0.95, bottom=0.10)
         super().__init__(self._fig)
         self.setParent(parent)
         self.ax = self._fig.add_subplot(111)
@@ -99,23 +100,26 @@ class ChartCanvas(FigureCanvasQTAgg):
             t_start = row["step_start"]
             t_end   = row["step_end"]
 
-            # Use add_artist (not axvline / add_line) so the line's x position
-            # is never registered into matplotlib's data-limit tracker — this
-            # prevents the zoom from snapping back to include the step boundary.
             for x, lw, ls, alpha in [
                 (t_start, 1.8, "-",  0.85),
                 (t_end,   1.2, "--", 0.60),
             ]:
                 line = Line2D([x, x], [0, 1], transform=trans,
                               color="#d84315", linewidth=lw,
-                              linestyle=ls, alpha=alpha, zorder=5)
+                              linestyle=ls, alpha=alpha, zorder=5,
+                              clip_on=True)
+                # clip_path = axes patch: line disappears when x is outside xlim
+                line.set_clip_path(self.ax.patch)
                 self.ax.add_artist(line)
 
-            # Label pinned at top of the step region
-            self.ax.text(t_start + (t_end - t_start) * 0.02, 0.97,
-                         f"Step {i + 1}", transform=trans,
-                         color="#d84315", fontsize=8, fontweight="bold",
-                         va="top", ha="left")
+            # Label pinned at top of the step region, clipped to axes area
+            txt = self.ax.text(
+                t_start + (t_end - t_start) * 0.02, 0.97,
+                f"Step {i + 1}", transform=trans,
+                color="#d84315", fontsize=8, fontweight="bold",
+                va="top", ha="left", clip_on=True,
+            )
+            txt.set_clip_path(self.ax.patch)
 
         self.draw()
 
