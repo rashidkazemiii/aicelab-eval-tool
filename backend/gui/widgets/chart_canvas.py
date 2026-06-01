@@ -7,11 +7,11 @@ from matplotlib.transforms import blended_transform_factory
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
 from PyQt6.QtCore import Qt
 
-_BG    = "#141b2d"
-_AX_BG = "#1a2238"
-_GRID  = "#2d3748"
-_TEXT  = "#b0bec5"
-_SPINE = "#3e4396"
+_BG    = "#f0f2f8"
+_AX_BG = "#ffffff"
+_GRID  = "#e2e8f0"
+_TEXT  = "#4a5568"
+_SPINE = "#cbd5e0"
 
 _ZOOM_FACTOR = 1.20   # 20% zoom per scroll tick
 
@@ -83,7 +83,7 @@ class ChartCanvas(FigureCanvasQTAgg):
         self.draw()
 
     def draw_step_lines(self, step_df):
-        """Draw vertical dashed lines at each step boundary.
+        """Draw vertical lines at each step boundary.
         Only drawn when there are 2+ active steps (SRV / SRV_FSA)."""
         if step_df is None:
             return
@@ -97,22 +97,21 @@ class ChartCanvas(FigureCanvasQTAgg):
         for i, (_, row) in enumerate(active.iterrows()):
             t_start = row["step_start"]
             t_end   = row["step_end"]
-            label   = f"S{i + 1}" if i < len(active) - 1 else None
 
-            # Step-start line (solid amber)
-            self.ax.axvline(t_start, color="#ffa726", linewidth=1.0,
-                            linestyle="-", alpha=0.55, zorder=4)
-            # Step-end line (dashed, dimmer)
-            self.ax.axvline(t_end, color="#ffa726", linewidth=0.8,
-                            linestyle="--", alpha=0.35, zorder=4)
+            # Step-start: solid dark-orange line
+            self.ax.axvline(t_start, color="#d84315", linewidth=1.8,
+                            linestyle="-", alpha=0.85, zorder=5)
+            # Step-end: dashed, slightly dimmer
+            self.ax.axvline(t_end, color="#d84315", linewidth=1.2,
+                            linestyle="--", alpha=0.60, zorder=5)
 
-            if label:
-                self.ax.text(t_start + (t_end - t_start) * 0.02, 0.97,
-                             label, transform=trans,
-                             color="#ffa726", fontsize=8, alpha=0.85,
-                             va="top", ha="left")
+            # Label just inside the step at the top
+            self.ax.text(t_start + (t_end - t_start) * 0.02, 0.97,
+                         f"Step {i + 1}", transform=trans,
+                         color="#d84315", fontsize=8, fontweight="bold",
+                         va="top", ha="left")
 
-        self.draw_idle()
+        self.draw()
 
     def reset_zoom(self):
         if self._full_xlim:
@@ -196,14 +195,14 @@ class ChartWidget(QWidget):
         # Thin top bar with just a reset button and hint label
         bar = QWidget()
         bar.setFixedHeight(24)
-        bar.setStyleSheet("background-color: #1a2238;")
+        bar.setStyleSheet("background-color: #edf2f7; border-bottom: 1px solid #d1d9e6;")
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(6, 0, 6, 0)
         bar_layout.setSpacing(8)
 
         from PyQt6.QtWidgets import QLabel
         hint = QLabel("scroll = zoom  ·  drag = pan  ·  double-click = reset")
-        hint.setStyleSheet("color: #4a5568; font-size: 10px;")
+        hint.setStyleSheet("color: #a0aec0; font-size: 10px;")
         bar_layout.addWidget(hint)
         bar_layout.addStretch()
 
@@ -211,8 +210,8 @@ class ChartWidget(QWidget):
         btn_reset.setFixedHeight(20)
         btn_reset.setFixedWidth(60)
         btn_reset.setStyleSheet(
-            "background-color: #2d3748; color: #a0aec0; "
-            "border: none; border-radius: 3px; font-size: 10px; padding: 0px;"
+            "background-color: #e2e8f0; color: #4a5568; "
+            "border: 1px solid #cbd5e0; border-radius: 3px; font-size: 10px; padding: 0px;"
         )
 
         bar_layout.addWidget(btn_reset)

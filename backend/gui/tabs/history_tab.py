@@ -28,7 +28,7 @@ class HistoryTab(QWidget):
 
         header_row = QHBoxLayout()
         title = QLabel("Test History")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #4cceac;")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #3e4396;")
         btn_refresh = QPushButton("Refresh")
         btn_refresh.setFixedWidth(90)
         btn_refresh.clicked.connect(self.refresh)

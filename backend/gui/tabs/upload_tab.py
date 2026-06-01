@@ -28,7 +28,7 @@ class UploadTab(QWidget):
 
         title = QLabel("FRICTION EVALUATION TOOL")
         title.setStyleSheet(
-            "font-size: 20px; font-weight: bold; color: #4cceac; letter-spacing: 2px;"
+            "font-size: 20px; font-weight: bold; color: #3e4396; letter-spacing: 2px;"
         )
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(title)
@@ -150,18 +150,18 @@ class _DropArea(QFrame):
         layout.setSpacing(8)
 
         icon = QLabel("☁")
-        icon.setStyleSheet("font-size: 48px; color: #3e4396;")
+        icon.setStyleSheet("font-size: 48px; color: #5c6bc0;")
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon)
 
         self.hint = QLabel("Drag & drop file here\nor click to browse")
-        self.hint.setStyleSheet("color: #718096; font-size: 12px;")
+        self.hint.setStyleSheet("color: #718096; font-size: 12px; background: transparent;")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.hint)
 
     def set_filename(self, name: str):
         self.hint.setText(f"✓  {name}")
-        self.hint.setStyleSheet("color: #4cceac; font-size: 12px; font-weight: bold;")
+        self.hint.setStyleSheet("color: #2e7d32; font-size: 12px; font-weight: bold; background: transparent;")
 
     def mousePressEvent(self, event):
         path, _ = QFileDialog.getOpenFileName(

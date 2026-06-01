@@ -46,7 +46,7 @@ class ParamPanel(QWidget):
         # File label
         self.file_label = QLabel("No file loaded")
         self.file_label.setWordWrap(True)
-        self.file_label.setStyleSheet("color: #718096; font-size: 10px; font-style: italic;")
+        self.file_label.setStyleSheet("color: #a0aec0; font-size: 10px; font-style: italic;")
         layout.addWidget(self.file_label)
         layout.addWidget(_separator())
 
@@ -104,7 +104,7 @@ class ParamPanel(QWidget):
         layout.addWidget(self.btn_save)
 
         self.save_status = QLabel("")
-        self.save_status.setStyleSheet("color: #4cceac; font-size: 10px;")
+        self.save_status.setStyleSheet("color: #2e7d32; font-size: 10px;")
         self.save_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.save_status)
 
@@ -192,7 +192,7 @@ class ParamPanel(QWidget):
         self.btn_disp_evaluate.setEnabled(True)
         self.btn_disp_generate.setEnabled(True)
 
-    def set_save_status(self, text: str, color: str = "#4cceac"):
+    def set_save_status(self, text: str, color: str = "#2e7d32"):
         self.save_status.setStyleSheet(f"color: {color}; font-size: 10px;")
         self.save_status.setText(text)
 

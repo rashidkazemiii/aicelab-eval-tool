@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
 
         logo = QLabel("FRICTION LAB")
         logo.setStyleSheet(
-            "color: #4cceac; font-size: 15px; font-weight: bold; "
+            "color: #3e4396; font-size: 15px; font-weight: bold; "
             "letter-spacing: 1px; padding: 6px 0px 14px 4px;"
         )
         sb_layout.addWidget(logo)
