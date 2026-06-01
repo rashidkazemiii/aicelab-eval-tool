@@ -3,6 +3,7 @@ matplotlib.use("QtAgg")
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.transforms import blended_transform_factory
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout
 from PyQt6.QtCore import Qt
@@ -98,14 +99,19 @@ class ChartCanvas(FigureCanvasQTAgg):
             t_start = row["step_start"]
             t_end   = row["step_end"]
 
-            # Step-start: solid dark-orange line
-            self.ax.axvline(t_start, color="#d84315", linewidth=1.8,
-                            linestyle="-", alpha=0.85, zorder=5)
-            # Step-end: dashed, slightly dimmer
-            self.ax.axvline(t_end, color="#d84315", linewidth=1.2,
-                            linestyle="--", alpha=0.60, zorder=5)
+            # Use add_artist (not axvline / add_line) so the line's x position
+            # is never registered into matplotlib's data-limit tracker — this
+            # prevents the zoom from snapping back to include the step boundary.
+            for x, lw, ls, alpha in [
+                (t_start, 1.8, "-",  0.85),
+                (t_end,   1.2, "--", 0.60),
+            ]:
+                line = Line2D([x, x], [0, 1], transform=trans,
+                              color="#d84315", linewidth=lw,
+                              linestyle=ls, alpha=alpha, zorder=5)
+                self.ax.add_artist(line)
 
-            # Label just inside the step at the top
+            # Label pinned at top of the step region
             self.ax.text(t_start + (t_end - t_start) * 0.02, 0.97,
                          f"Step {i + 1}", transform=trans,
                          color="#d84315", fontsize=8, fontweight="bold",
