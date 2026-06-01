@@ -27,7 +27,10 @@ class ChartCanvas(FigureCanvasQTAgg):
         # Pan state
         self._pan_start_px  = None
         self._xlim_at_press = None
-        self._ylim_at_press = None
+
+        # Full data limits — Y is always locked to these
+        self._full_xlim = None
+        self._full_ylim = None
 
         # Connect mouse events
         self._fig.canvas.mpl_connect("scroll_event",        self._on_scroll)
@@ -57,6 +60,8 @@ class ChartCanvas(FigureCanvasQTAgg):
 
     def clear(self):
         self.ax.cla()
+        self._full_xlim = None
+        self._full_ylim = None
         self._style_axes()
         self.draw()
 
@@ -65,6 +70,7 @@ class ChartCanvas(FigureCanvasQTAgg):
         self.ax.plot(time_arr, value_arr, color=color, linewidth=linewidth,
                      label=label, alpha=alpha)
         self._update_legend()
+        self._save_full_limits()
         self.draw()
 
     def plot_scatter(self, time_arr, value_arr, color: str, label: str,
@@ -72,11 +78,21 @@ class ChartCanvas(FigureCanvasQTAgg):
         self.ax.scatter(time_arr, value_arr, c=color, label=label,
                         marker=marker, s=size, zorder=zorder)
         self._update_legend()
+        self._save_full_limits()
         self.draw()
 
     def reset_zoom(self):
-        self.ax.autoscale()
+        if self._full_xlim:
+            self.ax.set_xlim(self._full_xlim)
+        if self._full_ylim:
+            self.ax.set_ylim(self._full_ylim)
         self.draw()
+
+    def _save_full_limits(self):
+        """Snapshot the auto-scaled limits after each plot call."""
+        self.ax.autoscale_view()
+        self._full_xlim = self.ax.get_xlim()
+        self._full_ylim = self.ax.get_ylim()
 
     def _update_legend(self):
         handles, labels = self.ax.get_legend_handles_labels()
@@ -98,11 +114,10 @@ class ChartCanvas(FigureCanvasQTAgg):
         if event.inaxes != self.ax or event.xdata is None:
             return
         factor = 1 / _ZOOM_FACTOR if event.button == "up" else _ZOOM_FACTOR
-        cx, cy = event.xdata, event.ydata
+        cx = event.xdata
         xl, xr = self.ax.get_xlim()
-        yb, yt = self.ax.get_ylim()
         self.ax.set_xlim([cx + (xl - cx) * factor, cx + (xr - cx) * factor])
-        self.ax.set_ylim([cy + (yb - cy) * factor, cy + (yt - cy) * factor])
+        self._lock_ylim()
         self.draw_idle()
 
     def _on_press(self, event):
@@ -114,7 +129,6 @@ class ChartCanvas(FigureCanvasQTAgg):
         if event.button == 1:
             self._pan_start_px  = (event.x, event.y)
             self._xlim_at_press = self.ax.get_xlim()
-            self._ylim_at_press = self.ax.get_ylim()
 
     def _on_release(self, event):
         self._pan_start_px = None
@@ -122,17 +136,19 @@ class ChartCanvas(FigureCanvasQTAgg):
     def _on_motion(self, event):
         if self._pan_start_px is None or event.inaxes != self.ax:
             return
-        # Convert pixel delta to data-space delta using the stored limits
         inv = self.ax.transData.inverted()
-        x0d, y0d = inv.transform(self._pan_start_px)
-        xcd, ycd = inv.transform((event.x, event.y))
+        x0d, _ = inv.transform(self._pan_start_px)
+        xcd, _ = inv.transform((event.x, event.y))
         dx = xcd - x0d
-        dy = ycd - y0d
         xl, xr = self._xlim_at_press
-        yb, yt = self._ylim_at_press
         self.ax.set_xlim([xl - dx, xr - dx])
-        self.ax.set_ylim([yb - dy, yt - dy])
+        self._lock_ylim()
         self.draw_idle()
+
+    def _lock_ylim(self):
+        """Keep Y-axis showing the full data range at all times."""
+        if self._full_ylim:
+            self.ax.set_ylim(self._full_ylim)
 
 
 class ChartWidget(QWidget):
