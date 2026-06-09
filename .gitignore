@@ -6,6 +6,10 @@ env/
 venv/
 .python-version
 
+# Marimo
+__marimo__/
+layouts/
+
 # Node / Frontend
 node_modules/
 dist/
