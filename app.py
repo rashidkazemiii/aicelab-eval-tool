@@ -4,8 +4,6 @@ __generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
-
 @app.cell
 def _():
     import marimo as mo
@@ -19,7 +17,16 @@ def _():
     from physics import utility_functions
     from physics import statistics as stat_funcs
 
-    return cof_calc, go, load_data, mo, os, stat_funcs, tempfile, utility_functions
+    return (
+        cof_calc,
+        go,
+        load_data,
+        mo,
+        os,
+        stat_funcs,
+        tempfile,
+        utility_functions,
+    )
 
 
 @app.cell
@@ -58,8 +65,6 @@ def _(mo):
     return
 
 
-# ── Widgets ───────────────────────────────────────────────────────────────────
-
 @app.cell
 def _(mo):
     file_upload = mo.ui.file(label="Upload test file (.txt)", filetypes=[".txt"])
@@ -79,8 +84,6 @@ def _(mo):
     dyn_max       = mo.ui.number(label="Dyn CoF Max (%)", value=80.0, step=1.0)
     return apply_offset, dyn_max, dyn_min, filter_points, nlc, static_range
 
-
-# ── Data ──────────────────────────────────────────────────────────────────────
 
 @app.cell
 def _(data_origin, file_upload, load_data, mo, os, tempfile):
@@ -102,12 +105,19 @@ def _(data_origin, file_upload, load_data, mo, os, tempfile):
             )
         except Exception as _e:
             load_msg = mo.callout(mo.md(f"**Error:** {_e}"), kind="danger")
-
     return df_raw, load_msg, step_df
 
 
 @app.cell
-def _(apply_offset, cof_calc, df_raw, filter_points, nlc, step_df, utility_functions):
+def _(
+    apply_offset,
+    cof_calc,
+    df_raw,
+    filter_points,
+    nlc,
+    step_df,
+    utility_functions,
+):
     df_proc = None
     if df_raw is not None:
         df_proc = df_raw.copy()
@@ -120,8 +130,6 @@ def _(apply_offset, cof_calc, df_raw, filter_points, nlc, step_df, utility_funct
             df_proc = utility_functions.filter(df_proc, step_df, _w)
     return (df_proc,)
 
-
-# ── Charts ────────────────────────────────────────────────────────────────────
 
 @app.cell
 def _(df_proc, go, mo, step_df):
@@ -196,10 +204,17 @@ def _(df_proc, go, mo):
     return (stroke_chart,)
 
 
-# ── Results ───────────────────────────────────────────────────────────────────
-
 @app.cell
-def _(cof_calc, df_proc, dyn_max, dyn_min, mo, stat_funcs, static_range, step_df):
+def _(
+    cof_calc,
+    df_proc,
+    dyn_max,
+    dyn_min,
+    mo,
+    stat_funcs,
+    static_range,
+    step_df,
+):
     if df_proc is None:
         results_panel = mo.Html(
             '<div style="height:80px;display:flex;align-items:center;justify-content:center;'
@@ -221,12 +236,21 @@ def _(cof_calc, df_proc, dyn_max, dyn_min, mo, stat_funcs, static_range, step_df
     return (results_panel,)
 
 
-# ── Layout ────────────────────────────────────────────────────────────────────
-
 @app.cell
 def _(
-    apply_offset, cof_chart, data_origin, dyn_max, dyn_min, file_upload,
-    filter_points, load_msg, mo, nlc, results_panel, static_range, stroke_chart,
+    apply_offset,
+    cof_chart,
+    data_origin,
+    dyn_max,
+    dyn_min,
+    file_upload,
+    filter_points,
+    load_msg,
+    mo,
+    nlc,
+    results_panel,
+    static_range,
+    stroke_chart,
 ):
     _navbar = mo.Html("""
     <div class="navbar">
