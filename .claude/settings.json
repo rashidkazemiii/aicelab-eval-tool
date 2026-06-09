@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(poetry run *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(Remove-Item -Recurse -Force frontend)",
+      "Bash(Remove-Item -Recurse -Force backend\\\\api)",
+      "Bash(Remove-Item -Recurse -Force backend\\\\schemas)",
+      "Bash(Remove-Item -Force backend\\\\main.py)",
+      "Bash(poetry add *)",
+      "Bash(poetry install *)",
+      "Bash(poetry lock *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git add *)",
+      "Bash(git rm *)",
+      "Bash(git commit -m ' *)",
+      "Bash(poetry env *)"
+    ]
+  }
+}
