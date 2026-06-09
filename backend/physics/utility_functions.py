@@ -6,27 +6,23 @@ logger = logging.getLogger(__name__)
 
 
 def offset(df, step_df=None):
+    has_stroke = "stroke" in df.columns
     if step_df is None:
         df["CoF"] = df["CoF"] - df["CoF"].mean()
-        df["stroke"] = df["stroke"] - df["stroke"].mean()
+        if has_stroke:
+            df["stroke"] = df["stroke"] - df["stroke"].mean()
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
-                # Filter rows based on conditions
                 filtered_rows = df[
                     (df["Zeit [s]"] < row["Endzeit [s]"])
                     & (df["Zeit [s]"] > row["Startzeit [s]"])
                 ]
-                # Select "CoF" column from filtered rows
                 cof_column = filtered_rows["CoF"]
-                # Subtract the mean of "CoF" column from values in "CoF" column
-                cof_column_adjusted = cof_column - cof_column.mean()
-                # Assign adjusted values back to the original DataFrame
-                df.loc[filtered_rows.index, "CoF"] = cof_column_adjusted
-                # do the same with stroke
-                stroke_column = filtered_rows["stroke"]
-                stroke_column_adjusted = stroke_column - stroke_column.mean()
-                df.loc[filtered_rows.index, "stroke"] = stroke_column_adjusted
+                df.loc[filtered_rows.index, "CoF"] = cof_column - cof_column.mean()
+                if has_stroke:
+                    stroke_column = filtered_rows["stroke"]
+                    df.loc[filtered_rows.index, "stroke"] = stroke_column - stroke_column.mean()
     return df
 
 
@@ -56,9 +52,11 @@ def filter_vb_style(series, n):
 
 
 def filter(df, step_df, window):
+    has_stroke = "stroke" in df.columns
     if step_df is None:
         df["CoF"] = df["CoF"].rolling(window).median()
-        df["stroke"] = df["stroke"].rolling(window).median()
+        if has_stroke:
+            df["stroke"] = df["stroke"].rolling(window).median()
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
@@ -70,10 +68,11 @@ def filter(df, step_df, window):
                 df.loc[filtered_rows.index, "CoF"] = cof_column.rolling(
                     window, center=True, min_periods=1
                 ).median()
-                stroke_column = filtered_rows["stroke"]
-                df.loc[filtered_rows.index, "stroke"] = stroke_column.rolling(
-                    window, min_periods=1
-                ).median()
+                if has_stroke:
+                    stroke_column = filtered_rows["stroke"]
+                    df.loc[filtered_rows.index, "stroke"] = stroke_column.rolling(
+                        window, min_periods=1
+                    ).median()
     return df
 
 
