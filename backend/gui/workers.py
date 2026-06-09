@@ -254,7 +254,7 @@ class CoFEvaluateWorker(QRunnable):
             s        = app_state.session
             df       = s.df_work
             cof_col  = _pick_cof_col(df)
-            eval_df  = df.rename(columns={cof_col: "cof"}) if cof_col != "cof" else df.copy()
+            eval_df  = df[["time", cof_col]].rename(columns={cof_col: "cof"}).copy()
 
             minima     = cof_find_minima(eval_df, "cof")
             per_cycle  = cof_evaluate(
@@ -280,7 +280,7 @@ class CoFEvaluateWorker(QRunnable):
             if "stroke" in df.columns or "stroke_filtered" in df.columns:
                 try:
                     stroke_col  = _pick_stroke_col(df)
-                    stroke_df   = df.rename(columns={stroke_col: "stroke"}) if stroke_col != "stroke" else df.copy()
+                    stroke_df   = df[["time", stroke_col]].rename(columns={stroke_col: "stroke"}).copy()
                     disp_minima = stroke_find_minima(stroke_df, "stroke")
                     disp_maxima = stroke_evaluate(stroke_df, disp_minima)
                 except Exception:
@@ -350,7 +350,7 @@ class StrokeEvaluateWorker(QRunnable):
             s        = app_state.session
             df       = s.df_work
             col      = _pick_stroke_col(df)
-            eval_df  = df.rename(columns={col: "stroke"}) if col != "stroke" else df.copy()
+            eval_df  = df[["time", col]].rename(columns={col: "stroke"}).copy()
             minima   = stroke_find_minima(eval_df, "stroke")
             stroke_evaluate(eval_df, minima)
             self.signals.finished.emit()
