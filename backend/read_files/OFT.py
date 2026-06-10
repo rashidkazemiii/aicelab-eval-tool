@@ -188,40 +188,12 @@ def read_main_df(filename, fread):
 
 def clean_main_df(df):
     """
-    Cleans column names, handles translations, and converts data types.
+    Fixes decimal separators and converts all columns to float.
+    Column names are kept exactly as they appear in the source file.
     """
-    df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_", regex=True)
-
-    rename_map = {
-        "zeit": "Zeit [s]",
-        "drehzahl": "rotation speed",
-        "belastung": "normal load",
-        "rk_oft_links": "friction force left",
-        "rk_oft_rechts": "friction force right",
-        "reibungskraft": "friction force",
-        "verschleiss": "Wear",
-        "reibungszahl": "CoF",
-        "temperatur": "Temperature",
-        "externer_eingang_1": "external temperature",
-        "externer_eingang_2": "external displacement",
-        "externer_eingang_3": "external pressure",
-    }
-
-    to_drop = [
-        "nummer",
-        "reibungsmoment",
-        "rk_sop_links",
-        "rk_sop_rechts",
-        "belastung_links",
-        "belastung_rechts",
-    ]
-    existing_drops = [c for c in to_drop if c in df.columns]
-
-    df = df.drop(columns=existing_drops)
-    df = df.rename(columns=rename_map)
-
-    df = df.replace({",": "."}, regex=True).astype(float)
-
+    df.columns = df.columns.str.strip()
+    df = df.replace({",": "."}, regex=True)
+    df = df.apply(pd.to_numeric, errors="coerce")
     return df
 
 
@@ -237,7 +209,7 @@ def remove_inactive_data(df, step_df):
 
     for _, row in inactive_periods.iterrows():
         df = df[
-            (df["Zeit [s]"] < row["Startzeit [s]"]) | (df["Zeit [s]"] >= row["Endzeit [s]"])
+            (df["Zeit"] < row["Startzeit [s]"]) | (df["Zeit"] >= row["Endzeit [s]"])
         ]
 
     return df.reset_index(drop=True)
@@ -252,6 +224,6 @@ def readRawFile(filename: str):
     df = stroke.calculate(df, header["stroke"])
     df = remove_inactive_data(df, step_df)
     if not step_df is None:
-        step_df.loc[step_df.index[-1], "Endzeit [s]"] = df["Zeit [s]"].max()
+        step_df.loc[step_df.index[-1], "Endzeit [s]"] = df["Zeit"].max()
     return df, step_df, header
 

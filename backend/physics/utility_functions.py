@@ -15,8 +15,8 @@ def offset(df, step_df=None):
         for index, row in step_df.iterrows():
             if not row["inactive"]:
                 filtered_rows = df[
-                    (df["Zeit [s]"] < row["Endzeit [s]"])
-                    & (df["Zeit [s]"] > row["Startzeit [s]"])
+                    (df["Zeit"] < row["Endzeit [s]"])
+                    & (df["Zeit"] > row["Startzeit [s]"])
                 ]
                 cof_column = filtered_rows["CoF"]
                 df.loc[filtered_rows.index, "CoF"] = cof_column - cof_column.mean()
@@ -61,8 +61,8 @@ def filter(df, step_df, window):
         for index, row in step_df.iterrows():
             if not row["inactive"]:
                 filtered_rows = df[
-                    (df["Zeit [s]"] < row["Endzeit [s]"])
-                    & (df["Zeit [s]"] > row["Startzeit [s]"])
+                    (df["Zeit"] < row["Endzeit [s]"])
+                    & (df["Zeit"] > row["Startzeit [s]"])
                 ]
                 cof_column = filtered_rows["CoF"]
                 df.loc[filtered_rows.index, "CoF"] = cof_column.rolling(
@@ -101,7 +101,7 @@ def filter_vb_style(series, n):
 
 
 def trim(df, trim_start, trim_end):
-    return df[(df["Zeit [s]"] < trim_end) & (df["Zeit [s]"] > trim_start)]
+    return df[(df["Zeit"] < trim_end) & (df["Zeit"] > trim_start)]
 
 
 def Find_minima(df, column):
@@ -114,11 +114,11 @@ def Find_minima(df, column):
     for index, row in df.iterrows():
         if firstIteration:
             prevValue = row[column]
-            prevTime = row["Zeit [s]"]
+            prevTime = row["Zeit"]
             firstIteration = False
         else:
             currentValue = row[column]
-            currentTime = row["Zeit [s]"]
+            currentTime = row["Zeit"]
             if currentTime - prevTime < 0.002:
                 if (prevValue < 0 and currentValue >= 0) or (
                     prevValue >= 0 and currentValue < 0
@@ -188,7 +188,7 @@ def Evaluate(
     b = 0.01 * beginning_dynamic_range
     c = 0.01 * ending_dynamic_range
 
-    Time = df["Zeit [s]"].tolist()
+    Time = df["Zeit"].tolist()
     Stroke = df[column].tolist()
     negMinTime = minima["-Min Zeit"].tolist()
 

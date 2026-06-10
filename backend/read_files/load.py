@@ -36,7 +36,7 @@ def load_data(filename: str, data_origin: str) -> tuple[pd.DataFrame, pd.DataFra
                 {
                     'Step': [0],
                     'Startzeit [s]': [0],
-                    'Endzeit [s]': [df["Zeit [s]"].max()],
+                    'Endzeit [s]': [df["Zeit"].max()],
                     'inactive': [False],
                 }
             )
