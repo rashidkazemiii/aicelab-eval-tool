@@ -242,7 +242,24 @@ def _(df_display, get_filter_params, mo, step_df, utility_functions):
 
 
 @app.cell
-def _(df_display, df_proc, get_filter_params, go, mo, step_df):
+def _(cof_calc, df_display, df_proc, get_eval_params):
+    cof_eval = None
+    _params = get_eval_params()
+    if df_proc is not None and df_display is not None and _params is not None:
+        try:
+            _minima = cof_calc.find_minima(df_proc)
+            _cof_res = cof_calc.get_static_and_dynamic_cof(
+                df_display, _minima,
+                _params["static_range"], _params["dyn_min"], _params["dyn_max"],
+            )
+            cof_eval = {"minima": _minima, "cof_res": _cof_res}
+        except Exception:
+            cof_eval = None
+    return (cof_eval,)
+
+
+@app.cell
+def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -268,13 +285,46 @@ def _(df_display, df_proc, get_filter_params, go, mo, step_df):
         _fig.add_trace(go.Scatter(
             x=df_display["Zeit"], y=df_display["CoF"],
             mode="lines", name="CoF",
-            line=dict(color="rgba(180,180,180,0.6)" if _filter_active else "#4A90D9", width=1),
+            line=dict(color="rgba(41,128,185,0.35)" if _filter_active else "#2980b9", width=2),
         ))
         if _filter_active:
             _fig.add_trace(go.Scatter(
                 x=df_proc["Zeit"], y=df_proc["CoF"],
                 mode="lines", name="Filtered CoF",
-                line=dict(color="#4A90D9", width=1.5),
+                line=dict(color="#e67e22", width=1),
+            ))
+        if cof_eval is not None:
+            _mn = cof_eval["minima"]
+            _cr = cof_eval["cof_res"]
+            _fig.add_trace(go.Scatter(
+                x=_mn["Min Zeit"], y=[0] * len(_mn),
+                mode="markers", name="Zero crossings",
+                marker=dict(symbol="line-ns", size=10, color="#888",
+                            line=dict(color="#888", width=1.5)),
+            ))
+            _fig.add_trace(go.Scatter(
+                x=_cr["staticCoFTime"], y=_cr["staticCoF"],
+                mode="markers", name="Static CoF",
+                marker=dict(symbol="circle", size=7, color="#e74c3c",
+                            line=dict(color="#c0392b", width=1)),
+            ))
+            _fig.add_trace(go.Scatter(
+                x=_cr["dynamicCoFTime"], y=_cr["dynamicCoF"],
+                mode="markers", name="Dynamic CoF",
+                marker=dict(symbol="diamond", size=7, color="#2ecc71",
+                            line=dict(color="#27ae60", width=1)),
+            ))
+            _fig.add_trace(go.Scatter(
+                x=_cr["startdynamicTime"], y=_cr["startdynamicCoF"],
+                mode="markers", name="Dynamic start",
+                marker=dict(symbol="triangle-right", size=8, color="#9b59b6",
+                            line=dict(color="#8e44ad", width=1)),
+            ))
+            _fig.add_trace(go.Scatter(
+                x=_cr["enddynamicTime"], y=_cr["enddynamicCoF"],
+                mode="markers", name="Dynamic end",
+                marker=dict(symbol="triangle-left", size=8, color="#1abc9c",
+                            line=dict(color="#16a085", width=1)),
             ))
         if step_df is not None:
             for _, _r in step_df.iterrows():
@@ -282,12 +332,13 @@ def _(df_display, df_proc, get_filter_params, go, mo, step_df):
                     for _t in [_r["Startzeit [s]"], _r["Endzeit [s]"]]:
                         _fig.add_vline(x=_t, line=dict(color="#ccc", dash="dot", width=1))
         _fig.update_layout(
-            height=380,
+            height=420,
             xaxis_title="Time [s]", yaxis_title="CoF [-]",
             margin=dict(l=60, r=20, t=20, b=50),
             plot_bgcolor="#fff", paper_bgcolor="#fff",
             font=dict(color="#1f2a40", size=12),
             dragmode="pan",
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
             xaxis=dict(gridcolor="#efefef", linecolor="#ddd"),
             yaxis=dict(
                 range=[_y_min - _y_pad, _y_max + _y_pad],
@@ -299,27 +350,21 @@ def _(df_display, df_proc, get_filter_params, go, mo, step_df):
 
 
 @app.cell
-def _(cof_calc, df_proc, get_eval_params, mo, stat_funcs, step_df):
-    _params = get_eval_params()
-    if df_proc is None or _params is None:
+def _(cof_eval, df_proc, mo, stat_funcs, step_df):
+    import pandas as _pd
+    if df_proc is None or cof_eval is None:
         results_panel = mo.Html(
             '<div style="height:60px;display:flex;align-items:center;justify-content:center;'
             'color:#bbb;font-size:13px">Click Evaluate to see results</div>'
         )
     else:
         try:
-            import pandas as _pd
-            _minima  = cof_calc.find_minima(df_proc)
-            _cof_res = cof_calc.get_static_and_dynamic_cof(
-                df_proc, _minima,
-                _params["static_range"], _params["dyn_min"], _params["dyn_max"]
-            )
             _sdf = step_df if step_df is not None else _pd.DataFrame({
                 "Startzeit [s]": [df_proc["Zeit"].min()],
                 "Endzeit [s]":   [df_proc["Zeit"].max()],
                 "inactive":      [False],
             })
-            _stats = stat_funcs.CoF_Stat(_cof_res, _sdf)
+            _stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
             results_panel = mo.vstack([
                 mo.Html('<p class="panel-title">Results Summary</p>'),
                 mo.ui.table(_stats, show_column_summaries=False, show_data_types=False),
@@ -349,6 +394,7 @@ def _(
     evaluate_btn,
     file_upload,
     filter_btn,
+    get_filter_params,
     filter_points,
     has_step,
     load_msg,
@@ -435,7 +481,11 @@ def _(
             mo.Html('<p class="section-label" style="margin:0;align-self:center">ACTIONS</p>'),
             offset_btn,
             filter_btn,
-            evaluate_btn,
+            evaluate_btn if get_filter_params() is not None else mo.Html(
+                '<button disabled style="opacity:0.35;cursor:not-allowed;padding:4px 14px;'
+                'border-radius:4px;background:#2ecc71;color:#fff;border:none;font-size:13px;'
+                'font-weight:500">Evaluate</button>'
+            ),
             mo.Html('<div style="width:1px;background:#eee;height:28px;margin:0 8px;align-self:center"></div>'),
             mo.Html('<p class="section-label" style="margin:0;align-self:center">PARAMETERS</p>'),
             mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">NLC</span>'), nlc], align="center", gap=2),
