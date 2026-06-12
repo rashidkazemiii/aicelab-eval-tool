@@ -54,9 +54,9 @@ def filter_vb_style(series, n):
 def filter(df, step_df, window):
     has_stroke = "stroke" in df.columns
     if step_df is None:
-        df["CoF"] = df["CoF"].rolling(window).median()
+        df["CoF"] = filter_vb_style(df["CoF"], window).values
         if has_stroke:
-            df["stroke"] = df["stroke"].rolling(window).median()
+            df["stroke"] = filter_vb_style(df["stroke"], window).values
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
@@ -64,40 +64,10 @@ def filter(df, step_df, window):
                     (df["Zeit"] < row["Endzeit [s]"])
                     & (df["Zeit"] > row["Startzeit [s]"])
                 ]
-                cof_column = filtered_rows["CoF"]
-                df.loc[filtered_rows.index, "CoF"] = cof_column.rolling(
-                    window, center=True, min_periods=1
-                ).median()
+                df.loc[filtered_rows.index, "CoF"] = filter_vb_style(filtered_rows["CoF"], window).values
                 if has_stroke:
-                    stroke_column = filtered_rows["stroke"]
-                    df.loc[filtered_rows.index, "stroke"] = stroke_column.rolling(
-                        window, min_periods=1
-                    ).median()
+                    df.loc[filtered_rows.index, "stroke"] = filter_vb_style(filtered_rows["stroke"], window).values
     return df
-
-
-def filter_vb_style(series, n):
-    """Centered rolling median matching the VB CoFFilter macro exactly."""
-    N = len(series)
-    half_n = n / 2.0
-    result = series.copy().astype(float)
-
-    for i in range(1, N + 1):
-        if i <= half_n:
-            start = 0
-            end = 2 * i - 2
-        elif i > N - half_n:
-            start = 2 * i - N - 1
-            end = N - 1
-        else:
-            start = round(i - half_n) - 1
-            end = round(i + half_n) - 1
-
-        start = max(0, start)
-        end = min(N - 1, end)
-        result.iloc[i - 1] = series.iloc[start:end + 1].median()
-
-    return result
 
 
 def trim(df, trim_start, trim_end):

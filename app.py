@@ -65,6 +65,12 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    get_filter_params, set_filter_params = mo.state(None)
+    return get_filter_params, set_filter_params
+
+
+@app.cell
+def _(mo):
     file_upload = mo.ui.file(label="Upload test file (.txt)", filetypes=[".txt"])
     return (file_upload,)
 
@@ -77,7 +83,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    nlc            = mo.ui.text(label="", value="0.0")
+    nlc            = mo.ui.text(label="", value="")
     offset_btn     = mo.ui.button(label="Offset",   kind="neutral", value=0)
     filter_points  = mo.ui.text(label="", value="25")
     static_range   = mo.ui.text(label="", value="10.0")
@@ -120,19 +126,20 @@ def _(col_step_inactive, col_step_time, col_time, end_step_row, has_step, mo, se
 
 
 @app.cell
-def _(dyn_max, dyn_min, filter_points, mo, nlc, set_eval_params, static_range):
+def _(dyn_max, dyn_min, filter_points, mo, set_eval_params, set_filter_params, static_range):
+    filter_btn   = mo.ui.button(
+        label="Filter", kind="neutral",
+        on_click=lambda _: set_filter_params({"filter_points": int(filter_points.value)}),
+    )
     evaluate_btn = mo.ui.button(
-        label="Evaluate",
-        kind="success",
+        label="Evaluate", kind="success",
         on_click=lambda _: set_eval_params({
-            "filter_points": int(filter_points.value),
-            "nlc":           float(nlc.value),
-            "static_range":  float(static_range.value),
-            "dyn_min":       float(dyn_min.value),
-            "dyn_max":       float(dyn_max.value),
+            "static_range": float(static_range.value),
+            "dyn_min":      float(dyn_min.value),
+            "dyn_max":      float(dyn_max.value),
         }),
     )
-    return (evaluate_btn,)
+    return evaluate_btn, filter_btn
 
 
 @app.cell
@@ -221,23 +228,21 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, mo, nlc, offset
 
 
 @app.cell
-def _(df_display, get_eval_params, mo, step_df, utility_functions):
-    df_proc = None
-    _params = get_eval_params()
-    if df_display is not None and _params is not None:
+def _(df_display, get_filter_params, mo, step_df, utility_functions):
+    df_proc = df_display.copy() if df_display is not None else None
+    _fparams = get_filter_params()
+    if df_display is not None and _fparams is not None:
         try:
-            df_proc = df_display.copy()
-            _w = _params["filter_points"]
+            _w = _fparams["filter_points"]
             if _w > 1:
-                df_proc = utility_functions.filter(df_proc, step_df, _w)
+                df_proc = utility_functions.filter(df_display.copy(), step_df, _w)
         except Exception as _e:
-            df_proc = None
-            mo.output.append(mo.callout(mo.md(f"**Processing error:** {_e}"), kind="danger"))
+            mo.output.append(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
     return (df_proc,)
 
 
 @app.cell
-def _(df_display, go, mo, step_df):
+def _(df_display, df_proc, get_filter_params, go, mo, step_df):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -245,16 +250,32 @@ def _(df_display, go, mo, step_df):
             "Upload a file to see the chart</div>"
         )
     else:
-        _y_min = float(df_display["CoF"].min())
-        _y_max = float(df_display["CoF"].max())
+        _fparams = get_filter_params()
+        _filter_active = (
+            _fparams is not None
+            and _fparams.get("filter_points", 1) > 1
+            and df_proc is not None
+        )
+
+        _y_min = float(df_display["CoF"].min(skipna=True))
+        _y_max = float(df_display["CoF"].max(skipna=True))
+        if _filter_active:
+            _y_min = min(_y_min, float(df_proc["CoF"].min(skipna=True)))
+            _y_max = max(_y_max, float(df_proc["CoF"].max(skipna=True)))
         _y_pad = max(abs(_y_max - _y_min) * 0.05, 0.001)
-        _step = max(1, len(df_display) // 5000)
-        _df_chart = df_display.iloc[::_step]
+
         _fig = go.Figure()
         _fig.add_trace(go.Scatter(
-            x=_df_chart["Zeit"], y=_df_chart["CoF"],
-            mode="lines", name="CoF", line=dict(color="#4A90D9", width=1),
+            x=df_display["Zeit"], y=df_display["CoF"],
+            mode="lines", name="CoF",
+            line=dict(color="rgba(180,180,180,0.6)" if _filter_active else "#4A90D9", width=1),
         ))
+        if _filter_active:
+            _fig.add_trace(go.Scatter(
+                x=df_proc["Zeit"], y=df_proc["CoF"],
+                mode="lines", name="Filtered CoF",
+                line=dict(color="#4A90D9", width=1.5),
+            ))
         if step_df is not None:
             for _, _r in step_df.iterrows():
                 if not _r["inactive"]:
@@ -287,12 +308,18 @@ def _(cof_calc, df_proc, get_eval_params, mo, stat_funcs, step_df):
         )
     else:
         try:
+            import pandas as _pd
             _minima  = cof_calc.find_minima(df_proc)
             _cof_res = cof_calc.get_static_and_dynamic_cof(
                 df_proc, _minima,
                 _params["static_range"], _params["dyn_min"], _params["dyn_max"]
             )
-            _stats   = stat_funcs.CoF_Stat(_cof_res, step_df)
+            _sdf = step_df if step_df is not None else _pd.DataFrame({
+                "Startzeit [s]": [df_proc["Zeit"].min()],
+                "Endzeit [s]":   [df_proc["Zeit"].max()],
+                "inactive":      [False],
+            })
+            _stats = stat_funcs.CoF_Stat(_cof_res, _sdf)
             results_panel = mo.vstack([
                 mo.Html('<p class="panel-title">Results Summary</p>'),
                 mo.ui.table(_stats, show_column_summaries=False, show_data_types=False),
@@ -313,6 +340,7 @@ def _(
     col_step_time,
     col_time,
     df_display,
+    df_proc,
     df_raw,
     display_msg,
     dyn_max,
@@ -320,6 +348,7 @@ def _(
     end_step_row,
     evaluate_btn,
     file_upload,
+    filter_btn,
     filter_points,
     has_step,
     load_msg,
@@ -405,14 +434,15 @@ def _(
         mo.hstack([
             mo.Html('<p class="section-label" style="margin:0;align-self:center">ACTIONS</p>'),
             offset_btn,
+            filter_btn,
             evaluate_btn,
             mo.Html('<div style="width:1px;background:#eee;height:28px;margin:0 8px;align-self:center"></div>'),
             mo.Html('<p class="section-label" style="margin:0;align-self:center">PARAMETERS</p>'),
-            nlc,
-            filter_points,
-            static_range,
-            dyn_min,
-            dyn_max,
+            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">NLC</span>'), nlc], align="center", gap=2),
+            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'), filter_points], align="center", gap=2),
+            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Static %</span>'), static_range], align="center", gap=2),
+            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn min %</span>'), dyn_min], align="center", gap=2),
+            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn max %</span>'), dyn_max], align="center", gap=2),
         ], gap=3, align="end"),
         mo.Html('<hr class="divider">'),
         mo.vstack([
@@ -424,21 +454,21 @@ def _(
             mo.Html('<hr class="divider">'),
             mo.Html('<p class="panel-title">CoF Data</p>'),
             mo.vstack([
-                mo.callout(mo.md(f"Showing first 500 of **{len(df_display):,}** rows"), kind="info"),
+                mo.callout(mo.md(f"**{len(df_proc):,}** rows"), kind="info"),
                 mo.ui.table(
-                    df_display[["Zeit", "CoF"]].head(500).reset_index(drop=True),
-                    pagination=False,
+                    df_proc[["Zeit", "CoF"]].reset_index(drop=True),
+                    pagination=True,
                     show_column_summaries=False,
                     show_data_types=False,
                 ),
-            ]) if df_display is not None and "Zeit" in df_display.columns and "CoF" in df_display.columns
+            ]) if df_proc is not None and "Zeit" in df_proc.columns and "CoF" in df_proc.columns
             else mo.Html('<div style="color:#bbb;font-size:13px;padding:8px">No data</div>'),
         ], gap=1),
     ], gap=2)
 
     mo.vstack([
         _navbar,
-        mo.tabs({
+        mo.ui.tabs({
             "📋  Raw Data":      _rawdata_tab,
             "📊  CoF Analysis":  _analysis_tab,
         }),
