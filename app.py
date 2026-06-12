@@ -350,8 +350,9 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
 
 
 @app.cell
-def _(cof_eval, df_proc, mo, stat_funcs, step_df):
+def _(cof_eval, df_display, df_proc, mo, stat_funcs, step_df):
     import pandas as _pd
+    import numpy as _np
     if df_proc is None or cof_eval is None:
         results_panel = mo.Html(
             '<div style="height:60px;display:flex;align-items:center;justify-content:center;'
@@ -365,9 +366,83 @@ def _(cof_eval, df_proc, mo, stat_funcs, step_df):
                 "inactive":      [False],
             })
             _stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
+            _cr   = cof_eval["cof_res"]
+            _mn   = cof_eval["minima"]
+            _N    = len(df_proc)
+
+            def _p(arr):
+                lst = list(arr)
+                return lst + [_np.nan] * (_N - len(lst))
+
+            _tbl = _pd.DataFrame({
+                # ── Per-cycle static CoF ─────────────────────────────────────
+                "Static CoF":                   _p(_cr["staticCoF"]),
+                "Static CoF time [s]":          _p(_cr["staticCoFTime"]),
+                # ── Per-cycle dynamic CoF statistics ─────────────────────────
+                "Dynamic CoF time [s]":         _p(_cr["dynamicCoFTime"]),
+                "Dynamic CoF":                  _p(_cr["dynamicCoF"]),
+                "Standard deviation":           _p(_cr["dynamicCoFSD"]),
+                "Number of points":             _p(_cr["dynamicCoFn"]),
+                "Dynamic CoF sum":              _p(_cr["dynamicCoFsigma"]),
+                "Dynamic CoF variance":         _p(_cr["dynamicCoFvariance"]),
+                # ── Per-step static CoF statistics ───────────────────────────
+                "Time range [s]":               _p(_stats["Time Range"]),
+                "static mean CoF":              _p(_stats["Static Avg"]),
+                "Static std dev":               _p(_stats["Static Std Dev"]),
+                "Static N":                     _p(_stats["Static N"]),
+                "Static CoF sum":               _p(_stats["Static Avg x N"]),
+                "Static CoF variance":          _p(_stats["Static Var"]),
+                # ── Per-step dynamic CoF statistics ──────────────────────────
+                "Dynamic mean CoF":             _p(_stats["Dynamic Avg"]),
+                "Dynamic std dev":              _p(_stats["Dynamic Std Dev"]),
+                "Dynamic N":                    _p(_stats["Dynamic N"]),
+                "Dynamic CoF avg*N":            _p(_stats["Dynamic Avg x N"]),
+                "Dynamic CoF variance (step)":  _p(_stats["Dynamic Var"]),
+                # ── Integral CoF statistics (future) ─────────────────────────
+                "Integral [s]":                 [_np.nan] * _N,
+                "Integral CoF":                 [_np.nan] * _N,
+                "Integral time range [s]":      [_np.nan] * _N,
+                "Integral mean CoF":            [_np.nan] * _N,
+                "Integral std dev":             [_np.nan] * _N,
+                "Integral N":                   [_np.nan] * _N,
+                "Integral sum":                 [_np.nan] * _N,
+                "Integral CoF variance":        [_np.nan] * _N,
+                # ── Full raw signal ───────────────────────────────────────────
+                "Time [s]":                     list(df_proc["Zeit"]),
+                "CoF":                          list(df_display["CoF"]),
+                "Filtered CoF":                 list(df_proc["CoF"]),
+                "Displacement [mm]":            [_np.nan] * _N,
+                "Filtered displacement [mm]":   [_np.nan] * _N,
+                # ── CoF zero crossings ────────────────────────────────────────
+                "-Min time [s]":                _p(_mn["-Min Zeit"]),
+                "-Min CoF":                     _p(_mn["-Min CoF"]),
+                "+Min time [s]":                _p(_mn["+Min Zeit"]),
+                "+Min CoF":                     _p(_mn["+Min CoF"]),
+                "Min time [s]":                 _p(_mn["Min Zeit"]),
+                "CoF minima":                   _p(_mn["Min CoF"]),
+                # ── Dynamic window start / end ────────────────────────────────
+                "Dynamic CoF start time [s]":   _p(_cr["startdynamicTime"]),
+                "Dynamic CoF start":            _p(_cr["startdynamicCoF"]),
+                "Dynamic CoF end time [s]":     _p(_cr["enddynamicTime"]),
+                "Dynamic CoF end":              _p(_cr["enddynamicCoF"]),
+                # ── Displacement minima (future) ──────────────────────────────
+                "-Min time [s] (stroke)":       [_np.nan] * _N,
+                "-Min displacement [mm]":       [_np.nan] * _N,
+                "+Min time [s] (stroke)":       [_np.nan] * _N,
+                "+Min displacement [mm]":       [_np.nan] * _N,
+                "Min time [s] (stroke)":        [_np.nan] * _N,
+                "Displacement minima":          [_np.nan] * _N,
+                "Displacement maxima":          [_np.nan] * _N,
+            })
+
             results_panel = mo.vstack([
-                mo.Html('<p class="panel-title">Results Summary</p>'),
-                mo.ui.table(_stats, show_column_summaries=False, show_data_types=False),
+                mo.Html('<p class="panel-title">Results</p>'),
+                mo.ui.table(
+                    _tbl,
+                    pagination=True,
+                    show_column_summaries=False,
+                    show_data_types=False,
+                ),
             ], gap=1)
         except Exception as _e:
             results_panel = mo.callout(mo.md(f"Evaluation error: {_e}"), kind="warn")
@@ -501,18 +576,6 @@ def _(
             cof_chart,
             mo.Html('<hr class="divider">'),
             results_panel,
-            mo.Html('<hr class="divider">'),
-            mo.Html('<p class="panel-title">CoF Data</p>'),
-            mo.vstack([
-                mo.callout(mo.md(f"**{len(df_proc):,}** rows"), kind="info"),
-                mo.ui.table(
-                    df_proc[["Zeit", "CoF"]].reset_index(drop=True),
-                    pagination=True,
-                    show_column_summaries=False,
-                    show_data_types=False,
-                ),
-            ]) if df_proc is not None and "Zeit" in df_proc.columns and "CoF" in df_proc.columns
-            else mo.Html('<div style="color:#bbb;font-size:13px;padding:8px">No data</div>'),
         ], gap=1),
     ], gap=2)
 
