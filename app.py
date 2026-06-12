@@ -40,9 +40,18 @@ def _(mo):
       table th { padding: 4px 6px !important; min-width: 0 !important; width: auto !important; }
       table td { padding: 4px 6px !important; min-width: 0 !important; width: auto !important; }
       table { table-layout: auto !important; }
-      input[type="number"] { width: 72px !important; -moz-appearance: textfield; }
-      input[type="number"]::-webkit-outer-spin-button,
-      input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type="text"] {
+        width: 60px !important;
+        max-width: 60px !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+      }
+      label:has(input[type="text"]) {
+        width: 60px !important;
+        max-width: 60px !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+      }
     </style>
     """)
     return
@@ -68,14 +77,13 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    stepwise_check = mo.ui.number(label="Stepwise Check",         value=1,    step=1)
-    nlc            = mo.ui.number(label="Normal Load Correction", value=0.0,  step=0.1)
+    nlc            = mo.ui.text(label="", value="0.0")
     offset_btn     = mo.ui.button(label="Offset",   kind="neutral", value=0)
-    filter_points  = mo.ui.number(label="Filter Points",          value=25,   step=1)
-    static_range   = mo.ui.number(label="Static CoF Range (%)",   value=10.0, step=1.0)
-    dyn_min        = mo.ui.number(label="Dyn CoF Min (%)",        value=20.0, step=1.0)
-    dyn_max        = mo.ui.number(label="Dyn CoF Max (%)",        value=80.0, step=1.0)
-    return dyn_max, dyn_min, filter_points, nlc, offset_btn, static_range, stepwise_check
+    filter_points  = mo.ui.text(label="", value="25")
+    static_range   = mo.ui.text(label="", value="10.0")
+    dyn_min        = mo.ui.text(label="", value="20.0")
+    dyn_max        = mo.ui.text(label="", value="80.0")
+    return dyn_max, dyn_min, filter_points, nlc, offset_btn, static_range
 
 
 @app.cell
@@ -84,10 +92,10 @@ def _(file_upload, mo):
         len(file_upload.value[0].contents.decode("latin-1").splitlines())
         if file_upload.value else 0
     )
-    start_step_row = mo.ui.number(label="Start Step",      value=0,      step=1)
-    end_step_row   = mo.ui.number(label="End Step",         value=0,      step=1)
-    start_main_row = mo.ui.number(label="Start Main Data", value=41,     step=1)
-    stop_main_row  = mo.ui.number(label="Stop Main Data",  value=_total, step=1)
+    start_step_row = mo.ui.text(label="", value="0")
+    end_step_row   = mo.ui.text(label="", value="0")
+    start_main_row = mo.ui.text(label="", value="41")
+    stop_main_row  = mo.ui.text(label="", value=str(_total))
     has_step       = mo.ui.checkbox(label="Has step data", value=True)
     return end_step_row, has_step, start_main_row, start_step_row, stop_main_row
 
@@ -180,12 +188,12 @@ def _(file_upload, get_parse_params, mo):
 
 @app.cell
 def _(mo):
-    col_time          = mo.ui.number(label="Time col #",          value=1,  step=1)
-    col_left          = mo.ui.number(label="Friction Left col #", value=14, step=1)
-    col_right         = mo.ui.number(label="Friction Right col #",value=15, step=1)
-    col_load          = mo.ui.number(label="Normal Load col #",   value=4,  step=1)
-    col_step_time     = mo.ui.number(label="Step Time col #",     value=0, step=1)
-    col_step_inactive = mo.ui.number(label="Step Inactive col #", value=0, step=1)
+    col_time          = mo.ui.text(label="", value="1")
+    col_left          = mo.ui.text(label="", value="14")
+    col_right         = mo.ui.text(label="", value="15")
+    col_load          = mo.ui.text(label="", value="4")
+    col_step_time     = mo.ui.text(label="", value="0")
+    col_step_inactive = mo.ui.text(label="", value="0")
     return col_left, col_load, col_right, col_step_inactive, col_step_time, col_time
 
 
@@ -322,7 +330,6 @@ def _(
     start_main_row,
     start_step_row,
     static_range,
-    stepwise_check,
     stop_main_row,
 ):
     _navbar = mo.Html("""
@@ -342,15 +349,14 @@ def _(
         import pandas as _pd
         _lines = file_upload.value[0].contents.decode("latin-1").splitlines()
         _total = len(_lines)
-        _preview = _lines[:500]
-        _rows = [line.split("\t") for line in _preview]
+        _rows = [line.split("\t") for line in _lines]
         _ncols = max(len(r) for r in _rows)
         _rows_padded = [r + [""] * (_ncols - len(r)) for r in _rows]
         _df_file = _pd.DataFrame(_rows_padded, columns=[str(i) for i in range(_ncols)])
-        _df_file.insert(0, "#", range(1, len(_preview) + 1))
+        _df_file.insert(0, "#", range(1, len(_lines) + 1))
         _justify = {col: "left" for col in _df_file.columns}
         _raw_table = mo.vstack([
-            mo.callout(mo.md(f"Showing first 500 of **{_total:,}** lines"), kind="info"),
+            mo.callout(mo.md(f"**{_total:,}** lines"), kind="info"),
             mo.ui.table(
                 _df_file,
                 pagination=True,
@@ -366,34 +372,28 @@ def _(
         )
 
     _rawdata_tab = mo.vstack([
-        mo.hstack([file_upload], gap=3, align="end"),
+        mo.hstack([file_upload], justify="start"),
         mo.Html('<hr class="divider">'),
-        mo.hstack([
-            mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
-                    f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
-                    f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
-            mo.Html('<div style="flex:1"></div>'),
-            mo.hstack([stepwise_check, nlc], gap=2, align="end"),
-        ], gap=0, align="center"),
+        mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
+                f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
+                f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
         mo.Html('<hr class="divider">'),
-        mo.Html('<p class="section-label">CONFIGURE</p>'),
-        mo.hstack([
-            has_step,
-            start_step_row,
-            end_step_row,
-            start_main_row,
-            stop_main_row,
-            calculate_btn,
-        ], gap=3, align="end"),
-        mo.hstack([
-            mo.Html('<p class="section-label" style="margin:0;align-self:center">COLUMNS</p>'),
-            col_time,
-            col_left,
-            col_right,
-            col_load,
-            col_step_time,
-            col_step_inactive,
-        ], gap=3, align="end"),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load Correction</span>'), nlc], align="center", justify="start", gap=2),
+        mo.Html('<hr class="divider">'),
+        has_step,
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Start Step</span>'),      start_step_row], align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">End Step</span>'),        end_step_row],   align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Start Main Data</span>'), start_main_row], align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Stop Main Data</span>'),  stop_main_row],  align="center", justify="start", gap=2),
+        mo.Html('<hr class="divider">'),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Time col #</span>'),          col_time],          align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Left col #</span>'), col_left],          align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Right col #</span>'),col_right],         align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load col #</span>'),   col_load],          align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Step Time col #</span>'),     col_step_time],     align="center", justify="start", gap=2),
+        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Step Inactive col #</span>'), col_step_inactive], align="center", justify="start", gap=2),
+        mo.Html('<hr class="divider">'),
+        calculate_btn,
         mo.Html('<hr class="divider">'),
         load_msg,
         display_msg if display_msg is not None else mo.Html(''),
