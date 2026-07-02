@@ -8,21 +8,21 @@ logger = logging.getLogger(__name__)
 def offset(df, step_df=None):
     has_stroke = "stroke" in df.columns
     if step_df is None:
-        df["CoF"] = df["CoF"] - df["CoF"].mean()
+        df["CoF"] = (df["CoF"] - df["CoF"].mean()).round(15)
         if has_stroke:
-            df["stroke"] = df["stroke"] - df["stroke"].mean()
+            df["stroke"] = (df["stroke"] - df["stroke"].mean()).round(15)
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
                 filtered_rows = df[
-                    (df["Zeit"] < row["Endzeit [s]"])
-                    & (df["Zeit"] > row["Startzeit [s]"])
+                    (df["Zeit"] >= row["Startzeit [s]"])
+                    & (df["Zeit"] <= row["Endzeit [s]"])
                 ]
                 cof_column = filtered_rows["CoF"]
-                df.loc[filtered_rows.index, "CoF"] = cof_column - cof_column.mean()
+                df.loc[filtered_rows.index, "CoF"] = (cof_column - cof_column.mean()).round(15)
                 if has_stroke:
                     stroke_column = filtered_rows["stroke"]
-                    df.loc[filtered_rows.index, "stroke"] = stroke_column - stroke_column.mean()
+                    df.loc[filtered_rows.index, "stroke"] = (stroke_column - stroke_column.mean()).round(15)
     return df
 
 
@@ -54,9 +54,9 @@ def filter_vb_style(series, n):
 def filter(df, step_df, window):
     has_stroke = "stroke" in df.columns
     if step_df is None:
-        df["CoF"] = filter_vb_style(df["CoF"], window).values
+        df["CoF"] = filter_vb_style(df["CoF"], window).round(15).values
         if has_stroke:
-            df["stroke"] = filter_vb_style(df["stroke"], window).values
+            df["stroke"] = filter_vb_style(df["stroke"], window).round(15).values
     else:
         for index, row in step_df.iterrows():
             if not row["inactive"]:
@@ -64,9 +64,9 @@ def filter(df, step_df, window):
                     (df["Zeit"] < row["Endzeit [s]"])
                     & (df["Zeit"] > row["Startzeit [s]"])
                 ]
-                df.loc[filtered_rows.index, "CoF"] = filter_vb_style(filtered_rows["CoF"], window).values
+                df.loc[filtered_rows.index, "CoF"] = filter_vb_style(filtered_rows["CoF"], window).round(15).values
                 if has_stroke:
-                    df.loc[filtered_rows.index, "stroke"] = filter_vb_style(filtered_rows["stroke"], window).values
+                    df.loc[filtered_rows.index, "stroke"] = filter_vb_style(filtered_rows["stroke"], window).round(15).values
     return df
 
 
@@ -209,12 +209,12 @@ def Evaluate(
             enddynamicIndex.append(
                 startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1]))
             )
-            startdynamicTime.append(Time[startdynamicIndex[-1]])
-            enddynamicTime.append(Time[enddynamicIndex[-1]])
-            startdynamicCoF.append(Stroke[startdynamicIndex[-1]])
-            enddynamicCoF.append(Stroke[enddynamicIndex[-1]])
+            startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
+            enddynamicTime.append(Time[enddynamicIndex[-1] - 1])
+            startdynamicCoF.append(Stroke[startdynamicIndex[-1] - 1])
+            enddynamicCoF.append(Stroke[enddynamicIndex[-1] - 1])
 
-            movingdynamicRange = Stroke[startdynamicIndex[-1] : enddynamicIndex[-1]]
+            movingdynamicRange = Stroke[startdynamicIndex[-1] - 1 : enddynamicIndex[-1]]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
             dynamicCoFSD.append(np.std((movingdynamicRange)))

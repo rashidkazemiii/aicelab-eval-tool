@@ -170,7 +170,7 @@ def _(file_upload, get_parse_params, mo):
             _lines = _raw.splitlines()
 
             # ── Main data ────────────────────────────────────────────────────
-            _nrows = (_p["stop_main"] - _p["start_main"]
+            _nrows = (_p["stop_main"] - _p["start_main"] + 1
                       if _p["stop_main"] > _p["start_main"] else None)
             df_raw = pd.read_csv(
                 io.StringIO(_raw), sep="\t",
@@ -232,6 +232,7 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo,
             df_display = df_raw.rename(columns=_rename).copy()
             _nlc = float(nlc.value) if nlc.value else None
             df_display = cof_calc.calculate(df_display, _nlc)
+            df_display["CoF"] = df_display["CoF"].round(5)
             if get_offset():
                 df_display = utility_functions.offset(df_display, step_df)
         except Exception as _e:
@@ -431,15 +432,19 @@ def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df)
             lst = list(arr)
             return lst + [_np.nan] * (_N - len(lst))
 
+        def _pr(arr, decimals=15):
+            lst = [round(float(v), decimals) if _np.isfinite(v) else v for v in arr]
+            return lst + [_np.nan] * (_N - len(lst))
+
         # ── Always present (after Calculate) ─────────────────────────────────
         _cols = {
             "Time [s]":    list(df_display["Zeit"]),
-            "CoF":         list(df_display["CoF"]),
+            "CoF":         list(df_display["CoF"].round(15)),
         }
 
         # ── Added after Filter ────────────────────────────────────────────────
         if _filter_active:
-            _cols["Filtered CoF"] = list(df_proc["CoF"])
+            _cols["Filtered CoF"] = list(df_proc["CoF"].round(15))
 
         # ── Added after Evaluate ──────────────────────────────────────────────
         if cof_eval is not None:
@@ -453,35 +458,35 @@ def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df)
                 _cr = cof_eval["cof_res"]
                 _mn = cof_eval["minima"]
                 _cols.update({
-                    "Static CoF":                  _p(_cr["staticCoF"]),
                     "Static CoF time [s]":         _p(_cr["staticCoFTime"]),
-                    "Dynamic CoF":                 _p(_cr["dynamicCoF"]),
+                    "Static CoF":                  _pr(_cr["staticCoF"]),
                     "Dynamic CoF time [s]":        _p(_cr["dynamicCoFTime"]),
-                    "Dynamic std dev":             _p(_cr["dynamicCoFSD"]),
+                    "Dynamic CoF":                 _pr(_cr["dynamicCoF"]),
+                    "Dynamic std dev":             _pr(_cr["dynamicCoFSD"]),
                     "Dynamic N":                   _p(_cr["dynamicCoFn"]),
-                    "Dynamic CoF sum":             _p(_cr["dynamicCoFsigma"]),
-                    "Dynamic CoF variance":        _p(_cr["dynamicCoFvariance"]),
+                    "Dynamic CoF sum":             _pr(_cr["dynamicCoFsigma"]),
+                    "Dynamic CoF variance":        _pr(_cr["dynamicCoFvariance"]),
                     "Time range [s]":              _p(_stats["Time Range"]),
-                    "Static mean CoF":             _p(_stats["Static Avg"]),
-                    "Static std dev":              _p(_stats["Static Std Dev"]),
+                    "Static mean CoF":             _pr(_stats["Static Avg"]),
+                    "Static std dev":              _pr(_stats["Static Std Dev"]),
                     "Static N":                    _p(_stats["Static N"]),
-                    "Static CoF sum":              _p(_stats["Static Avg x N"]),
-                    "Static CoF variance":         _p(_stats["Static Var"]),
-                    "Dynamic mean CoF":            _p(_stats["Dynamic Avg"]),
-                    "Dynamic mean std dev":        _p(_stats["Dynamic Std Dev"]),
+                    "Static CoF sum":              _pr(_stats["Static Avg x N"]),
+                    "Static CoF variance":         _pr(_stats["Static Var"]),
+                    "Dynamic mean CoF":            _pr(_stats["Dynamic Avg"]),
+                    "Dynamic mean std dev":        _pr(_stats["Dynamic Std Dev"]),
                     "Dynamic mean N":              _p(_stats["Dynamic N"]),
-                    "Dynamic CoF avg×N":           _p(_stats["Dynamic Avg x N"]),
-                    "Dynamic CoF var (step)":      _p(_stats["Dynamic Var"]),
+                    "Dynamic CoF avg×N":           _pr(_stats["Dynamic Avg x N"]),
+                    "Dynamic CoF var (step)":      _pr(_stats["Dynamic Var"]),
                     "-Min time [s]":               _p(_mn["-Min Zeit"]),
-                    "-Min CoF":                    _p(_mn["-Min CoF"]),
+                    "-Min CoF":                    _pr(_mn["-Min CoF"], 16),
                     "+Min time [s]":               _p(_mn["+Min Zeit"]),
-                    "+Min CoF":                    _p(_mn["+Min CoF"]),
+                    "+Min CoF":                    _pr(_mn["+Min CoF"], 18),
                     "Min time [s]":                _p(_mn["Min Zeit"]),
-                    "CoF minima":                  _p(_mn["Min CoF"]),
+                    "CoF minima":                  _pr(_mn["Min CoF"]),
                     "Dynamic start time [s]":      _p(_cr["startdynamicTime"]),
-                    "Dynamic start CoF":           _p(_cr["startdynamicCoF"]),
+                    "Dynamic start CoF":           _pr(_cr["startdynamicCoF"]),
                     "Dynamic end time [s]":        _p(_cr["enddynamicTime"]),
-                    "Dynamic end CoF":             _p(_cr["enddynamicCoF"]),
+                    "Dynamic end CoF":             _pr(_cr["enddynamicCoF"]),
                 })
             except Exception as _e:
                 _cols["Eval error"] = [str(_e)] + [_np.nan] * (_N - 1)
