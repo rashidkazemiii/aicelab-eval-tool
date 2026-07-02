@@ -10,7 +10,8 @@ dependencies = [
     "pandas (>=3.0.2,<4.0.0)",
     "numpy (>=2.4.4,<3.0.0)",
     "marimo (>=0.13.0)",
-    "plotly (>=6.0.0)"
+    "plotly (>=6.0.0)",
+    "altair (>=6.2.2,<7.0.0)"
 ]
 
 
@@ -22,4 +23,4 @@ build-backend = "poetry.core.masonry.api"
 package-mode = false
 
 [tool.marimo.runtime]
-output_max_bytes = 20_000_000
+output_max_bytes = 100_000_000

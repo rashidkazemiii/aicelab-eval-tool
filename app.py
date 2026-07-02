@@ -19,6 +19,8 @@ def _():
     return cof_calc, go, mo, stat_funcs, utility_functions
 
 
+
+
 @app.cell
 def _(mo):
     mo.Html("""
@@ -71,6 +73,12 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    get_offset, set_offset = mo.state(False)
+    return get_offset, set_offset
+
+
+@app.cell
+def _(mo):
     file_upload = mo.ui.file(label="Upload test file (.txt)", filetypes=[".txt"])
     return (file_upload,)
 
@@ -81,14 +89,19 @@ def _(mo):
     return get_parse_params, set_parse_params
 
 
+
 @app.cell
-def _(mo):
-    nlc            = mo.ui.text(label="", value="")
-    offset_btn     = mo.ui.button(label="Offset",   kind="neutral", value=0)
-    filter_points  = mo.ui.text(label="", value="25")
-    static_range   = mo.ui.text(label="", value="10.0")
-    dyn_min        = mo.ui.text(label="", value="20.0")
-    dyn_max        = mo.ui.text(label="", value="80.0")
+def _(get_offset, mo, set_offset):
+    nlc           = mo.ui.text(label="", value="")
+    offset_btn    = mo.ui.button(
+        label="Offset (ON)" if get_offset() else "Offset",
+        kind="success" if get_offset() else "neutral",
+        on_click=lambda _: set_offset(not get_offset()),
+    )
+    filter_points = mo.ui.text(label="", value="25")
+    static_range  = mo.ui.text(label="", value="10.0")
+    dyn_min       = mo.ui.text(label="", value="20.0")
+    dyn_max       = mo.ui.text(label="", value="80.0")
     return dyn_max, dyn_min, filter_points, nlc, offset_btn, static_range
 
 
@@ -205,7 +218,7 @@ def _(mo):
 
 
 @app.cell
-def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, mo, nlc, offset_btn, step_df, utility_functions):
+def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo, nlc, step_df, utility_functions):
     df_display = None
     display_msg = None
     if df_raw is not None:
@@ -219,7 +232,7 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, mo, nlc, offset
             df_display = df_raw.rename(columns=_rename).copy()
             _nlc = float(nlc.value) if nlc.value else None
             df_display = cof_calc.calculate(df_display, _nlc)
-            if offset_btn.value > 0:
+            if get_offset():
                 df_display = utility_functions.offset(df_display, step_df)
         except Exception as _e:
             df_display = None
@@ -242,8 +255,9 @@ def _(df_display, get_filter_params, mo, step_df, utility_functions):
 
 
 @app.cell
-def _(cof_calc, df_display, df_proc, get_eval_params):
+def _(cof_calc, df_display, df_proc, get_eval_params, mo):
     cof_eval = None
+    eval_msg = None
     _params = get_eval_params()
     if df_proc is not None and df_display is not None and _params is not None:
         try:
@@ -253,13 +267,15 @@ def _(cof_calc, df_display, df_proc, get_eval_params):
                 _params["static_range"], _params["dyn_min"], _params["dyn_max"],
             )
             cof_eval = {"minima": _minima, "cof_res": _cof_res}
-        except Exception:
-            cof_eval = None
-    return (cof_eval,)
+        except Exception as _e:
+            eval_msg = mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger")
+    return cof_eval, eval_msg
 
 
 @app.cell
 def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
+    import io as _io, re as _re, json as _json
+
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -267,6 +283,7 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
             "Upload a file to see the chart</div>"
         )
     else:
+        # ── A: data prep ─────────────────────────────────────────────────────
         _fparams = get_filter_params()
         _filter_active = (
             _fparams is not None
@@ -274,25 +291,23 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
             and df_proc is not None
         )
 
-        _y_min = float(df_display["CoF"].min(skipna=True))
-        _y_max = float(df_display["CoF"].max(skipna=True))
-        if _filter_active:
-            _y_min = min(_y_min, float(df_proc["CoF"].min(skipna=True)))
-            _y_max = max(_y_max, float(df_proc["CoF"].max(skipna=True)))
-        _y_pad = max(abs(_y_max - _y_min) * 0.05, 0.001)
-
+        # ── B: build figure ───────────────────────────────────────────────────
         _fig = go.Figure()
-        _fig.add_trace(go.Scatter(
+
+        # Line traces — Scattergl uses WebGL: handles large datasets efficiently in the browser
+        _fig.add_trace(go.Scattergl(
             x=df_display["Zeit"], y=df_display["CoF"],
             mode="lines", name="CoF",
             line=dict(color="rgba(41,128,185,0.35)" if _filter_active else "#2980b9", width=2),
         ))
         if _filter_active:
-            _fig.add_trace(go.Scatter(
+            _fig.add_trace(go.Scattergl(
                 x=df_proc["Zeit"], y=df_proc["CoF"],
                 mode="lines", name="Filtered CoF",
-                line=dict(color="#e67e22", width=1),
+                line=dict(color="#e67e22", width=1.5),
             ))
+
+        # Evaluation markers — regular Scatter (few points; needs full symbol support)
         if cof_eval is not None:
             _mn = cof_eval["minima"]
             _cr = cof_eval["cof_res"]
@@ -326,11 +341,14 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
                 marker=dict(symbol="triangle-left", size=8, color="#1abc9c",
                             line=dict(color="#16a085", width=1)),
             ))
+
+        # Step boundary vertical lines
         if step_df is not None:
             for _, _r in step_df.iterrows():
                 if not _r["inactive"]:
                     for _t in [_r["Startzeit [s]"], _r["Endzeit [s]"]]:
                         _fig.add_vline(x=_t, line=dict(color="#ccc", dash="dot", width=1))
+
         _fig.update_layout(
             height=420,
             xaxis_title="Time [s]", yaxis_title="CoF [-]",
@@ -340,112 +358,146 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
             dragmode="pan",
             legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
             xaxis=dict(gridcolor="#efefef", linecolor="#ddd"),
-            yaxis=dict(
-                range=[_y_min - _y_pad, _y_max + _y_pad],
-                fixedrange=True, gridcolor="#efefef", linecolor="#ddd",
-            ),
+            # autorange=True: always fits all data; fixedrange=True: user cannot zoom y-axis
+            yaxis=dict(autorange=True, fixedrange=True, gridcolor="#efefef", linecolor="#ddd"),
         )
-        cof_chart = mo.ui.plotly(_fig, config={"scrollZoom": True, "displayModeBar": True})
+
+        # ── C: iframe with x-zoom persistence ────────────────────────────────
+        # CDN URL is pinned to the installed plotly version (avoids version mismatch).
+        _buf = _io.StringIO()
+        _fig.write_html(_buf, include_plotlyjs="cdn", full_html=False)
+        _m = _re.search(r'src="(https://cdn\.plot\.ly/plotly[^"]+\.min\.js)"', _buf.getvalue())
+        _cdn = _m.group(1) if _m else "https://cdn.plot.ly/plotly-latest.min.js"
+
+        _fig_dict = _json.loads(_fig.to_json())
+        _d = _json.dumps(_fig_dict["data"])
+        _l = _json.dumps(_fig_dict["layout"])
+
+        # srcdoc iframe: scripts execute, same origin as parent so window.parent is accessible.
+        # __cofXR on the parent window stores the x-axis zoom range across cell re-renders.
+        _iframe_html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<style>body{{margin:0;overflow:hidden}}</style>
+<script src="{_cdn}"></script>
+</head><body>
+<div id="c" style="width:100vw;height:420px"></div>
+<script>
+var d={_d}, l={_l};
+window.onload = function() {{
+  var xr; try {{ xr = window.parent.__cofXR; }} catch(e) {{}}
+  if (xr) {{ l.xaxis = l.xaxis || {{}}; l.xaxis.range = xr; l.xaxis.autorange = false; }}
+  Plotly.react("c", d, l, {{ scrollZoom: true, displayModeBar: true, responsive: true }})
+    .then(function() {{
+      document.getElementById("c").on("plotly_relayout", function(e) {{
+        if ("xaxis.range[0]" in e) {{
+          try {{ window.parent.__cofXR = [e["xaxis.range[0]"], e["xaxis.range[1]"]]; }} catch(ex) {{}}
+        }} else if (e["xaxis.autorange"]) {{
+          try {{ window.parent.__cofXR = null; }} catch(ex) {{}}
+        }}
+      }});
+    }});
+}};
+</script>
+</body></html>"""
+
+        _srcdoc = _iframe_html.replace("&", "&amp;").replace("<", "&lt;").replace("'", "&#39;")
+        cof_chart = mo.Html(
+            f"<iframe srcdoc='{_srcdoc}' style='width:100%;height:440px;border:none;display:block'></iframe>"
+        )
     return (cof_chart,)
 
 
 @app.cell
-def _(cof_eval, df_display, df_proc, mo, stat_funcs, step_df):
+def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df):
     import pandas as _pd
     import numpy as _np
-    if df_proc is None or cof_eval is None:
+
+    if df_display is None:
         results_panel = mo.Html(
             '<div style="height:60px;display:flex;align-items:center;justify-content:center;'
-            'color:#bbb;font-size:13px">Click Evaluate to see results</div>'
+            'color:#bbb;font-size:13px">Click Calculate to see results</div>'
         )
     else:
+        _N = len(df_display)
+        _fparams = get_filter_params()
+        _filter_active = (
+            _fparams is not None
+            and _fparams.get("filter_points", 1) > 1
+            and df_proc is not None
+        )
+
+        def _p(arr):
+            lst = list(arr)
+            return lst + [_np.nan] * (_N - len(lst))
+
+        # ── Always present (after Calculate) ─────────────────────────────────
+        _cols = {
+            "Time [s]":    list(df_display["Zeit"]),
+            "CoF":         list(df_display["CoF"]),
+        }
+
+        # ── Added after Filter ────────────────────────────────────────────────
+        if _filter_active:
+            _cols["Filtered CoF"] = list(df_proc["CoF"])
+
+        # ── Added after Evaluate ──────────────────────────────────────────────
+        if cof_eval is not None:
+            try:
+                _sdf = step_df if step_df is not None else _pd.DataFrame({
+                    "Startzeit [s]": [df_display["Zeit"].min()],
+                    "Endzeit [s]":   [df_display["Zeit"].max()],
+                    "inactive":      [False],
+                })
+                _stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
+                _cr = cof_eval["cof_res"]
+                _mn = cof_eval["minima"]
+                _cols.update({
+                    "Static CoF":                  _p(_cr["staticCoF"]),
+                    "Static CoF time [s]":         _p(_cr["staticCoFTime"]),
+                    "Dynamic CoF":                 _p(_cr["dynamicCoF"]),
+                    "Dynamic CoF time [s]":        _p(_cr["dynamicCoFTime"]),
+                    "Dynamic std dev":             _p(_cr["dynamicCoFSD"]),
+                    "Dynamic N":                   _p(_cr["dynamicCoFn"]),
+                    "Dynamic CoF sum":             _p(_cr["dynamicCoFsigma"]),
+                    "Dynamic CoF variance":        _p(_cr["dynamicCoFvariance"]),
+                    "Time range [s]":              _p(_stats["Time Range"]),
+                    "Static mean CoF":             _p(_stats["Static Avg"]),
+                    "Static std dev":              _p(_stats["Static Std Dev"]),
+                    "Static N":                    _p(_stats["Static N"]),
+                    "Static CoF sum":              _p(_stats["Static Avg x N"]),
+                    "Static CoF variance":         _p(_stats["Static Var"]),
+                    "Dynamic mean CoF":            _p(_stats["Dynamic Avg"]),
+                    "Dynamic mean std dev":        _p(_stats["Dynamic Std Dev"]),
+                    "Dynamic mean N":              _p(_stats["Dynamic N"]),
+                    "Dynamic CoF avg×N":           _p(_stats["Dynamic Avg x N"]),
+                    "Dynamic CoF var (step)":      _p(_stats["Dynamic Var"]),
+                    "-Min time [s]":               _p(_mn["-Min Zeit"]),
+                    "-Min CoF":                    _p(_mn["-Min CoF"]),
+                    "+Min time [s]":               _p(_mn["+Min Zeit"]),
+                    "+Min CoF":                    _p(_mn["+Min CoF"]),
+                    "Min time [s]":                _p(_mn["Min Zeit"]),
+                    "CoF minima":                  _p(_mn["Min CoF"]),
+                    "Dynamic start time [s]":      _p(_cr["startdynamicTime"]),
+                    "Dynamic start CoF":           _p(_cr["startdynamicCoF"]),
+                    "Dynamic end time [s]":        _p(_cr["enddynamicTime"]),
+                    "Dynamic end CoF":             _p(_cr["enddynamicCoF"]),
+                })
+            except Exception as _e:
+                _cols["Eval error"] = [str(_e)] + [_np.nan] * (_N - 1)
+
         try:
-            _sdf = step_df if step_df is not None else _pd.DataFrame({
-                "Startzeit [s]": [df_proc["Zeit"].min()],
-                "Endzeit [s]":   [df_proc["Zeit"].max()],
-                "inactive":      [False],
-            })
-            _stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
-            _cr   = cof_eval["cof_res"]
-            _mn   = cof_eval["minima"]
-            _N    = len(df_proc)
-
-            def _p(arr):
-                lst = list(arr)
-                return lst + [_np.nan] * (_N - len(lst))
-
-            _tbl = _pd.DataFrame({
-                # ── Per-cycle static CoF ─────────────────────────────────────
-                "Static CoF":                   _p(_cr["staticCoF"]),
-                "Static CoF time [s]":          _p(_cr["staticCoFTime"]),
-                # ── Per-cycle dynamic CoF statistics ─────────────────────────
-                "Dynamic CoF time [s]":         _p(_cr["dynamicCoFTime"]),
-                "Dynamic CoF":                  _p(_cr["dynamicCoF"]),
-                "Standard deviation":           _p(_cr["dynamicCoFSD"]),
-                "Number of points":             _p(_cr["dynamicCoFn"]),
-                "Dynamic CoF sum":              _p(_cr["dynamicCoFsigma"]),
-                "Dynamic CoF variance":         _p(_cr["dynamicCoFvariance"]),
-                # ── Per-step static CoF statistics ───────────────────────────
-                "Time range [s]":               _p(_stats["Time Range"]),
-                "static mean CoF":              _p(_stats["Static Avg"]),
-                "Static std dev":               _p(_stats["Static Std Dev"]),
-                "Static N":                     _p(_stats["Static N"]),
-                "Static CoF sum":               _p(_stats["Static Avg x N"]),
-                "Static CoF variance":          _p(_stats["Static Var"]),
-                # ── Per-step dynamic CoF statistics ──────────────────────────
-                "Dynamic mean CoF":             _p(_stats["Dynamic Avg"]),
-                "Dynamic std dev":              _p(_stats["Dynamic Std Dev"]),
-                "Dynamic N":                    _p(_stats["Dynamic N"]),
-                "Dynamic CoF avg*N":            _p(_stats["Dynamic Avg x N"]),
-                "Dynamic CoF variance (step)":  _p(_stats["Dynamic Var"]),
-                # ── Integral CoF statistics (future) ─────────────────────────
-                "Integral [s]":                 [_np.nan] * _N,
-                "Integral CoF":                 [_np.nan] * _N,
-                "Integral time range [s]":      [_np.nan] * _N,
-                "Integral mean CoF":            [_np.nan] * _N,
-                "Integral std dev":             [_np.nan] * _N,
-                "Integral N":                   [_np.nan] * _N,
-                "Integral sum":                 [_np.nan] * _N,
-                "Integral CoF variance":        [_np.nan] * _N,
-                # ── Full raw signal ───────────────────────────────────────────
-                "Time [s]":                     list(df_proc["Zeit"]),
-                "CoF":                          list(df_display["CoF"]),
-                "Filtered CoF":                 list(df_proc["CoF"]),
-                "Displacement [mm]":            [_np.nan] * _N,
-                "Filtered displacement [mm]":   [_np.nan] * _N,
-                # ── CoF zero crossings ────────────────────────────────────────
-                "-Min time [s]":                _p(_mn["-Min Zeit"]),
-                "-Min CoF":                     _p(_mn["-Min CoF"]),
-                "+Min time [s]":                _p(_mn["+Min Zeit"]),
-                "+Min CoF":                     _p(_mn["+Min CoF"]),
-                "Min time [s]":                 _p(_mn["Min Zeit"]),
-                "CoF minima":                   _p(_mn["Min CoF"]),
-                # ── Dynamic window start / end ────────────────────────────────
-                "Dynamic CoF start time [s]":   _p(_cr["startdynamicTime"]),
-                "Dynamic CoF start":            _p(_cr["startdynamicCoF"]),
-                "Dynamic CoF end time [s]":     _p(_cr["enddynamicTime"]),
-                "Dynamic CoF end":              _p(_cr["enddynamicCoF"]),
-                # ── Displacement minima (future) ──────────────────────────────
-                "-Min time [s] (stroke)":       [_np.nan] * _N,
-                "-Min displacement [mm]":       [_np.nan] * _N,
-                "+Min time [s] (stroke)":       [_np.nan] * _N,
-                "+Min displacement [mm]":       [_np.nan] * _N,
-                "Min time [s] (stroke)":        [_np.nan] * _N,
-                "Displacement minima":          [_np.nan] * _N,
-                "Displacement maxima":          [_np.nan] * _N,
-            })
-
             results_panel = mo.vstack([
                 mo.Html('<p class="panel-title">Results</p>'),
                 mo.ui.table(
-                    _tbl,
+                    _pd.DataFrame(_cols),
                     pagination=True,
                     show_column_summaries=False,
                     show_data_types=False,
                 ),
             ], gap=1)
         except Exception as _e:
-            results_panel = mo.callout(mo.md(f"Evaluation error: {_e}"), kind="warn")
+            results_panel = mo.callout(mo.md(f"Results error: {_e}"), kind="warn")
     return (results_panel,)
 
 
@@ -466,10 +518,10 @@ def _(
     dyn_max,
     dyn_min,
     end_step_row,
+    eval_msg,
     evaluate_btn,
     file_upload,
     filter_btn,
-    get_filter_params,
     filter_points,
     has_step,
     load_msg,
@@ -556,7 +608,7 @@ def _(
             mo.Html('<p class="section-label" style="margin:0;align-self:center">ACTIONS</p>'),
             offset_btn,
             filter_btn,
-            evaluate_btn if get_filter_params() is not None else mo.Html(
+            evaluate_btn if df_display is not None else mo.Html(
                 '<button disabled style="opacity:0.35;cursor:not-allowed;padding:4px 14px;'
                 'border-radius:4px;background:#2ecc71;color:#fff;border:none;font-size:13px;'
                 'font-weight:500">Evaluate</button>'
@@ -573,6 +625,7 @@ def _(
         mo.vstack([
             mo.Html('<p class="panel-title">Analysis Visualization</p>'),
             display_msg if display_msg is not None else mo.Html(''),
+            eval_msg if eval_msg is not None else mo.Html(''),
             cof_chart,
             mo.Html('<hr class="divider">'),
             results_panel,
