@@ -131,7 +131,7 @@ def _(col_time, end_step_row, has_step, mo, set_parse_params, start_main_row, st
             "stop_main":         int(stop_main_row.value),
             "has_step":          bool(has_step.value),
             "col_time":          int(col_time.value),
-            "col_step_time":     int(col_time.value),
+            "col_step_time":     0,
             "col_step_inactive": 0,
         }),
     )
