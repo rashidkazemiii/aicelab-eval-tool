@@ -20,17 +20,21 @@ def offset(df, step_df=None):
         if has_stroke:
             df["stroke"] = (df["stroke"] - df["stroke"].mean()).round(15)
     else:
-        for index, row in step_df.iterrows():
-            if not row["inactive"]:
-                filtered_rows = df[
-                    (df["Zeit"] >= row["Startzeit [s]"])
-                    & (df["Zeit"] <= row["Endzeit [s]"])
-                ]
-                cof_column = filtered_rows["CoF"]
-                df.loc[filtered_rows.index, "CoF"] = (cof_column - cof_column.mean()).round(15)
-                if has_stroke:
-                    stroke_column = filtered_rows["stroke"]
-                    df.loc[filtered_rows.index, "stroke"] = (stroke_column - stroke_column.mean()).round(15)
+        # Matches VBA CoFStepShift: pairs consecutive step start times (1&2, 3&4, ...)
+        # into discrete, non-overlapping windows; any time outside a pair is untouched.
+        reference_time = step_df["Startzeit [s]"].to_numpy()
+        for i in range(0, len(reference_time) - 1, 2):
+            lower_limit = reference_time[i]
+            upper_limit = reference_time[i + 1]
+            filtered_rows = df[
+                (df["Zeit"] >= lower_limit)
+                & (df["Zeit"] <= upper_limit)
+            ]
+            cof_column = filtered_rows["CoF"]
+            df.loc[filtered_rows.index, "CoF"] = (cof_column - cof_column.mean()).round(15)
+            if has_stroke:
+                stroke_column = filtered_rows["stroke"]
+                df.loc[filtered_rows.index, "stroke"] = (stroke_column - stroke_column.mean()).round(15)
     return df
 
 
@@ -79,7 +83,7 @@ def filter(df, step_df, window):
 
 
 def trim(df, trim_start, trim_end):
-    return df[(df["Zeit"] < trim_end) & (df["Zeit"] > trim_start)]
+    return df[(df["Zeit"] <= trim_end) & (df["Zeit"] >= trim_start)]
 
 
 def Find_minima(df, column):

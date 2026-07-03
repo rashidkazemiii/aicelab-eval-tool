@@ -183,7 +183,7 @@ def _(file_upload, get_parse_params, mo):
 
             # ── Step data (optional) ─────────────────────────────────────────
             if _p["has_step"] and _p["start_step"] > 0 and _p["end_step"] > _p["start_step"]:
-                _step_text = "\n".join(_lines[_p["start_step"] - 1 : _p["end_step"]])
+                _step_text = "\n".join(_lines[_p["start_step"] - 2 : _p["end_step"]])
                 step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",")
                 step_df.columns = step_df.columns.str.strip()
                 for _c in step_df.columns[1:]:
@@ -231,6 +231,12 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo,
             _nlc = float(nlc.value) if nlc.value else None
             df_display = cof_calc.calculate(df_display, _nlc)
             df_display["CoF"] = df_display["CoF"].round(5)
+            if step_df is not None:
+                df_display = utility_functions.trim(
+                    df_display,
+                    float(step_df["Startzeit [s]"].min()),
+                    float(step_df["Endzeit [s]"].max()),
+                )
             if get_offset():
                 df_display = utility_functions.offset(df_display, step_df)
         except Exception as _e:
