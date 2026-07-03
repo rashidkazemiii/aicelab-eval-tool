@@ -48,22 +48,13 @@ def filter_vb_style(series, n):
     return result
 
 
-def filter(df, step_df, window):
+def filter(df, window):
+    # df is already trimmed to [first step start, last step end] upstream when steps
+    # exist, so filtering the whole received range covers both cases.
     has_stroke = "stroke" in df.columns
-    if step_df is None:
-        df["CoF"] = filter_vb_style(df["CoF"], window).round(15).values
-        if has_stroke:
-            df["stroke"] = filter_vb_style(df["stroke"], window).round(15).values
-    else:
-        for index, row in step_df.iterrows():
-            if not row["inactive"]:
-                filtered_rows = df[
-                    (df["Zeit"] < row["Endzeit [s]"])
-                    & (df["Zeit"] > row["Startzeit [s]"])
-                ]
-                df.loc[filtered_rows.index, "CoF"] = filter_vb_style(filtered_rows["CoF"], window).round(15).values
-                if has_stroke:
-                    df.loc[filtered_rows.index, "stroke"] = filter_vb_style(filtered_rows["stroke"], window).round(15).values
+    df["CoF"] = filter_vb_style(df["CoF"], window).round(15).values
+    if has_stroke:
+        df["stroke"] = filter_vb_style(df["stroke"], window).round(15).values
     return df
 
 

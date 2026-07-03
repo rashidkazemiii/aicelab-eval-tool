@@ -246,14 +246,14 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo,
 
 
 @app.cell
-def _(df_display, get_filter_params, mo, step_df, utility_functions):
+def _(df_display, get_filter_params, mo, utility_functions):
     df_proc = df_display.copy() if df_display is not None else None
     _fparams = get_filter_params()
     if df_display is not None and _fparams is not None:
         try:
             _w = _fparams["filter_points"]
             if _w > 1:
-                df_proc = utility_functions.filter(df_display.copy(), step_df, _w)
+                df_proc = utility_functions.filter(df_display.copy(), _w)
         except Exception as _e:
             mo.output.append(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
     return (df_proc,)
