@@ -120,7 +120,7 @@ def _(file_upload, mo):
 
 
 @app.cell
-def _(col_step_inactive, col_step_time, col_time, end_step_row, has_step, mo, set_parse_params, start_main_row, start_step_row, stop_main_row):
+def _(col_time, end_step_row, has_step, mo, set_parse_params, start_main_row, start_step_row, stop_main_row):
     calculate_btn = mo.ui.button(
         label="Calculate",
         kind="success",
@@ -131,8 +131,8 @@ def _(col_step_inactive, col_step_time, col_time, end_step_row, has_step, mo, se
             "stop_main":         int(stop_main_row.value),
             "has_step":          bool(has_step.value),
             "col_time":          int(col_time.value),
-            "col_step_time":     int(col_step_time.value),
-            "col_step_inactive": int(col_step_inactive.value),
+            "col_step_time":     int(col_time.value),
+            "col_step_inactive": 0,
         }),
     )
     return (calculate_btn,)
@@ -208,13 +208,11 @@ def _(file_upload, get_parse_params, mo):
 
 @app.cell
 def _(mo):
-    col_time          = mo.ui.text(label="", value="1")
-    col_left          = mo.ui.text(label="", value="14")
-    col_right         = mo.ui.text(label="", value="15")
-    col_load          = mo.ui.text(label="", value="4")
-    col_step_time     = mo.ui.text(label="", value="0")
-    col_step_inactive = mo.ui.text(label="", value="0")
-    return col_left, col_load, col_right, col_step_inactive, col_step_time, col_time
+    col_time  = mo.ui.text(label="", value="1")
+    col_left  = mo.ui.text(label="", value="14")
+    col_right = mo.ui.text(label="", value="15")
+    col_load  = mo.ui.text(label="", value="4")
+    return col_left, col_load, col_right, col_time
 
 
 @app.cell
@@ -513,8 +511,6 @@ def _(
     col_left,
     col_load,
     col_right,
-    col_step_inactive,
-    col_step_time,
     col_time,
     df_display,
     df_proc,
@@ -597,8 +593,6 @@ def _(
         mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Left col #</span>'), col_left],          align="center", justify="start", gap=2),
         mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Right col #</span>'),col_right],         align="center", justify="start", gap=2),
         mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load col #</span>'),   col_load],          align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Step Time col #</span>'),     col_step_time],     align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Step Inactive col #</span>'), col_step_inactive], align="center", justify="start", gap=2),
         mo.Html('<hr class="divider">'),
         calculate_btn,
         mo.Html('<hr class="divider">'),
