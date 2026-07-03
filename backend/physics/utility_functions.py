@@ -13,28 +13,13 @@ def _vba_round(x):
     return math.floor(x + 0.5)
 
 
-def offset(df, step_df=None):
+def offset(df):
+    # df is already trimmed to [first step start, last step end] upstream when steps
+    # exist, so a single global mean over the received range covers both cases.
     has_stroke = "stroke" in df.columns
-    if step_df is None:
-        df["CoF"] = (df["CoF"] - df["CoF"].mean()).round(15)
-        if has_stroke:
-            df["stroke"] = (df["stroke"] - df["stroke"].mean()).round(15)
-    else:
-        # Matches VBA CoFStepShift: pairs consecutive step start times (1&2, 3&4, ...)
-        # into discrete, non-overlapping windows; any time outside a pair is untouched.
-        reference_time = step_df["Startzeit [s]"].to_numpy()
-        for i in range(0, len(reference_time) - 1, 2):
-            lower_limit = reference_time[i]
-            upper_limit = reference_time[i + 1]
-            filtered_rows = df[
-                (df["Zeit"] >= lower_limit)
-                & (df["Zeit"] <= upper_limit)
-            ]
-            cof_column = filtered_rows["CoF"]
-            df.loc[filtered_rows.index, "CoF"] = (cof_column - cof_column.mean()).round(15)
-            if has_stroke:
-                stroke_column = filtered_rows["stroke"]
-                df.loc[filtered_rows.index, "stroke"] = (stroke_column - stroke_column.mean()).round(15)
+    df["CoF"] = (df["CoF"] - df["CoF"].mean()).round(15)
+    if has_stroke:
+        df["stroke"] = (df["stroke"] - df["stroke"].mean()).round(15)
     return df
 
 

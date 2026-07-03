@@ -235,10 +235,10 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo,
                 df_display = utility_functions.trim(
                     df_display,
                     float(step_df["Startzeit [s]"].min()),
-                    float(step_df["Endzeit [s]"].max()),
+                    round(float(step_df["Endzeit [s]"].max())),
                 )
             if get_offset():
-                df_display = utility_functions.offset(df_display, step_df)
+                df_display = utility_functions.offset(df_display)
         except Exception as _e:
             df_display = None
             display_msg = mo.callout(mo.md(f"**CoF Error:** {_e}"), kind="danger")
