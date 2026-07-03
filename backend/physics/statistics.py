@@ -43,7 +43,7 @@ def CoF_Stat(CoF, step_df):
                 tempcount.append(count)
                 temptimeRange.append(f"{round(lowerLimit, 1)}–{round(upperLimit, 1)}")
                 tempstaticAvg.append(np.mean(absoluteCoF))
-                tempstaticStdDev.append(np.std(absoluteCoF))
+                tempstaticStdDev.append(np.std(absoluteCoF, ddof=1))
                 tempstaticAvgxN.append(tempstaticAvg[-1] * count)
                 tempstaticVar.append(
                     (tempstaticStdDev[-1]) ** 2 * (count - 1)
@@ -166,7 +166,7 @@ def CoF_Statisticspersecond(CoF, step_df):
                 str(round(lower_limit, 1)) + "–" + str(round(upper_limit, 1))
             )
             temp_static_avg.append(np.mean(absolute_CoF))
-            temp_static_std_dev.append(np.std(absolute_CoF))
+            temp_static_std_dev.append(np.std(absolute_CoF, ddof=1))
             temp_static_avg_x_n.append(temp_static_avg[-1] * count)
             temp_static_var.append(
                 (temp_static_std_dev[-1]) ** 2 * (count - 1)
@@ -297,16 +297,16 @@ def CoF_Contsepstatistics(CoF, step_df):
             temptimeRange.append(f"{round(lowerLimit, 1)}–{round(upperLimit, 1)}")
             tempstaticAvgL.append(np.mean(absoluteCoFL))
             tempstaticAvgR.append(np.mean(absoluteCoFR))
-            tempstaticStdDevL.append(np.std(absoluteCoFL))
-            tempstaticStdDevR.append(np.std(absoluteCoFR))
+            tempstaticStdDevL.append(np.std(absoluteCoFL, ddof=1))
+            tempstaticStdDevR.append(np.std(absoluteCoFR, ddof=1))
             tempstaticAvgxNL.append(np.mean(absoluteCoFL) * countL)
             tempstaticAvgxNR.append(np.mean(absoluteCoFR) * countR)
             tempstaticVarL.append(
-                (np.std(absoluteCoFL) ** 2) * (countL - 1)
+                (np.std(absoluteCoFL, ddof=1) ** 2) * (countL - 1)
                 + (np.mean(absoluteCoFL) * countL) ** 2 / countL
             )
             tempstaticVarR.append(
-                (np.std(absoluteCoFR) ** 2) * (countR - 1)
+                (np.std(absoluteCoFR, ddof=1) ** 2) * (countR - 1)
                 + (np.mean(absoluteCoFR) * countR) ** 2 / countR
             )
 
@@ -464,8 +464,8 @@ def CoF_Discontsepstatistics(CoF, step_df):
             )
             tempstaticAvgL.append(np.mean(absoluteCoFL))
             tempstaticAvgR.append(np.mean(absoluteCoFR))
-            tempstaticStdDevL.append(np.std(absoluteCoFL))
-            tempstaticStdDevR.append(np.std(absoluteCoFR))
+            tempstaticStdDevL.append(np.std(absoluteCoFL, ddof=1))
+            tempstaticStdDevR.append(np.std(absoluteCoFR, ddof=1))
             tempstaticAvgxNL.append(tempstaticAvgL[-1] * countL)
             tempstaticAvgxNR.append(tempstaticAvgR[-1] * countR)
             tempstaticVarL.append(

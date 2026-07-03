@@ -1,8 +1,16 @@
 import logging
+import math
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+SRV_TIME_GAP_THRESHOLD = 1.0  # seconds; gap larger than this marks a new test step/pause
+
+
+def _vba_round(x):
+    """Round half up, matching VBA's WorksheetFunction.Round (Python's round() is banker's rounding)."""
+    return math.floor(x + 0.5)
 
 
 def offset(df, step_df=None):
@@ -184,16 +192,24 @@ def Evaluate(
         startIndex.append(Time.index(negMinTime[i]) + 1)
 
     for i in range(1, len(negMinTime)):
+        if negMinTime[i] - negMinTime[i - 1] > SRV_TIME_GAP_THRESHOLD:
+            # gap spans a pause between test steps — disregard this cycle
+            continue
         try:
-            endIndex = startIndex[i - 1] + round(
+            endIndex = startIndex[i - 1] + _vba_round(
                 a * (startIndex[i] - startIndex[i - 1])
             )
             if startIndex[i - 1] == endIndex:
                 raise Exception(
                     f"The starting and ending index are the same : {endIndex}. Check that {startIndex[i]} and {startIndex[i - 1]} are not too close. This happend for time = {Time[startIndex[i - 1]]}"
                 )
-            movingTimeRange = Time[startIndex[i - 1] : endIndex]
-            movingRange = Stroke[startIndex[i - 1] : endIndex]
+            # Windows are shifted by -3/-2: the VBA macro builds these ranges via
+            # Range("AD"&pos&":AD"&pos), i.e. it uses the array position as a literal
+            # sheet row number. Since the sheet's data starts at row 3 (rows 1-2 are
+            # headers), that address is 2 rows earlier than the position it's meant
+            # to reference. Replicated here for parity with the VBA tool.
+            movingTimeRange = Time[startIndex[i - 1] - 3 : endIndex - 2]
+            movingRange = Stroke[startIndex[i - 1] - 3 : endIndex - 2]
             if Stroke[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 index, element = max(enumerate(movingRange), key=lambda x: x[1])
@@ -204,20 +220,20 @@ def Evaluate(
                 continue
             maxStrokeTime.append(movingTimeRange[index])
             startdynamicIndex.append(
-                startIndex[i - 1] + round(b * (startIndex[i] - startIndex[i - 1]))
+                startIndex[i - 1] + _vba_round(b * (startIndex[i] - startIndex[i - 1]))
             )
             enddynamicIndex.append(
-                startIndex[i - 1] + round(c * (startIndex[i] - startIndex[i - 1]))
+                startIndex[i - 1] + _vba_round(c * (startIndex[i] - startIndex[i - 1]))
             )
             startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
             enddynamicTime.append(Time[enddynamicIndex[-1] - 1])
             startdynamicCoF.append(Stroke[startdynamicIndex[-1] - 1])
             enddynamicCoF.append(Stroke[enddynamicIndex[-1] - 1])
 
-            movingdynamicRange = Stroke[startdynamicIndex[-1] - 1 : enddynamicIndex[-1]]
+            movingdynamicRange = Stroke[startdynamicIndex[-1] - 3 : enddynamicIndex[-1] - 2]
             dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
             dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
-            dynamicCoFSD.append(np.std((movingdynamicRange)))
+            dynamicCoFSD.append(np.std(movingdynamicRange, ddof=1))
             dynamicCoFn.append(len((movingdynamicRange)))
             dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
             dynamicCoFvariance.append(
