@@ -43,32 +43,20 @@ def _(mo):
       table td { padding: 4px 6px !important; min-width: 0 !important; width: auto !important; }
       table { table-layout: auto !important; }
       input[type="text"] {
-        width: 60px !important;
-        max-width: 60px !important;
+        width: 80px !important;
+        max-width: 80px !important;
         min-width: 0 !important;
         box-sizing: border-box !important;
       }
       label:has(input[type="text"]) {
-        width: 60px !important;
-        max-width: 60px !important;
+        width: 80px !important;
+        max-width: 80px !important;
         min-width: 0 !important;
         overflow: hidden !important;
       }
     </style>
     """)
     return
-
-
-@app.cell
-def _(mo):
-    get_eval_params, set_eval_params = mo.state(None)
-    return get_eval_params, set_eval_params
-
-
-@app.cell
-def _(mo):
-    get_filter_params, set_filter_params = mo.state(None)
-    return get_filter_params, set_filter_params
 
 
 @app.cell
@@ -84,97 +72,138 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    get_parse_params, set_parse_params = mo.state(None)
-    return get_parse_params, set_parse_params
-
-
-
-@app.cell
 def _(get_offset, mo, set_offset):
-    nlc           = mo.ui.text(label="", value="")
-    offset_btn    = mo.ui.button(
+    offset_btn = mo.ui.button(
         label="Offset (ON)" if get_offset() else "Offset",
         kind="success" if get_offset() else "neutral",
         on_click=lambda _: set_offset(not get_offset()),
     )
-    filter_points = mo.ui.text(label="", value="25")
-    static_range  = mo.ui.text(label="", value="10.0")
-    dyn_min       = mo.ui.text(label="", value="20.0")
-    dyn_max       = mo.ui.text(label="", value="80.0")
-    return dyn_max, dyn_min, filter_points, nlc, offset_btn, static_range
+    return (offset_btn,)
 
 
 @app.cell
 def _(file_upload, mo):
+    # All raw-data parsing settings live in one form: nothing here takes effect
+    # until "Calculate" is pressed, no matter which field was edited or how
+    # (typing, tabbing away, clicking elsewhere) — mo.ui.form only publishes
+    # .value on explicit submit, unlike bare mo.ui widgets which are live.
     _total = (
         len(file_upload.value[0].contents.decode("latin-1").splitlines())
         if file_upload.value else 0
     )
-    start_step_row = mo.ui.text(label="", value="0")
-    end_step_row   = mo.ui.text(label="", value="0")
-    start_main_row = mo.ui.text(label="", value="41")
-    stop_main_row  = mo.ui.text(label="", value=str(_total))
-    has_step       = mo.ui.checkbox(label="Has step data", value=True)
-    return end_step_row, has_step, start_main_row, start_step_row, stop_main_row
+    _raw_data_tpl = mo.Html(
+        '<div style="display:flex;flex-direction:column;gap:10px">'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load Correction</span>{nlc}</div>'
+        '<hr class="divider">'
+        '{has_step}'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Step</span>{start_step_row}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">End Step</span>{end_step_row}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Main Data</span>{start_main_row}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Stop Main Data</span>{stop_main_row}</div>'
+        '<hr class="divider">'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Time col #</span>{col_time}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Left col #</span>{col_left}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Right col #</span>{col_right}</div>'
+        '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load col #</span>{col_load}</div>'
+        '</div>'
+    )
+    raw_data_form = _raw_data_tpl.batch(
+        nlc=mo.ui.text(value=""),
+        has_step=mo.ui.checkbox(label="Has step data", value=True),
+        start_step_row=mo.ui.text(value="0"),
+        end_step_row=mo.ui.text(value="0"),
+        start_main_row=mo.ui.text(value="41"),
+        stop_main_row=mo.ui.text(value=str(_total)),
+        col_time=mo.ui.text(value="1"),
+        col_left=mo.ui.text(value="14"),
+        col_right=mo.ui.text(value="15"),
+        col_load=mo.ui.text(value="4"),
+    ).form(submit_button_label="Calculate", bordered=False)
+    return (raw_data_form,)
 
 
 @app.cell
-def _(col_time, end_step_row, has_step, mo, set_parse_params, start_main_row, start_step_row, stop_main_row):
-    calculate_btn = mo.ui.button(
-        label="Calculate",
-        kind="success",
-        on_click=lambda _: set_parse_params({
-            "start_step":        int(start_step_row.value),
-            "end_step":          int(end_step_row.value),
-            "start_main":        int(start_main_row.value),
-            "stop_main":         int(stop_main_row.value),
-            "has_step":          bool(has_step.value),
-            "col_time":          int(col_time.value),
-            "col_step_time":     0,
-            "col_step_inactive": 0,
-        }),
+def _(mo):
+    # Fixed-width wrapper around each placeholder: marimo's text input is a
+    # shadow-DOM web component sized at 100% of its host element, so a
+    # page-level <style> width rule can never reach it — this is the only
+    # way to control its rendered width.
+    _filter_tpl = mo.Html(
+        '<div style="display:flex;align-items:center;gap:16px">'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'
+        '<div style="width:60px">{filter_points}</div></div>'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter method</span>{method}</div>'
+        '</div>'
     )
-    return (calculate_btn,)
+    filter_form = _filter_tpl.batch(
+        filter_points=mo.ui.text(value="25"),
+        method=mo.ui.dropdown(
+            options={"VBA-exact (slow)": "vba", "Fast (approximate)": "fast"},
+            value="VBA-exact (slow)",
+        ),
+    ).form(submit_button_label="Filter", bordered=False)
+    return (filter_form,)
 
 
 @app.cell
-def _(dyn_max, dyn_min, filter_points, mo, set_eval_params, set_filter_params, static_range):
-    filter_btn   = mo.ui.button(
-        label="Filter", kind="neutral",
-        on_click=lambda _: set_filter_params({"filter_points": int(filter_points.value)}),
+def _(mo):
+    _eval_tpl = mo.Html(
+        '<div style="display:flex;align-items:center;gap:16px">'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Static %</span>'
+        '<div style="width:60px">{static_range}</div></div>'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn min %</span>'
+        '<div style="width:60px">{dyn_min}</div></div>'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn max %</span>'
+        '<div style="width:60px">{dyn_max}</div></div>'
+        '</div>'
     )
-    evaluate_btn = mo.ui.button(
-        label="Evaluate", kind="success",
-        on_click=lambda _: set_eval_params({
-            "static_range": float(static_range.value),
-            "dyn_min":      float(dyn_min.value),
-            "dyn_max":      float(dyn_max.value),
-        }),
-    )
-    return evaluate_btn, filter_btn
+    eval_form = _eval_tpl.batch(
+        static_range=mo.ui.text(value="10.0"),
+        dyn_min=mo.ui.text(value="20.0"),
+        dyn_max=mo.ui.text(value="80.0"),
+    ).form(submit_button_label="Evaluate", bordered=False)
+    return (eval_form,)
 
 
 @app.cell
-def _(file_upload, get_parse_params, mo):
+def _(file_upload, mo, raw_data_form):
     import io, pandas as pd
 
     df_raw  = None
     step_df = None
-    load_msg = mo.callout(mo.md("Upload a file, set the row numbers, then click **Calculate**."), kind="info")
+    load_msg = mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
 
-    _p = get_parse_params()
-    if file_upload.value and _p is not None and _p["start_main"] > 0:
+    _p = raw_data_form.value
+    if file_upload.value and _p is not None and int(_p["start_main_row"]) > 0:
         try:
             _raw   = file_upload.value[0].contents.decode("latin-1")
             _lines = _raw.splitlines()
 
+            _start_main = int(_p["start_main_row"])
+            _stop_main  = int(_p["stop_main_row"])
+            _start_step = int(_p["start_step_row"])
+            _end_step   = int(_p["end_step_row"])
+            _col_time   = int(_p["col_time"])
+
             # ── Main data ────────────────────────────────────────────────────
-            _nrows = (_p["stop_main"] - _p["start_main"] + 1
-                      if _p["stop_main"] > _p["start_main"] else None)
+            _nrows = (_stop_main - _start_main + 1 if _stop_main > _start_main else None)
             df_raw = pd.read_csv(
                 io.StringIO(_raw), sep="\t",
-                skiprows=_p["start_main"] - 2,
+                skiprows=_start_main - 2,
                 nrows=_nrows,
                 decimal=",", low_memory=False,
             )
@@ -182,20 +211,19 @@ def _(file_upload, get_parse_params, mo):
             df_raw = df_raw.apply(pd.to_numeric, errors="coerce")
 
             # ── Step data (optional) ─────────────────────────────────────────
-            if _p["has_step"] and _p["start_step"] > 0 and _p["end_step"] > _p["start_step"]:
-                _step_text = "\n".join(_lines[_p["start_step"] - 2 : _p["end_step"]])
+            if bool(_p["has_step"]) and _start_step > 0 and _end_step > _start_step:
+                _step_text = "\n".join(_lines[_start_step - 2 : _end_step])
                 step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",")
                 step_df.columns = step_df.columns.str.strip()
                 for _c in step_df.columns[1:]:
                     step_df[_c] = pd.to_numeric(step_df[_c], errors="coerce")
-                _t_col    = step_df.columns[_p["col_step_time"] - 1]     if _p["col_step_time"] > 0     else step_df.columns[1]
-                _zeit_col = df_raw.columns[_p["col_time"] - 1]           if _p["col_time"] > 0           else df_raw.columns[1]
-                _rpm_col  = step_df.columns[_p["col_step_inactive"] - 1] if _p["col_step_inactive"] > 0  else None
+                _t_col    = step_df.columns[1]
+                _zeit_col = df_raw.columns[_col_time - 1] if _col_time > 0 else df_raw.columns[1]
                 step_df["Endzeit [s]"] = step_df[_t_col].shift(-1)
                 step_df.loc[step_df.index[-1], "Endzeit [s]"] = df_raw[_zeit_col].max()
                 if _t_col != "Startzeit [s]":
                     step_df = step_df.rename(columns={_t_col: "Startzeit [s]"})
-                step_df["inactive"] = step_df[_rpm_col] == 0 if _rpm_col else False
+                step_df["inactive"] = False
 
             load_msg = mo.callout(
                 mo.md(f"**{file_upload.value[0].name}** — {len(df_raw):,} rows, {len(df_raw.columns)} columns: `{list(df_raw.columns)}`"),
@@ -207,28 +235,24 @@ def _(file_upload, get_parse_params, mo):
 
 
 @app.cell
-def _(mo):
-    col_time  = mo.ui.text(label="", value="1")
-    col_left  = mo.ui.text(label="", value="14")
-    col_right = mo.ui.text(label="", value="15")
-    col_load  = mo.ui.text(label="", value="4")
-    return col_left, col_load, col_right, col_time
-
-
-@app.cell
-def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo, nlc, step_df, utility_functions):
+def _(cof_calc, df_raw, get_offset, mo, raw_data_form, step_df, utility_functions):
     df_display = None
     display_msg = None
     if df_raw is not None:
         try:
+            _p = raw_data_form.value
             _cols = df_raw.columns
             _rename = {}
-            if int(col_time.value)  > 0: _rename[_cols[int(col_time.value)  - 1]] = "Zeit"
-            if int(col_left.value)  > 0: _rename[_cols[int(col_left.value)  - 1]] = "RK OFT Links"
-            if int(col_right.value) > 0: _rename[_cols[int(col_right.value) - 1]] = "RK OFT Rechts"
-            if int(col_load.value)  > 0: _rename[_cols[int(col_load.value)  - 1]] = "Belastung"
+            _col_time  = int(_p["col_time"])
+            _col_left  = int(_p["col_left"])
+            _col_right = int(_p["col_right"])
+            _col_load  = int(_p["col_load"])
+            if _col_time  > 0: _rename[_cols[_col_time  - 1]] = "Zeit"
+            if _col_left  > 0: _rename[_cols[_col_left  - 1]] = "RK OFT Links"
+            if _col_right > 0: _rename[_cols[_col_right - 1]] = "RK OFT Rechts"
+            if _col_load  > 0: _rename[_cols[_col_load  - 1]] = "Belastung"
             df_display = df_raw.rename(columns=_rename).copy()
-            _nlc = float(nlc.value) if nlc.value else None
+            _nlc = float(_p["nlc"]) if _p["nlc"] else None
             df_display = cof_calc.calculate(df_display, _nlc)
             df_display["CoF"] = df_display["CoF"].round(5)
             if step_df is not None:
@@ -246,30 +270,31 @@ def _(cof_calc, col_left, col_load, col_right, col_time, df_raw, get_offset, mo,
 
 
 @app.cell
-def _(df_display, get_filter_params, mo, utility_functions):
+def _(df_display, filter_form, mo, utility_functions):
     df_proc = df_display.copy() if df_display is not None else None
-    _fparams = get_filter_params()
+    _fparams = filter_form.value
     if df_display is not None and _fparams is not None:
         try:
-            _w = _fparams["filter_points"]
+            _w = int(_fparams["filter_points"])
+            _method = _fparams.get("method", "vba")
             if _w > 1:
-                df_proc = utility_functions.filter(df_display.copy(), _w)
+                df_proc = utility_functions.filter(df_display.copy(), _w, method=_method)
         except Exception as _e:
             mo.output.append(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
     return (df_proc,)
 
 
 @app.cell
-def _(cof_calc, df_display, df_proc, get_eval_params, mo):
+def _(cof_calc, df_display, df_proc, eval_form, mo):
     cof_eval = None
     eval_msg = None
-    _params = get_eval_params()
+    _params = eval_form.value
     if df_proc is not None and df_display is not None and _params is not None:
         try:
             _minima = cof_calc.find_minima(df_proc)
             _cof_res = cof_calc.get_static_and_dynamic_cof(
                 df_display, _minima,
-                _params["static_range"], _params["dyn_min"], _params["dyn_max"],
+                float(_params["static_range"]), float(_params["dyn_min"]), float(_params["dyn_max"]),
             )
             cof_eval = {"minima": _minima, "cof_res": _cof_res}
         except Exception as _e:
@@ -278,7 +303,7 @@ def _(cof_calc, df_display, df_proc, get_eval_params, mo):
 
 
 @app.cell
-def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
+def _(cof_eval, df_display, df_proc, filter_form, go, mo, step_df):
     import io as _io, re as _re, json as _json
 
     if df_display is None:
@@ -289,10 +314,10 @@ def _(cof_eval, df_display, df_proc, get_filter_params, go, mo, step_df):
         )
     else:
         # ── A: data prep ─────────────────────────────────────────────────────
-        _fparams = get_filter_params()
+        _fparams = filter_form.value
         _filter_active = (
             _fparams is not None
-            and _fparams.get("filter_points", 1) > 1
+            and int(_fparams.get("filter_points", 1)) > 1
             and df_proc is not None
         )
 
@@ -414,7 +439,7 @@ window.onload = function() {{
 
 
 @app.cell
-def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df):
+def _(cof_eval, df_display, df_proc, filter_form, mo, stat_funcs, step_df):
     import pandas as _pd
     import numpy as _np
 
@@ -425,10 +450,10 @@ def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df)
         )
     else:
         _N = len(df_display)
-        _fparams = get_filter_params()
+        _fparams = filter_form.value
         _filter_active = (
             _fparams is not None
-            and _fparams.get("filter_points", 1) > 1
+            and int(_fparams.get("filter_points", 1)) > 1
             and df_proc is not None
         )
 
@@ -512,34 +537,20 @@ def _(cof_eval, df_display, df_proc, get_filter_params, mo, stat_funcs, step_df)
 
 @app.cell
 def _(
-    calculate_btn,
     cof_chart,
-    col_left,
-    col_load,
-    col_right,
-    col_time,
     df_display,
     df_proc,
     df_raw,
     display_msg,
-    dyn_max,
-    dyn_min,
-    end_step_row,
+    eval_form,
     eval_msg,
-    evaluate_btn,
     file_upload,
-    filter_btn,
-    filter_points,
-    has_step,
+    filter_form,
     load_msg,
     mo,
-    nlc,
     offset_btn,
+    raw_data_form,
     results_panel,
-    start_main_row,
-    start_step_row,
-    static_range,
-    stop_main_row,
 ):
     _navbar = mo.Html("""
     <div class="navbar">
@@ -587,20 +598,7 @@ def _(
                 f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
                 f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
         mo.Html('<hr class="divider">'),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load Correction</span>'), nlc], align="center", justify="start", gap=2),
-        mo.Html('<hr class="divider">'),
-        has_step,
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Start Step</span>'),      start_step_row], align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">End Step</span>'),        end_step_row],   align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Start Main Data</span>'), start_main_row], align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Stop Main Data</span>'),  stop_main_row],  align="center", justify="start", gap=2),
-        mo.Html('<hr class="divider">'),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Time col #</span>'),          col_time],          align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Left col #</span>'), col_left],          align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Right col #</span>'),col_right],         align="center", justify="start", gap=2),
-        mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load col #</span>'),   col_load],          align="center", justify="start", gap=2),
-        mo.Html('<hr class="divider">'),
-        calculate_btn,
+        raw_data_form,
         mo.Html('<hr class="divider">'),
         load_msg,
         display_msg if display_msg is not None else mo.Html(''),
@@ -610,22 +608,12 @@ def _(
     # ── CoF Analysis tab ──────────────────────────────────────────────────────
     _analysis_tab = mo.vstack([
         mo.hstack([
-            mo.Html('<p class="section-label" style="margin:0;align-self:center">ACTIONS</p>'),
-            offset_btn,
-            filter_btn,
-            evaluate_btn if df_display is not None else mo.Html(
-                '<button disabled style="opacity:0.35;cursor:not-allowed;padding:4px 14px;'
-                'border-radius:4px;background:#2ecc71;color:#fff;border:none;font-size:13px;'
-                'font-weight:500">Evaluate</button>'
-            ),
-            mo.Html('<div style="width:1px;background:#eee;height:28px;margin:0 8px;align-self:center"></div>'),
-            mo.Html('<p class="section-label" style="margin:0;align-self:center">PARAMETERS</p>'),
-            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">NLC</span>'), nlc], align="center", gap=2),
-            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'), filter_points], align="center", gap=2),
-            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Static %</span>'), static_range], align="center", gap=2),
-            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn min %</span>'), dyn_min], align="center", gap=2),
-            mo.hstack([mo.Html('<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn max %</span>'), dyn_max], align="center", gap=2),
-        ], gap=3, align="end"),
+            mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_btn], gap=1),
+            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
+            mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1),
+            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
+            mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_form], gap=1),
+        ], gap=3, align="start"),
         mo.Html('<hr class="divider">'),
         mo.vstack([
             mo.Html('<p class="panel-title">Analysis Visualization</p>'),

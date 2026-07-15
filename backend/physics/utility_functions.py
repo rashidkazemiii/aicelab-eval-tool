@@ -48,13 +48,30 @@ def filter_vb_style(series, n):
     return result
 
 
-def filter(df, window):
+def filter_fast(series, n):
+    """Vectorized centered rolling median (pandas C implementation).
+    Not bit-exact with the VBA macro's edge-window growth/shrink, but same
+    result in the interior and orders of magnitude faster on large series."""
+    return series.rolling(window=n, center=True, min_periods=1).median()
+
+
+FILTER_METHODS = {
+    "vba": filter_vb_style,
+    "fast": filter_fast,
+}
+
+
+def filter(df, window, method="vba"):
     # df is already trimmed to [first step start, last step end] upstream when steps
     # exist, so filtering the whole received range covers both cases.
+    try:
+        filter_fn = FILTER_METHODS[method]
+    except KeyError:
+        raise ValueError(f"Unknown filter method: {method!r}. Expected one of {list(FILTER_METHODS)}")
     has_stroke = "stroke" in df.columns
-    df["CoF"] = filter_vb_style(df["CoF"], window).round(15).values
+    df["CoF"] = filter_fn(df["CoF"], window).round(15).values
     if has_stroke:
-        df["stroke"] = filter_vb_style(df["stroke"], window).round(15).values
+        df["stroke"] = filter_fn(df["stroke"], window).round(15).values
     return df
 
 
