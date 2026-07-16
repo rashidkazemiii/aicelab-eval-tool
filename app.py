@@ -73,12 +73,17 @@ def _(mo):
 
 @app.cell
 def _(get_offset, mo, set_offset):
-    offset_btn = mo.ui.button(
-        label="Offset (ON)" if get_offset() else "Offset",
-        kind="success" if get_offset() else "neutral",
-        on_click=lambda _: set_offset(not get_offset()),
+    # Hidden field so the form has something to batch; the form's own submit
+    # button is the only thing rendered, matching Filter/Evaluate's chrome.
+    _hidden = mo.Html(
+        '<div style="visibility:hidden;height:26px">{v}</div>'
+    ).batch(v=mo.ui.text(value=""))
+    offset_form = _hidden.form(
+        submit_button_label="Offset (ON)" if get_offset() else "Offset",
+        bordered=False,
+        on_change=lambda _: set_offset(not get_offset()),
     )
-    return (offset_btn,)
+    return (offset_form,)
 
 
 @app.cell
@@ -548,7 +553,7 @@ def _(
     filter_form,
     load_msg,
     mo,
-    offset_btn,
+    offset_form,
     raw_data_form,
     results_panel,
 ):
@@ -608,7 +613,7 @@ def _(
     # ── CoF Analysis tab ──────────────────────────────────────────────────────
     _analysis_tab = mo.vstack([
         mo.hstack([
-            mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_btn], gap=1),
+            mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_form], gap=1),
             mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
             mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1),
             mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
