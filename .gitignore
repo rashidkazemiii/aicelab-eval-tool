@@ -10,6 +10,9 @@ venv/
 __marimo__/
 layouts/
 
+# Database
+*.db
+
 # Node / Frontend
 node_modules/
 dist/

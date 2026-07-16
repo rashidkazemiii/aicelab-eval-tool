@@ -19,6 +19,13 @@ def _():
     return cof_calc, go, mo, stat_funcs, utility_functions
 
 
+@app.cell
+def _(mo):
+    import database as db_mod
+    db_mod.create_tables()
+    return (db_mod,)
+
+
 
 
 @app.cell
@@ -84,6 +91,21 @@ def _(get_offset, mo, set_offset):
         on_change=lambda _: set_offset(not get_offset()),
     )
     return (offset_form,)
+
+
+@app.cell
+def _(mo):
+    _hidden = mo.Html(
+        '<div style="visibility:hidden;height:26px">{v}</div>'
+    ).batch(v=mo.ui.text(value=""))
+    save_form = _hidden.form(submit_button_label="💾 Save", bordered=False)
+    return (save_form,)
+
+
+@app.cell
+def _(mo):
+    overwrite_btn = mo.ui.run_button(label="Overwrite & Save")
+    return (overwrite_btn,)
 
 
 @app.cell
@@ -308,6 +330,224 @@ def _(cof_calc, df_display, df_proc, eval_form, mo):
 
 
 @app.cell
+def _(cof_eval, df_display, stat_funcs, step_df):
+    import pandas as _pd2
+
+    stats_result = None
+    stats_error = None
+    if cof_eval is not None and df_display is not None:
+        try:
+            _sdf = step_df if step_df is not None else _pd2.DataFrame({
+                "Startzeit [s]": [df_display["Zeit"].min()],
+                "Endzeit [s]":   [df_display["Zeit"].max()],
+                "inactive":      [False],
+            })
+            stats_result = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
+        except Exception as _e:
+            stats_error = str(_e)
+    return stats_error, stats_result
+
+
+@app.cell
+def _(
+    cof_eval,
+    db_mod,
+    df_display,
+    df_proc,
+    eval_form,
+    file_upload,
+    filter_form,
+    mo,
+    overwrite_btn,
+    save_form,
+    stats_result,
+):
+    save_msg = mo.Html('')
+    if (
+        save_form.value is not None and cof_eval is not None and stats_result is not None
+        and file_upload.value and df_display is not None
+    ):
+        _fname = file_upload.value[0].name
+        _fparams = filter_form.value
+        _eparams = eval_form.value
+        _existing = db_mod.find_existing_test(_fname)
+        if _existing is not None and not overwrite_btn.value:
+            save_msg = mo.vstack([
+                mo.callout(
+                    mo.md(
+                        f"A test named **{_fname}** (saved {_existing.uploaded_at}) "
+                        "already exists."
+                    ),
+                    kind="warn",
+                ),
+                overwrite_btn,
+            ], gap=1)
+        else:
+            try:
+                if _existing is not None:
+                    db_mod.delete_test(_existing.id)
+                _filter_active = (
+                    _fparams is not None
+                    and int(_fparams.get("filter_points", 1)) > 1
+                    and df_proc is not None
+                )
+                _raw_df = df_display[["Zeit", "CoF"]].copy()
+                if _filter_active:
+                    _raw_df["Filtered CoF"] = df_proc["CoF"].values
+                _test_id = db_mod.save_evaluation(
+                    file_name=_fname,
+                    data_type="OFT",
+                    filter_window=int(_fparams["filter_points"]) if _fparams else None,
+                    static_range=float(_eparams["static_range"]),
+                    dynamic_min=float(_eparams["dyn_min"]),
+                    dynamic_max=float(_eparams["dyn_max"]),
+                    stats_df=stats_result,
+                    per_cycle_df=cof_eval["cof_res"],
+                    raw_df=_raw_df,
+                    minima_df=cof_eval["minima"],
+                )
+                save_msg = mo.callout(mo.md(f"Saved as test **#{_test_id}**."), kind="success")
+            except Exception as _e:
+                save_msg = mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger")
+    return (save_msg,)
+
+
+@app.cell
+def _(mo):
+    refresh_btn = mo.ui.run_button(label="🔄 Refresh")
+    delete_btn = mo.ui.run_button(label="🗑 Delete selected", kind="danger")
+    return delete_btn, refresh_btn
+
+
+@app.cell
+def _(db_mod, delete_btn, mo, refresh_btn):
+    import pandas as _pd4
+
+    _tests = db_mod.list_tests()
+    history_df = _pd4.DataFrame(_tests) if _tests else _pd4.DataFrame(
+        columns=["id", "file_name", "data_type", "uploaded_at", "filter_window",
+                 "static_range", "dynamic_min", "dynamic_max",
+                 "static_mean_cof", "dynamic_mean_cof", "steps"]
+    )
+    history_table = mo.ui.table(
+        history_df, selection="single",
+        pagination=True, show_column_summaries=False, show_data_types=False,
+    )
+    return (history_table,)
+
+
+@app.cell
+def _(delete_btn, db_mod, history_table, mo):
+    delete_msg = mo.Html('')
+    if delete_btn.value:
+        _sel = history_table.value
+        if _sel is not None and len(_sel) > 0:
+            _id = int(_sel.iloc[0]["id"])
+            if db_mod.delete_test(_id):
+                delete_msg = mo.callout(mo.md(f"Deleted test **#{_id}**. Click Refresh to update the list."), kind="success")
+            else:
+                delete_msg = mo.callout(mo.md(f"Test #{_id} not found."), kind="warn")
+        else:
+            delete_msg = mo.callout(mo.md("Select a row first."), kind="warn")
+    return (delete_msg,)
+
+
+@app.cell
+def _(db_mod, history_table, mo):
+    _sel = history_table.value
+    if _sel is not None and len(_sel) > 0:
+        _test_id = int(_sel.iloc[0]["id"])
+        _full = db_mod.get_full_table(_test_id)
+        cycles_panel = (
+            mo.ui.table(_full, pagination=True,
+                        show_column_summaries=False, show_data_types=False)
+            if not _full.empty else mo.callout(mo.md("No saved data for this test."), kind="info")
+        )
+    else:
+        cycles_panel = mo.callout(mo.md("Select a row above to see the full CoF Analysis table for that test."), kind="info")
+    return (cycles_panel,)
+
+
+@app.cell
+def _(db_mod, go, history_table, mo):
+    _sel = history_table.value
+    if _sel is None or len(_sel) == 0:
+        history_chart = mo.Html(
+            '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
+            'background:#fafafa;border-radius:6px;color:#bbb;font-size:13px">'
+            "Select a saved test above to see its chart</div>"
+        )
+    else:
+        _test_id = int(_sel.iloc[0]["id"])
+        _full = db_mod.get_full_table(_test_id)
+        if _full.empty or "Time [s]" not in _full.columns:
+            history_chart = mo.callout(mo.md("No raw signal saved for this test."), kind="info")
+        else:
+            _fig = go.Figure()
+            _fig.add_trace(go.Scattergl(
+                x=_full["Time [s]"], y=_full["CoF"],
+                mode="lines", name="CoF",
+                line=dict(color="#2980b9", width=2),
+            ))
+            if "Filtered CoF" in _full.columns:
+                _fig.add_trace(go.Scattergl(
+                    x=_full["Time [s]"], y=_full["Filtered CoF"],
+                    mode="lines", name="Filtered CoF",
+                    line=dict(color="#e67e22", width=1.5),
+                ))
+            _zc = _full["Min time [s]"].dropna()
+            _fig.add_trace(go.Scatter(
+                x=_zc, y=[0] * len(_zc),
+                mode="markers", name="Zero crossings",
+                marker=dict(symbol="line-ns", size=10, color="#888",
+                            line=dict(color="#888", width=1.5)),
+            ))
+            _s = _full[["Static CoF time [s]", "Static CoF"]].dropna()
+            _fig.add_trace(go.Scatter(
+                x=_s["Static CoF time [s]"], y=_s["Static CoF"],
+                mode="markers", name="Static CoF",
+                marker=dict(symbol="circle", size=7, color="#e74c3c",
+                            line=dict(color="#c0392b", width=1)),
+            ))
+            _d = _full[["Dynamic CoF time [s]", "Dynamic CoF"]].dropna()
+            _fig.add_trace(go.Scatter(
+                x=_d["Dynamic CoF time [s]"], y=_d["Dynamic CoF"],
+                mode="markers", name="Dynamic CoF",
+                marker=dict(symbol="diamond", size=7, color="#2ecc71",
+                            line=dict(color="#27ae60", width=1)),
+            ))
+            _ds = _full[["Dynamic start time [s]", "Dynamic start CoF"]].dropna()
+            _fig.add_trace(go.Scatter(
+                x=_ds["Dynamic start time [s]"], y=_ds["Dynamic start CoF"],
+                mode="markers", name="Dynamic start",
+                marker=dict(symbol="triangle-right", size=8, color="#9b59b6",
+                            line=dict(color="#8e44ad", width=1)),
+            ))
+            _de = _full[["Dynamic end time [s]", "Dynamic end CoF"]].dropna()
+            _fig.add_trace(go.Scatter(
+                x=_de["Dynamic end time [s]"], y=_de["Dynamic end CoF"],
+                mode="markers", name="Dynamic end",
+                marker=dict(symbol="triangle-left", size=8, color="#1abc9c",
+                            line=dict(color="#16a085", width=1)),
+            ))
+            _fig.update_layout(
+                height=420,
+                xaxis_title="Time [s]", yaxis_title="CoF [-]",
+                margin=dict(l=60, r=20, t=20, b=50),
+                plot_bgcolor="#fff", paper_bgcolor="#fff",
+                font=dict(color="#1f2a40", size=12),
+                dragmode="pan",
+                legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+                xaxis=dict(gridcolor="#efefef", linecolor="#ddd"),
+                yaxis=dict(autorange=True, fixedrange=True, gridcolor="#efefef", linecolor="#ddd"),
+            )
+            history_chart = mo.ui.plotly(
+                _fig, config={"scrollZoom": True, "displayModeBar": True}
+            )
+    return (history_chart,)
+
+
+@app.cell
 def _(cof_eval, df_display, df_proc, filter_form, go, mo, step_df):
     import io as _io, re as _re, json as _json
 
@@ -444,7 +684,7 @@ window.onload = function() {{
 
 
 @app.cell
-def _(cof_eval, df_display, df_proc, filter_form, mo, stat_funcs, step_df):
+def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result):
     import pandas as _pd
     import numpy as _np
 
@@ -482,48 +722,46 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stat_funcs, step_df):
 
         # ── Added after Evaluate ──────────────────────────────────────────────
         if cof_eval is not None:
-            try:
-                _sdf = step_df if step_df is not None else _pd.DataFrame({
-                    "Startzeit [s]": [df_display["Zeit"].min()],
-                    "Endzeit [s]":   [df_display["Zeit"].max()],
-                    "inactive":      [False],
-                })
-                _stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], _sdf)
-                _cr = cof_eval["cof_res"]
-                _mn = cof_eval["minima"]
-                _cols.update({
-                    "Static CoF time [s]":         _p(_cr["staticCoFTime"]),
-                    "Static CoF":                  _pr(_cr["staticCoF"]),
-                    "Dynamic CoF time [s]":        _p(_cr["dynamicCoFTime"]),
-                    "Dynamic CoF":                 _pr(_cr["dynamicCoF"]),
-                    "Dynamic std dev":             _pr(_cr["dynamicCoFSD"]),
-                    "Dynamic N":                   _p(_cr["dynamicCoFn"]),
-                    "Dynamic CoF sum":             _pr(_cr["dynamicCoFsigma"]),
-                    "Dynamic CoF variance":        _pr(_cr["dynamicCoFvariance"]),
-                    "Time range [s]":              _p(_stats["Time Range"]),
-                    "Static mean CoF":             _pr(_stats["Static Avg"]),
-                    "Static std dev":              _pr(_stats["Static Std Dev"]),
-                    "Static N":                    _p(_stats["Static N"]),
-                    "Static CoF sum":              _pr(_stats["Static Avg x N"]),
-                    "Static CoF variance":         _pr(_stats["Static Var"]),
-                    "Dynamic mean CoF":            _pr(_stats["Dynamic Avg"]),
-                    "Dynamic mean std dev":        _pr(_stats["Dynamic Std Dev"]),
-                    "Dynamic mean N":              _p(_stats["Dynamic N"]),
-                    "Dynamic CoF avg×N":           _pr(_stats["Dynamic Avg x N"]),
-                    "Dynamic CoF var (step)":      _pr(_stats["Dynamic Var"]),
-                    "-Min time [s]":               _p(_mn["-Min Zeit"]),
-                    "-Min CoF":                    _pr(_mn["-Min CoF"], 16),
-                    "+Min time [s]":               _p(_mn["+Min Zeit"]),
-                    "+Min CoF":                    _pr(_mn["+Min CoF"], 18),
-                    "Min time [s]":                _p(_mn["Min Zeit"]),
-                    "CoF minima":                  _pr(_mn["Min CoF"]),
-                    "Dynamic start time [s]":      _p(_cr["startdynamicTime"]),
-                    "Dynamic start CoF":           _pr(_cr["startdynamicCoF"]),
-                    "Dynamic end time [s]":        _p(_cr["enddynamicTime"]),
-                    "Dynamic end CoF":             _pr(_cr["enddynamicCoF"]),
-                })
-            except Exception as _e:
-                _cols["Eval error"] = [str(_e)] + [_np.nan] * (_N - 1)
+            if stats_error is not None:
+                _cols["Eval error"] = [stats_error] + [_np.nan] * (_N - 1)
+            else:
+                try:
+                    _stats = stats_result
+                    _cr = cof_eval["cof_res"]
+                    _mn = cof_eval["minima"]
+                    _cols.update({
+                        "Static CoF time [s]":         _p(_cr["staticCoFTime"]),
+                        "Static CoF":                  _pr(_cr["staticCoF"]),
+                        "Dynamic CoF time [s]":        _p(_cr["dynamicCoFTime"]),
+                        "Dynamic CoF":                 _pr(_cr["dynamicCoF"]),
+                        "Dynamic std dev":             _pr(_cr["dynamicCoFSD"]),
+                        "Dynamic N":                   _p(_cr["dynamicCoFn"]),
+                        "Dynamic CoF sum":             _pr(_cr["dynamicCoFsigma"]),
+                        "Dynamic CoF variance":        _pr(_cr["dynamicCoFvariance"]),
+                        "Time range [s]":              _p(_stats["Time Range"]),
+                        "Static mean CoF":             _pr(_stats["Static Avg"]),
+                        "Static std dev":              _pr(_stats["Static Std Dev"]),
+                        "Static N":                    _p(_stats["Static N"]),
+                        "Static CoF sum":              _pr(_stats["Static Avg x N"]),
+                        "Static CoF variance":         _pr(_stats["Static Var"]),
+                        "Dynamic mean CoF":            _pr(_stats["Dynamic Avg"]),
+                        "Dynamic mean std dev":        _pr(_stats["Dynamic Std Dev"]),
+                        "Dynamic mean N":              _p(_stats["Dynamic N"]),
+                        "Dynamic CoF avg×N":           _pr(_stats["Dynamic Avg x N"]),
+                        "Dynamic CoF var (step)":      _pr(_stats["Dynamic Var"]),
+                        "-Min time [s]":               _p(_mn["-Min Zeit"]),
+                        "-Min CoF":                    _pr(_mn["-Min CoF"], 16),
+                        "+Min time [s]":               _p(_mn["+Min Zeit"]),
+                        "+Min CoF":                    _pr(_mn["+Min CoF"], 18),
+                        "Min time [s]":                _p(_mn["Min Zeit"]),
+                        "CoF minima":                  _pr(_mn["Min CoF"]),
+                        "Dynamic start time [s]":      _p(_cr["startdynamicTime"]),
+                        "Dynamic start CoF":           _pr(_cr["startdynamicCoF"]),
+                        "Dynamic end time [s]":        _p(_cr["enddynamicTime"]),
+                        "Dynamic end CoF":             _pr(_cr["enddynamicCoF"]),
+                    })
+                except Exception as _e:
+                    _cols["Eval error"] = [str(_e)] + [_np.nan] * (_N - 1)
 
         try:
             results_panel = mo.vstack([
@@ -543,6 +781,9 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stat_funcs, step_df):
 @app.cell
 def _(
     cof_chart,
+    cycles_panel,
+    delete_btn,
+    delete_msg,
     df_display,
     df_proc,
     df_raw,
@@ -551,11 +792,16 @@ def _(
     eval_msg,
     file_upload,
     filter_form,
+    history_chart,
+    history_table,
     load_msg,
     mo,
     offset_form,
     raw_data_form,
+    refresh_btn,
     results_panel,
+    save_form,
+    save_msg,
 ):
     _navbar = mo.Html("""
     <div class="navbar">
@@ -618,7 +864,10 @@ def _(
             mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1),
             mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
             mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_form], gap=1),
+            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
+            mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_form], gap=1),
         ], gap=3, align="start"),
+        save_msg,
         mo.Html('<hr class="divider">'),
         mo.vstack([
             mo.Html('<p class="panel-title">Analysis Visualization</p>'),
@@ -630,11 +879,27 @@ def _(
         ], gap=1),
     ], gap=2)
 
+    # ── History tab ────────────────────────────────────────────────────────────
+    _history_tab = mo.vstack([
+        mo.hstack([refresh_btn, delete_btn], gap=2, justify="start"),
+        delete_msg,
+        mo.Html('<hr class="divider">'),
+        mo.Html('<p class="panel-title">Saved Tests</p>'),
+        history_table,
+        mo.Html('<hr class="divider">'),
+        mo.Html('<p class="panel-title">Chart</p>'),
+        history_chart,
+        mo.Html('<hr class="divider">'),
+        mo.Html('<p class="panel-title">Results</p>'),
+        cycles_panel,
+    ], gap=2)
+
     mo.vstack([
         _navbar,
         mo.ui.tabs({
             "📋  Raw Data":      _rawdata_tab,
             "📊  CoF Analysis":  _analysis_tab,
+            "🗂  History":       _history_tab,
         }),
     ], gap=0)
     return
