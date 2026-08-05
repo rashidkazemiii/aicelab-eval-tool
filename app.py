@@ -423,6 +423,12 @@ def _(mo):
 def _(db_mod, delete_btn, mo, refresh_btn):
     import pandas as _pd4
 
+    # Reference these so marimo tracks them as real dependencies (reactivity
+    # is derived from names actually used in the body, not the signature) —
+    # this is what makes Refresh/Delete actually re-query the database.
+    refresh_btn.value
+    delete_btn.value
+
     _tests = db_mod.list_tests()
     history_df = _pd4.DataFrame(_tests) if _tests else _pd4.DataFrame(
         columns=["id", "file_name", "data_type", "uploaded_at", "filter_window",

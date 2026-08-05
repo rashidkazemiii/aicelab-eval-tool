@@ -15,7 +15,23 @@
       "Bash(git add *)",
       "Bash(git rm *)",
       "Bash(git commit -m ' *)",
-      "Bash(poetry env *)"
+      "Bash(poetry env *)",
+      "Bash(python -c \"import marimo; import inspect; print\\(inspect.signature\\(marimo.ui.table\\)\\)\")",
+      "PowerShell(python -c \"import marimo; import inspect; print\\(inspect.signature\\(marimo.ui.table\\)\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python.exe\" -c \"import marimo; import inspect; print\\(inspect.signature\\(marimo.ui.table\\)\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import marimo; import inspect; print\\(inspect.signature\\(marimo.ui.table\\)\\)\")",
+      "Read(//c/Users/kaz/**)",
+      "PowerShell(marimo --version)",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python3.14.exe\" -c \"import marimo; print\\(marimo.__version__\\); import inspect; print\\(inspect.signature\\(marimo.ui.table\\)\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Python\\\\bin\\\\python3.14.exe\" -c \"import sys; print\\(sys.path\\)\")",
+      "PowerShell($env:PATH -split ';' | Where-Object { $_ -match 'marimo|venv|conda|env' })",
+      "PowerShell(Get-Process -Id 21484 -ErrorAction SilentlyContinue)",
+      "PowerShell(\\(Get-Process -Id 21484\\).MainModule.FileName)",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import sys; print\\([p for p in sys.path if 'site-packages' in p]\\)\")",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\kaz\\\\AppData\\\\Roaming\\\\Python\\\\Python313\\\\site-packages\" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match \"marimo\" } | Select-Object Name)",
+      "PowerShell(& \"C:\\\\Users\\\\kaz\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe\" -c \"import marimo; print\\(marimo.__version__\\)\")",
+      "PowerShell(\\(Get-Process -Id 21484\\).CommandLine)",
+      "PowerShell(Get-WmiObject Win32_Process -Filter \"ProcessId=21484\")"
     ]
   }
 }
