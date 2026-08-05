@@ -3,6 +3,17 @@ import pandas as pd
 
 
 def CoF_Stat(CoF, step_df):
+    """Aggregate per-cycle CoF results (from utility_functions.Evaluate) into
+    one row of pooled static/dynamic statistics per active step.
+
+    `CoF` is the per-cycle DataFrame (cof_eval["cof_res"] in app.py). `step_df`
+    has one row per test step with "Startzeit [s]"/"Endzeit [s]" bounds and an
+    "inactive" flag; rows with no cycles falling in their time window, or with
+    inactive=True, are skipped. Dynamic stats are pooled across cycles in a
+    step using each cycle's stored sum/variance (not recomputed from raw
+    samples); static stats are recomputed directly from the per-cycle static
+    CoF values in that step's window.
+    """
     staticTime = CoF["staticCoFTime"]
     staticCoF = CoF["staticCoF"]
 

@@ -6,6 +6,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 SRV_TIME_GAP_THRESHOLD = 1.0  # seconds; gap larger than this marks a new test step/pause
+ZERO_CROSSING_TIME_GAP_THRESHOLD = 0.002  # seconds; samples farther apart than this aren't treated as a zero crossing
 
 
 def _vba_round(x):
@@ -80,6 +81,14 @@ def trim(df, trim_start, trim_end):
 
 
 def Find_minima(df, column):
+    """Find zero crossings of `column` over `df["Zeit"]`.
+
+    Walks consecutive samples and records every sign change (negative-to-positive
+    or positive-to-negative) that occurs within ZERO_CROSSING_TIME_GAP_THRESHOLD
+    seconds of each other, then linearly interpolates the crossing time between
+    each pair. Returns a DataFrame with the raw pre/post-crossing samples
+    ("-Min"/"+Min" columns) and the interpolated crossing ("Min") columns.
+    """
     firstIteration = True
     negativeTime = []
     negativeArray = []
@@ -94,7 +103,7 @@ def Find_minima(df, column):
         else:
             currentValue = row[column]
             currentTime = row["Zeit"]
-            if currentTime - prevTime < 0.002:
+            if currentTime - prevTime < ZERO_CROSSING_TIME_GAP_THRESHOLD:
                 if (prevValue < 0 and currentValue >= 0) or (
                     prevValue >= 0 and currentValue < 0
                 ):
@@ -159,6 +168,18 @@ def Find_minima(df, column):
 def Evaluate(
     df, minima, column, static_cof_range, beginning_dynamic_range, ending_dynamic_range
 ):
+    """Compute per-cycle static/dynamic CoF statistics between zero crossings.
+
+    For each pair of consecutive negative-going zero crossings in `minima`
+    (one full stroke cycle), finds the static CoF (the peak/trough of
+    `column` within the first `static_cof_range`% of the cycle) and the
+    dynamic CoF (the mean of `column` over the
+    [beginning_dynamic_range%, ending_dynamic_range%] window of the cycle).
+    Cycles whose start index equals its rounded end index, or that fail for
+    any other reason, are skipped (logged as a warning, not raised) — this
+    mirrors the reference VBA tool's behavior of silently disregarding
+    single-sample or otherwise degenerate cycles.
+    """
     a = 0.01 * static_cof_range
     b = 0.01 * beginning_dynamic_range
     c = 0.01 * ending_dynamic_range
@@ -241,15 +262,7 @@ def Evaluate(
             logger.warning("Skipping cycle %d: %s", i, e)
             continue
 
-    ###
     if column == "CoF":
-        lists_to_check = [
-            startdynamicTime,
-            startdynamicCoF,
-            enddynamicTime,
-            dynamicCoF,
-            maxStroke,
-        ]
         res_df = pd.DataFrame(
             data={
                 "startdynamicTime": startdynamicTime,

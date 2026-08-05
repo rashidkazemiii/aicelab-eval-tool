@@ -1,8 +1,17 @@
 import warnings
+
+import pandas as pd
+
 from .utility_functions import Find_minima, Evaluate
 
 
-def calculate(df, normal_load_correction_factor):
+def calculate(df: pd.DataFrame, normal_load_correction_factor: float | None) -> pd.DataFrame:
+    """Add a "CoF" column to `df` from its "RK OFT Links"/"RK OFT Rechts"/"Belastung" columns.
+
+    With no correction factor, CoF = (Links + Rechts) / Belastung. With
+    factor == 0, CoF is left as the uncorrected friction force sum (not a
+    true, unitless CoF). Otherwise, CoF = (Links + Rechts) / max(0, Belastung - factor).
+    """
     if normal_load_correction_factor is None:
         df["CoF"] = (df["RK OFT Links"] + df["RK OFT Rechts"]) / df[
             "Belastung"
@@ -20,13 +29,19 @@ def calculate(df, normal_load_correction_factor):
     return df
 
 
-def find_minima(df):
+def find_minima(df: pd.DataFrame) -> pd.DataFrame:
+    """Find zero crossings of `df["CoF"]`. See utility_functions.Find_minima."""
     return Find_minima(df, "CoF")
 
 
 def get_static_and_dynamic_cof(
-    df, CoF_minima, static_cof_range, beginning_dynamic_range, ending_dynamic_range
-):
+    df: pd.DataFrame,
+    CoF_minima: pd.DataFrame,
+    static_cof_range: float,
+    beginning_dynamic_range: float,
+    ending_dynamic_range: float,
+) -> pd.DataFrame:
+    """Per-cycle static/dynamic CoF statistics. See utility_functions.Evaluate."""
     return Evaluate(
         df,
         CoF_minima,

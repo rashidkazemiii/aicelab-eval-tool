@@ -4,9 +4,11 @@ __generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
+# ── Imports ──────────────────────────────────────────────────────────────────
 @app.cell
 def _():
     import marimo as mo
+    import pandas as pd
     import plotly.graph_objects as go
     import sys, os
 
@@ -15,10 +17,13 @@ def _():
     from physics import CoF as cof_calc
     from physics import utility_functions
     from physics import statistics as stat_funcs
+    import data_loader
+    import table_helpers
 
-    return cof_calc, go, mo, stat_funcs, utility_functions
+    return cof_calc, data_loader, go, mo, pd, stat_funcs, table_helpers, utility_functions
 
 
+# ── App init (database) ───────────────────────────────────────────────────────
 @app.cell
 def _(mo):
     import database as db_mod
@@ -26,8 +31,7 @@ def _(mo):
     return (db_mod,)
 
 
-
-
+# ── Styling ────────────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
     mo.Html("""
@@ -66,12 +70,14 @@ def _(mo):
     return
 
 
+# ── App state ──────────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
     get_offset, set_offset = mo.state(False)
     return get_offset, set_offset
 
 
+# ── Widgets / forms ────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
     file_upload = mo.ui.file(label="Upload test file (.txt)", filetypes=[".txt"])
@@ -79,14 +85,22 @@ def _(mo):
 
 
 @app.cell
-def _(get_offset, mo, set_offset):
-    # Hidden field so the form has something to batch; the form's own submit
-    # button is the only thing rendered, matching Filter/Evaluate's chrome.
-    _hidden = mo.Html(
-        '<div style="visibility:hidden;height:26px">{v}</div>'
-    ).batch(v=mo.ui.text(value=""))
-    offset_form = _hidden.form(
-        submit_button_label="Offset (ON)" if get_offset() else "Offset",
+def _(mo):
+    def make_submit_only_form(submit_button_label, **form_kwargs):
+        # Hidden field so the form has something to batch; the form's own
+        # submit button is the only thing rendered, matching Filter/Evaluate's
+        # chrome.
+        _hidden = mo.Html(
+            '<div style="visibility:hidden;height:26px">{v}</div>'
+        ).batch(v=mo.ui.text(value=""))
+        return _hidden.form(submit_button_label=submit_button_label, **form_kwargs)
+    return (make_submit_only_form,)
+
+
+@app.cell
+def _(get_offset, make_submit_only_form, set_offset):
+    offset_form = make_submit_only_form(
+        "Offset (ON)" if get_offset() else "Offset",
         bordered=False,
         on_change=lambda _: set_offset(not get_offset()),
     )
@@ -94,11 +108,8 @@ def _(get_offset, mo, set_offset):
 
 
 @app.cell
-def _(mo):
-    _hidden = mo.Html(
-        '<div style="visibility:hidden;height:26px">{v}</div>'
-    ).batch(v=mo.ui.text(value=""))
-    save_form = _hidden.form(submit_button_label="💾 Save", bordered=False)
+def _(make_submit_only_form):
+    save_form = make_submit_only_form("💾 Save", bordered=False)
     return (save_form,)
 
 
@@ -206,10 +217,9 @@ def _(mo):
     return (eval_form,)
 
 
+# ── Data pipeline ──────────────────────────────────────────────────────────
 @app.cell
-def _(file_upload, mo, raw_data_form):
-    import io, pandas as pd
-
+def _(data_loader, file_upload, mo, raw_data_form):
     df_raw  = None
     step_df = None
     load_msg = mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
@@ -217,40 +227,8 @@ def _(file_upload, mo, raw_data_form):
     _p = raw_data_form.value
     if file_upload.value and _p is not None and int(_p["start_main_row"]) > 0:
         try:
-            _raw   = file_upload.value[0].contents.decode("latin-1")
-            _lines = _raw.splitlines()
-
-            _start_main = int(_p["start_main_row"])
-            _stop_main  = int(_p["stop_main_row"])
-            _start_step = int(_p["start_step_row"])
-            _end_step   = int(_p["end_step_row"])
-            _col_time   = int(_p["col_time"])
-
-            # ── Main data ────────────────────────────────────────────────────
-            _nrows = (_stop_main - _start_main + 1 if _stop_main > _start_main else None)
-            df_raw = pd.read_csv(
-                io.StringIO(_raw), sep="\t",
-                skiprows=_start_main - 2,
-                nrows=_nrows,
-                decimal=",", low_memory=False,
-            )
-            df_raw.columns = df_raw.columns.str.strip()
-            df_raw = df_raw.apply(pd.to_numeric, errors="coerce")
-
-            # ── Step data (optional) ─────────────────────────────────────────
-            if bool(_p["has_step"]) and _start_step > 0 and _end_step > _start_step:
-                _step_text = "\n".join(_lines[_start_step - 2 : _end_step])
-                step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",")
-                step_df.columns = step_df.columns.str.strip()
-                for _c in step_df.columns[1:]:
-                    step_df[_c] = pd.to_numeric(step_df[_c], errors="coerce")
-                _t_col    = step_df.columns[1]
-                _zeit_col = df_raw.columns[_col_time - 1] if _col_time > 0 else df_raw.columns[1]
-                step_df["Endzeit [s]"] = step_df[_t_col].shift(-1)
-                step_df.loc[step_df.index[-1], "Endzeit [s]"] = df_raw[_zeit_col].max()
-                if _t_col != "Startzeit [s]":
-                    step_df = step_df.rename(columns={_t_col: "Startzeit [s]"})
-                step_df["inactive"] = False
+            _raw = file_upload.value[0].contents.decode("latin-1")
+            df_raw, step_df = data_loader.parse_main_and_step_data(_raw, _p)
 
             load_msg = mo.callout(
                 mo.md(f"**{file_upload.value[0].name}** — {len(df_raw):,} rows, {len(df_raw.columns)} columns: `{list(df_raw.columns)}`"),
@@ -274,6 +252,8 @@ def _(cof_calc, df_raw, get_offset, mo, raw_data_form, step_df, utility_function
             _col_left  = int(_p["col_left"])
             _col_right = int(_p["col_right"])
             _col_load  = int(_p["col_load"])
+            # col_* are 1-indexed column numbers as entered by the user; -1
+            # converts to a 0-indexed position into df_raw.columns.
             if _col_time  > 0: _rename[_cols[_col_time  - 1]] = "Zeit"
             if _col_left  > 0: _rename[_cols[_col_left  - 1]] = "RK OFT Links"
             if _col_right > 0: _rename[_cols[_col_right - 1]] = "RK OFT Rechts"
@@ -330,14 +310,12 @@ def _(cof_calc, df_display, df_proc, eval_form, mo):
 
 
 @app.cell
-def _(cof_eval, df_display, stat_funcs, step_df):
-    import pandas as _pd2
-
+def _(cof_eval, df_display, pd, stat_funcs, step_df):
     stats_result = None
     stats_error = None
     if cof_eval is not None and df_display is not None:
         try:
-            _sdf = step_df if step_df is not None else _pd2.DataFrame({
+            _sdf = step_df if step_df is not None else pd.DataFrame({
                 "Startzeit [s]": [df_display["Zeit"].min()],
                 "Endzeit [s]":   [df_display["Zeit"].max()],
                 "inactive":      [False],
@@ -348,6 +326,7 @@ def _(cof_eval, df_display, stat_funcs, step_df):
     return stats_error, stats_result
 
 
+# ── DB save ────────────────────────────────────────────────────────────────
 @app.cell
 def _(
     cof_eval,
@@ -412,6 +391,7 @@ def _(
     return (save_msg,)
 
 
+# ── History panel ──────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
     refresh_btn = mo.ui.run_button(label="🔄 Refresh")
@@ -420,9 +400,7 @@ def _(mo):
 
 
 @app.cell
-def _(db_mod, delete_btn, mo, refresh_btn):
-    import pandas as _pd4
-
+def _(db_mod, delete_btn, mo, pd, refresh_btn):
     # Reference these so marimo tracks them as real dependencies (reactivity
     # is derived from names actually used in the body, not the signature) —
     # this is what makes Refresh/Delete actually re-query the database.
@@ -430,7 +408,7 @@ def _(db_mod, delete_btn, mo, refresh_btn):
     delete_btn.value
 
     _tests = db_mod.list_tests()
-    history_df = _pd4.DataFrame(_tests) if _tests else _pd4.DataFrame(
+    history_df = pd.DataFrame(_tests) if _tests else pd.DataFrame(
         columns=["id", "file_name", "data_type", "uploaded_at", "filter_window",
                  "static_range", "dynamic_min", "dynamic_max",
                  "static_mean_cof", "dynamic_mean_cof", "steps"]
@@ -474,8 +452,34 @@ def _(db_mod, history_table, mo):
     return (cycles_panel,)
 
 
+# ── Charts ─────────────────────────────────────────────────────────────────
 @app.cell
-def _(db_mod, go, history_table, mo):
+def _(go):
+    # Shared marker styling for the 5 evaluation-marker traces that both the
+    # History tab chart and the CoF Analysis chart draw identically.
+    COF_MARKER_STYLES = {
+        "zero_crossing": dict(symbol="line-ns", size=10, color="#888",
+                               line=dict(color="#888", width=1.5)),
+        "static":        dict(symbol="circle", size=7, color="#e74c3c",
+                               line=dict(color="#c0392b", width=1)),
+        "dynamic":       dict(symbol="diamond", size=7, color="#2ecc71",
+                               line=dict(color="#27ae60", width=1)),
+        "dynamic_start": dict(symbol="triangle-right", size=8, color="#9b59b6",
+                               line=dict(color="#8e44ad", width=1)),
+        "dynamic_end":   dict(symbol="triangle-left", size=8, color="#1abc9c",
+                               line=dict(color="#16a085", width=1)),
+    }
+
+    def add_cof_marker_trace(fig, x, y, kind, name):
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="markers", name=name,
+            marker=dict(COF_MARKER_STYLES[kind]),  # copy so Plotly never mutates the shared dict
+        ))
+    return add_cof_marker_trace, COF_MARKER_STYLES
+
+
+@app.cell
+def _(add_cof_marker_trace, db_mod, go, history_table, mo):
     _sel = history_table.value
     if _sel is None or len(_sel) == 0:
         history_chart = mo.Html(
@@ -502,40 +506,15 @@ def _(db_mod, go, history_table, mo):
                     line=dict(color="#e67e22", width=1.5),
                 ))
             _zc = _full["Min time [s]"].dropna()
-            _fig.add_trace(go.Scatter(
-                x=_zc, y=[0] * len(_zc),
-                mode="markers", name="Zero crossings",
-                marker=dict(symbol="line-ns", size=10, color="#888",
-                            line=dict(color="#888", width=1.5)),
-            ))
+            add_cof_marker_trace(_fig, _zc, [0] * len(_zc), "zero_crossing", "Zero crossings")
             _s = _full[["Static CoF time [s]", "Static CoF"]].dropna()
-            _fig.add_trace(go.Scatter(
-                x=_s["Static CoF time [s]"], y=_s["Static CoF"],
-                mode="markers", name="Static CoF",
-                marker=dict(symbol="circle", size=7, color="#e74c3c",
-                            line=dict(color="#c0392b", width=1)),
-            ))
+            add_cof_marker_trace(_fig, _s["Static CoF time [s]"], _s["Static CoF"], "static", "Static CoF")
             _d = _full[["Dynamic CoF time [s]", "Dynamic CoF"]].dropna()
-            _fig.add_trace(go.Scatter(
-                x=_d["Dynamic CoF time [s]"], y=_d["Dynamic CoF"],
-                mode="markers", name="Dynamic CoF",
-                marker=dict(symbol="diamond", size=7, color="#2ecc71",
-                            line=dict(color="#27ae60", width=1)),
-            ))
+            add_cof_marker_trace(_fig, _d["Dynamic CoF time [s]"], _d["Dynamic CoF"], "dynamic", "Dynamic CoF")
             _ds = _full[["Dynamic start time [s]", "Dynamic start CoF"]].dropna()
-            _fig.add_trace(go.Scatter(
-                x=_ds["Dynamic start time [s]"], y=_ds["Dynamic start CoF"],
-                mode="markers", name="Dynamic start",
-                marker=dict(symbol="triangle-right", size=8, color="#9b59b6",
-                            line=dict(color="#8e44ad", width=1)),
-            ))
+            add_cof_marker_trace(_fig, _ds["Dynamic start time [s]"], _ds["Dynamic start CoF"], "dynamic_start", "Dynamic start")
             _de = _full[["Dynamic end time [s]", "Dynamic end CoF"]].dropna()
-            _fig.add_trace(go.Scatter(
-                x=_de["Dynamic end time [s]"], y=_de["Dynamic end CoF"],
-                mode="markers", name="Dynamic end",
-                marker=dict(symbol="triangle-left", size=8, color="#1abc9c",
-                            line=dict(color="#16a085", width=1)),
-            ))
+            add_cof_marker_trace(_fig, _de["Dynamic end time [s]"], _de["Dynamic end CoF"], "dynamic_end", "Dynamic end")
             _fig.update_layout(
                 height=420,
                 xaxis_title="Time [s]", yaxis_title="CoF [-]",
@@ -554,7 +533,7 @@ def _(db_mod, go, history_table, mo):
 
 
 @app.cell
-def _(cof_eval, df_display, df_proc, filter_form, go, mo, step_df):
+def _(add_cof_marker_trace, cof_eval, df_display, df_proc, filter_form, go, mo, step_df):
     import io as _io, re as _re, json as _json
 
     if df_display is None:
@@ -592,36 +571,11 @@ def _(cof_eval, df_display, df_proc, filter_form, go, mo, step_df):
         if cof_eval is not None:
             _mn = cof_eval["minima"]
             _cr = cof_eval["cof_res"]
-            _fig.add_trace(go.Scatter(
-                x=_mn["Min Zeit"], y=[0] * len(_mn),
-                mode="markers", name="Zero crossings",
-                marker=dict(symbol="line-ns", size=10, color="#888",
-                            line=dict(color="#888", width=1.5)),
-            ))
-            _fig.add_trace(go.Scatter(
-                x=_cr["staticCoFTime"], y=_cr["staticCoF"],
-                mode="markers", name="Static CoF",
-                marker=dict(symbol="circle", size=7, color="#e74c3c",
-                            line=dict(color="#c0392b", width=1)),
-            ))
-            _fig.add_trace(go.Scatter(
-                x=_cr["dynamicCoFTime"], y=_cr["dynamicCoF"],
-                mode="markers", name="Dynamic CoF",
-                marker=dict(symbol="diamond", size=7, color="#2ecc71",
-                            line=dict(color="#27ae60", width=1)),
-            ))
-            _fig.add_trace(go.Scatter(
-                x=_cr["startdynamicTime"], y=_cr["startdynamicCoF"],
-                mode="markers", name="Dynamic start",
-                marker=dict(symbol="triangle-right", size=8, color="#9b59b6",
-                            line=dict(color="#8e44ad", width=1)),
-            ))
-            _fig.add_trace(go.Scatter(
-                x=_cr["enddynamicTime"], y=_cr["enddynamicCoF"],
-                mode="markers", name="Dynamic end",
-                marker=dict(symbol="triangle-left", size=8, color="#1abc9c",
-                            line=dict(color="#16a085", width=1)),
-            ))
+            add_cof_marker_trace(_fig, _mn["Min Zeit"], [0] * len(_mn), "zero_crossing", "Zero crossings")
+            add_cof_marker_trace(_fig, _cr["staticCoFTime"], _cr["staticCoF"], "static", "Static CoF")
+            add_cof_marker_trace(_fig, _cr["dynamicCoFTime"], _cr["dynamicCoF"], "dynamic", "Dynamic CoF")
+            add_cof_marker_trace(_fig, _cr["startdynamicTime"], _cr["startdynamicCoF"], "dynamic_start", "Dynamic start")
+            add_cof_marker_trace(_fig, _cr["enddynamicTime"], _cr["enddynamicCoF"], "dynamic_end", "Dynamic end")
 
         # Step boundary vertical lines
         if step_df is not None:
@@ -689,9 +643,9 @@ window.onload = function() {{
     return (cof_chart,)
 
 
+# ── Results table ──────────────────────────────────────────────────────────
 @app.cell
-def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result):
-    import pandas as _pd
+def _(cof_eval, df_display, df_proc, filter_form, mo, pd, stats_error, stats_result, table_helpers):
     import numpy as _np
 
     if df_display is None:
@@ -700,6 +654,13 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result)
             'color:#bbb;font-size:13px">Click Calculate to see results</div>'
         )
     else:
+        # Column-specific rounding precision below has no known rationale beyond
+        # matching the reference VBA tool's output column-by-column; preserved
+        # as-is rather than unified to a single value.
+        _DEFAULT_COF_DECIMALS = 15
+        _MINUS_MIN_COF_DECIMALS = 16
+        _PLUS_MIN_COF_DECIMALS = 18
+
         _N = len(df_display)
         _fparams = filter_form.value
         _filter_active = (
@@ -708,23 +669,18 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result)
             and df_proc is not None
         )
 
-        def _p(arr):
-            lst = list(arr)
-            return lst + [_np.nan] * (_N - len(lst))
-
-        def _pr(arr, decimals=15):
-            lst = [round(float(v), decimals) if _np.isfinite(v) else v for v in arr]
-            return lst + [_np.nan] * (_N - len(lst))
+        _p = lambda arr: table_helpers.pad(arr, _N)
+        _pr = lambda arr, decimals=_DEFAULT_COF_DECIMALS: table_helpers.round_and_pad(arr, _N, decimals)
 
         # ── Always present (after Calculate) ─────────────────────────────────
         _cols = {
             "Time [s]":    list(df_display["Zeit"]),
-            "CoF":         list(df_display["CoF"].round(15)),
+            "CoF":         list(df_display["CoF"].round(_DEFAULT_COF_DECIMALS)),
         }
 
         # ── Added after Filter ────────────────────────────────────────────────
         if _filter_active:
-            _cols["Filtered CoF"] = list(df_proc["CoF"].round(15))
+            _cols["Filtered CoF"] = list(df_proc["CoF"].round(_DEFAULT_COF_DECIMALS))
 
         # ── Added after Evaluate ──────────────────────────────────────────────
         if cof_eval is not None:
@@ -756,9 +712,9 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result)
                         "Dynamic CoF avg×N":           _pr(_stats["Dynamic Avg x N"]),
                         "Dynamic CoF var (step)":      _pr(_stats["Dynamic Var"]),
                         "-Min time [s]":               _p(_mn["-Min Zeit"]),
-                        "-Min CoF":                    _pr(_mn["-Min CoF"], 16),
+                        "-Min CoF":                    _pr(_mn["-Min CoF"], _MINUS_MIN_COF_DECIMALS),
                         "+Min time [s]":               _p(_mn["+Min Zeit"]),
-                        "+Min CoF":                    _pr(_mn["+Min CoF"], 18),
+                        "+Min CoF":                    _pr(_mn["+Min CoF"], _PLUS_MIN_COF_DECIMALS),
                         "Min time [s]":                _p(_mn["Min Zeit"]),
                         "CoF minima":                  _pr(_mn["Min CoF"]),
                         "Dynamic start time [s]":      _p(_cr["startdynamicTime"]),
@@ -773,7 +729,7 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result)
             results_panel = mo.vstack([
                 mo.Html('<p class="panel-title">Results</p>'),
                 mo.ui.table(
-                    _pd.DataFrame(_cols),
+                    pd.DataFrame(_cols),
                     pagination=True,
                     show_column_summaries=False,
                     show_data_types=False,
@@ -784,53 +740,18 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, stats_error, stats_result)
     return (results_panel,)
 
 
+# ── Final layout ───────────────────────────────────────────────────────────
 @app.cell
-def _(
-    cof_chart,
-    cycles_panel,
-    delete_btn,
-    delete_msg,
-    df_display,
-    df_proc,
-    df_raw,
-    display_msg,
-    eval_form,
-    eval_msg,
-    file_upload,
-    filter_form,
-    history_chart,
-    history_table,
-    load_msg,
-    mo,
-    offset_form,
-    raw_data_form,
-    refresh_btn,
-    results_panel,
-    save_form,
-    save_msg,
-):
-    _navbar = mo.Html("""
-    <div class="navbar">
-      <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
-      <span class="navbar-user">Marimo</span>
-    </div>
-    """)
-
-    # ── Raw Data tab ──────────────────────────────────────────────────────────
+def _(data_loader, display_msg, file_upload, load_msg, mo, raw_data_form):
     _rvm_test = (
         file_upload.value[0].name.replace(".txt", "")
         if file_upload.value else "—"
     )
 
     if file_upload.value:
-        import pandas as _pd
-        _lines = file_upload.value[0].contents.decode("latin-1").splitlines()
-        _total = len(_lines)
-        _rows = [line.split("\t") for line in _lines]
-        _ncols = max(len(r) for r in _rows)
-        _rows_padded = [r + [""] * (_ncols - len(r)) for r in _rows]
-        _df_file = _pd.DataFrame(_rows_padded, columns=[str(i) for i in range(_ncols)])
-        _df_file.insert(0, "#", range(1, len(_lines) + 1))
+        _raw = file_upload.value[0].contents.decode("latin-1")
+        _df_file = data_loader.parse_preview_table(_raw)
+        _total = len(_df_file)
         _justify = {col: "left" for col in _df_file.columns}
         _raw_table = mo.vstack([
             mo.callout(mo.md(f"**{_total:,}** lines"), kind="info"),
@@ -848,7 +769,7 @@ def _(
             'color:#bbb;font-size:13px">No data loaded</div>'
         )
 
-    _rawdata_tab = mo.vstack([
+    rawdata_tab = mo.vstack([
         mo.hstack([file_upload], justify="start"),
         mo.Html('<hr class="divider">'),
         mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
@@ -861,9 +782,12 @@ def _(
         display_msg if display_msg is not None else mo.Html(''),
         _raw_table,
     ], gap=2)
+    return (rawdata_tab,)
 
-    # ── CoF Analysis tab ──────────────────────────────────────────────────────
-    _analysis_tab = mo.vstack([
+
+@app.cell
+def _(cof_chart, display_msg, eval_form, eval_msg, filter_form, mo, offset_form, results_panel, save_form, save_msg):
+    analysis_tab = mo.vstack([
         mo.hstack([
             mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_form], gap=1),
             mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
@@ -884,9 +808,12 @@ def _(
             results_panel,
         ], gap=1),
     ], gap=2)
+    return (analysis_tab,)
 
-    # ── History tab ────────────────────────────────────────────────────────────
-    _history_tab = mo.vstack([
+
+@app.cell
+def _(cycles_panel, delete_btn, delete_msg, history_chart, history_table, mo, refresh_btn):
+    history_tab = mo.vstack([
         mo.hstack([refresh_btn, delete_btn], gap=2, justify="start"),
         delete_msg,
         mo.Html('<hr class="divider">'),
@@ -899,13 +826,24 @@ def _(
         mo.Html('<p class="panel-title">Results</p>'),
         cycles_panel,
     ], gap=2)
+    return (history_tab,)
+
+
+@app.cell
+def _(analysis_tab, history_tab, mo, rawdata_tab):
+    _navbar = mo.Html("""
+    <div class="navbar">
+      <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
+      <span class="navbar-user">Marimo</span>
+    </div>
+    """)
 
     mo.vstack([
         _navbar,
         mo.ui.tabs({
-            "📋  Raw Data":      _rawdata_tab,
-            "📊  CoF Analysis":  _analysis_tab,
-            "🗂  History":       _history_tab,
+            "📋  Raw Data":      rawdata_tab,
+            "📊  CoF Analysis":  analysis_tab,
+            "🗂  History":       history_tab,
         }),
     ], gap=0)
     return

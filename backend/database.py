@@ -16,7 +16,9 @@ from __future__ import annotations
 import math
 import os
 from datetime import datetime
+from typing import Optional
 
+import pandas as pd
 from sqlalchemy import (
     Column, DateTime, Float, ForeignKey, Integer, String, Text,
     create_engine, inspect, text,
@@ -156,7 +158,7 @@ def create_tables() -> None:
                     ))
 
 
-def _clean(v):
+def _clean(v) -> Optional[float]:
     """Convert NaN / inf to None so SQLite accepts it."""
     try:
         return None if (v is None or math.isnan(float(v)) or math.isinf(float(v))) else float(v)
@@ -171,10 +173,10 @@ def save_evaluation(
     static_range: float,
     dynamic_min: float,
     dynamic_max: float,
-    stats_df,       # DataFrame from stat_funcs.CoF_Stat — one row per active step
-    per_cycle_df,   # DataFrame from cof_eval["cof_res"] — one row per cycle
-    raw_df=None,    # DataFrame with "Zeit", "CoF", optionally "Filtered CoF" — one row per raw sample
-    minima_df=None, # DataFrame from cof_eval["minima"] — one row per zero-crossing pair
+    stats_df: pd.DataFrame,       # from stat_funcs.CoF_Stat — one row per active step
+    per_cycle_df: pd.DataFrame,   # from cof_eval["cof_res"] — one row per cycle
+    raw_df: Optional[pd.DataFrame] = None,    # "Zeit", "CoF", optionally "Filtered CoF" — one row per raw sample
+    minima_df: Optional[pd.DataFrame] = None, # from cof_eval["minima"] — one row per zero-crossing pair
 ) -> int:
     """Persist one complete evaluation to the database. Returns the new test.id."""
     db = SessionLocal()
@@ -362,7 +364,6 @@ def get_full_table(test_id: int):
     """Reconstruct the exact CoF Analysis results table for a saved test —
     same columns, same padding, as app.py's results_panel builds live."""
     import numpy as np
-    import pandas as pd
 
     db = SessionLocal()
     try:
