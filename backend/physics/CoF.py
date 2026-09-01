@@ -1,5 +1,6 @@
 import warnings
 
+import numpy as np
 import pandas as pd
 
 from .utility_functions import Find_minima, Evaluate
@@ -10,7 +11,10 @@ def calculate(df: pd.DataFrame, normal_load_correction_factor: float | None) -> 
 
     With no correction factor, CoF = (Links + Rechts) / Belastung. With
     factor == 0, CoF is left as the uncorrected friction force sum (not a
-    true, unitless CoF). Otherwise, CoF = (Links + Rechts) / max(0, Belastung - factor).
+    true, unitless CoF). Otherwise, CoF = (Links + Rechts) / (Belastung - factor),
+    unclamped — a row where Belastung < factor yields a sign-flipped CoF (the
+    correction overshot the actual load for that sample), and a row where
+    Belastung == factor yields NaN rather than a silent division by zero.
     """
     if normal_load_correction_factor is None:
         df["CoF"] = (df["RK OFT Links"] + df["RK OFT Rechts"]) / df[
@@ -22,7 +26,9 @@ def calculate(df: pd.DataFrame, normal_load_correction_factor: float | None) -> 
     else:
 
         def calculate_cof_ith_corrected_nl(row):
-            NL = max(0, row["Belastung"] - normal_load_correction_factor)
+            NL = row["Belastung"] - normal_load_correction_factor
+            if NL == 0:
+                return np.nan
             return (row["RK OFT Links"] + row["RK OFT Rechts"]) / NL
 
         df["CoF"] = df.apply(calculate_cof_ith_corrected_nl, axis=1)
