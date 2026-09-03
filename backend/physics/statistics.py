@@ -104,13 +104,11 @@ def CoF_Statisticspersecond(CoF, step_df):
     dynamic_Var = CoF["dynamicCoFvariance"]
 
     # raw_data = step_df["Startzeit [s]"].to_numpy()
-    reference_time = [
-        i
-        for i in range(
-            int(step_df["Startzeit [s]"].to_numpy()[0]),
-            int(step_df["Endzeit [s]"].to_numpy()[-1]) + 1,
-        )
-    ]
+    first_second = int(step_df["Startzeit [s]"].to_numpy()[0])
+    last_second = int(step_df["Endzeit [s]"].to_numpy()[-1])
+    reference_time = []
+    for i in range(first_second, last_second + 1):
+        reference_time.append(i)
     # initial_time = static_time.iloc[0]
     # final_time = static_time.iloc[-1]
 
@@ -494,40 +492,29 @@ def CoF_Discontsepstatistics(CoF, step_df):
             tempdynamicAvgxNR.append(sum(stepdynamicAvgxNR))
             tempdynamicVarL.append(sum(stepdynamicVarL))
             tempdynamicVarR.append(sum(stepdynamicVarR))
-            tempdynamicAvgL.append(
-                tempdynamicAvgxNL[-1] / tempdynamiccountL[-1]
-                if not tempdynamiccountL[-1] == 0
-                else 0
-            )
-            tempdynamicAvgR.append(
-                tempdynamicAvgxNR[-1] / tempdynamiccountR[-1]
-                if not tempdynamiccountR[-1] == 0
-                else 0
-            )
-            tempdynamicStdDevL.append(
-                (
-                    (
-                        tempdynamicVarL[-1]
-                        - (tempdynamicAvgxNL[-1]) ** 2 / tempdynamiccountL[-1]
-                    )
+            if tempdynamiccountL[-1] == 0:
+                dynamic_avg_l = 0
+                dynamic_std_dev_l = 0
+            else:
+                dynamic_avg_l = tempdynamicAvgxNL[-1] / tempdynamiccountL[-1]
+                dynamic_std_dev_l = (
+                    (tempdynamicVarL[-1] - (tempdynamicAvgxNL[-1]) ** 2 / tempdynamiccountL[-1])
                     / (tempdynamiccountL[-1] - 1)
-                )
-                ** 0.5
-                if not tempdynamiccountL[-1] == 0
-                else 0
-            )
-            tempdynamicStdDevR.append(
-                (
-                    (
-                        tempdynamicVarR[-1]
-                        - (tempdynamicAvgxNR[-1]) ** 2 / tempdynamiccountR[-1]
-                    )
+                ) ** 0.5
+            tempdynamicAvgL.append(dynamic_avg_l)
+            tempdynamicStdDevL.append(dynamic_std_dev_l)
+
+            if tempdynamiccountR[-1] == 0:
+                dynamic_avg_r = 0
+                dynamic_std_dev_r = 0
+            else:
+                dynamic_avg_r = tempdynamicAvgxNR[-1] / tempdynamiccountR[-1]
+                dynamic_std_dev_r = (
+                    (tempdynamicVarR[-1] - (tempdynamicAvgxNR[-1]) ** 2 / tempdynamiccountR[-1])
                     / (tempdynamiccountR[-1] - 1)
-                )
-                ** 0.5
-                if not tempdynamiccountR[-1] == 0
-                else 0
-            )
+                ) ** 0.5
+            tempdynamicAvgR.append(dynamic_avg_r)
+            tempdynamicStdDevR.append(dynamic_std_dev_r)
 
     # Create dataframes with the results
     statisticssep = pd.DataFrame(

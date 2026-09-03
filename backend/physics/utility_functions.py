@@ -56,19 +56,15 @@ def filter_fast(series, n):
     return series.rolling(window=n, center=True, min_periods=1).median()
 
 
-FILTER_METHODS = {
-    "vba": filter_vb_style,
-    "fast": filter_fast,
-}
-
-
 def filter(df, window, method="vba"):
     # df is already trimmed to [first step start, last step end] upstream when steps
     # exist, so filtering the whole received range covers both cases.
-    try:
-        filter_fn = FILTER_METHODS[method]
-    except KeyError:
-        raise ValueError(f"Unknown filter method: {method!r}. Expected one of {list(FILTER_METHODS)}")
+    if method == "vba":
+        filter_fn = filter_vb_style
+    elif method == "fast":
+        filter_fn = filter_fast
+    else:
+        raise ValueError(f"Unknown filter method: {method!r}. Expected one of ['vba', 'fast']")
     has_stroke = "stroke" in df.columns
     df["CoF"] = filter_fn(df["CoF"], window).round(15).values
     if has_stroke:
@@ -104,9 +100,9 @@ def Find_minima(df, column):
             currentValue = row[column]
             currentTime = row["Zeit"]
             if currentTime - prevTime < ZERO_CROSSING_TIME_GAP_THRESHOLD:
-                if (prevValue < 0 and currentValue >= 0) or (
-                    prevValue >= 0 and currentValue < 0
-                ):
+                went_negative_to_positive = prevValue < 0 and currentValue >= 0
+                went_positive_to_negative = prevValue >= 0 and currentValue < 0
+                if went_negative_to_positive or went_positive_to_negative:
                     if prevValue < 0:
                         negativeArray.append(prevValue)
                         negativeTime.append(prevTime)
@@ -230,10 +226,24 @@ def Evaluate(
             movingRange = Stroke[startIndex[i - 1] - 3 : endIndex - 2]
             if Stroke[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
-                index, element = max(enumerate(movingRange), key=lambda x: x[1])
+                # Find the position of the biggest value in movingRange. If
+                # more than one sample ties for biggest, keep the first one
+                # (same rule Python's own max() uses).
+                index = 0
+                biggest_value = movingRange[0]
+                for j in range(1, len(movingRange)):
+                    if movingRange[j] > biggest_value:
+                        biggest_value = movingRange[j]
+                        index = j
             elif Stroke[endIndex - 1] < 0:
                 maxStroke.append(min(movingRange))
-                index, element = min(enumerate(movingRange), key=lambda x: x[1])
+                # Same idea, but looking for the smallest value instead.
+                index = 0
+                smallest_value = movingRange[0]
+                for j in range(1, len(movingRange)):
+                    if movingRange[j] < smallest_value:
+                        smallest_value = movingRange[j]
+                        index = j
             else:
                 continue
             maxStrokeTime.append(movingTimeRange[index])

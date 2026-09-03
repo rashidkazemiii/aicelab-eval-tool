@@ -21,7 +21,10 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     _col_time   = int(params["col_time"])
 
     # ── Main data ────────────────────────────────────────────────────────────
-    _nrows = (_stop_main - _start_main + 1 if _stop_main > _start_main else None)
+    if _stop_main > _start_main:
+        _nrows = _stop_main - _start_main + 1
+    else:
+        _nrows = None
     df_raw = pd.read_csv(
         io.StringIO(raw_text), sep="\t",
         # start_main_row is the 1-indexed spreadsheet row of the header;
@@ -35,15 +38,21 @@ def parse_main_and_step_data(raw_text: str, params: dict):
 
     # ── Step data (optional) ────────────────────────────────────────────────
     step_df = None
-    if bool(params["has_step"]) and _start_step > 0 and _end_step > _start_step:
+    _has_step = bool(params["has_step"])
+    _step_rows_given = _start_step > 0 and _end_step > _start_step
+    if _has_step and _step_rows_given:
         # Same 1-indexed-row -> 0-indexed-list-slice conversion as above.
-        _step_text = "\n".join(_lines[_start_step - 2 : _end_step])
+        _step_lines = _lines[_start_step - 2 : _end_step]
+        _step_text = "\n".join(_step_lines)
         step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",")
         step_df.columns = step_df.columns.str.strip()
         for _c in step_df.columns[1:]:
             step_df[_c] = pd.to_numeric(step_df[_c], errors="coerce")
-        _t_col    = step_df.columns[1]
-        _zeit_col = df_raw.columns[_col_time - 1] if _col_time > 0 else df_raw.columns[1]
+        _t_col = step_df.columns[1]
+        if _col_time > 0:
+            _zeit_col = df_raw.columns[_col_time - 1]
+        else:
+            _zeit_col = df_raw.columns[1]
         step_df["Endzeit [s]"] = step_df[_t_col].shift(-1)
         step_df.loc[step_df.index[-1], "Endzeit [s]"] = df_raw[_zeit_col].max()
         if _t_col != "Startzeit [s]":
@@ -65,9 +74,24 @@ def parse_preview_table(raw_text: str) -> pd.DataFrame:
     the two; that would risk a real behavior change in either code path.
     """
     _lines = raw_text.splitlines()
-    _rows = [line.split("\t") for line in _lines]
-    _ncols = max(len(r) for r in _rows)
-    _rows_padded = [r + [""] * (_ncols - len(r)) for r in _rows]
-    df_file = pd.DataFrame(_rows_padded, columns=[str(i) for i in range(_ncols)])
+
+    _rows = []
+    for _line in _lines:
+        _rows.append(_line.split("\t"))
+
+    _ncols = 0
+    for _row in _rows:
+        if len(_row) > _ncols:
+            _ncols = len(_row)
+
+    _rows_padded = []
+    for _row in _rows:
+        _rows_padded.append(_row + [""] * (_ncols - len(_row)))
+
+    _column_names = []
+    for _i in range(_ncols):
+        _column_names.append(str(_i))
+
+    df_file = pd.DataFrame(_rows_padded, columns=_column_names)
     df_file.insert(0, "#", range(1, len(_lines) + 1))
     return df_file

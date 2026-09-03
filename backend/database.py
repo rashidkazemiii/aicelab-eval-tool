@@ -149,7 +149,9 @@ def create_tables() -> None:
         for table in Base.metadata.sorted_tables:
             if table.name not in existing_tables:
                 continue  # just created above, already has every column
-            existing_cols = {c["name"] for c in inspector.get_columns(table.name)}
+            existing_cols = set()
+            for c in inspector.get_columns(table.name):
+                existing_cols.add(c["name"])
             for column in table.columns:
                 if column.name not in existing_cols:
                     col_type = column.type.compile(dialect=engine.dialect)
@@ -161,7 +163,12 @@ def create_tables() -> None:
 def _clean(v) -> Optional[float]:
     """Convert NaN / inf to None so SQLite accepts it."""
     try:
-        return None if (v is None or math.isnan(float(v)) or math.isinf(float(v))) else float(v)
+        if v is None:
+            return None
+        v_as_float = float(v)
+        if math.isnan(v_as_float) or math.isinf(v_as_float):
+            return None
+        return v_as_float
     except (TypeError, ValueError):
         return None
 
@@ -181,9 +188,13 @@ def save_evaluation(
     """Persist one complete evaluation to the database. Returns the new test.id."""
     db = SessionLocal()
     try:
+        if filter_window is None:
+            _filter_window_value = None
+        else:
+            _filter_window_value = int(filter_window)
         test = Test(
             file_name=file_name, data_type=data_type,
-            filter_window=int(filter_window) if filter_window is not None else None,
+            filter_window=_filter_window_value,
             static_range=static_range, dynamic_min=dynamic_min, dynamic_max=dynamic_max,
         )
         db.add(test)
@@ -223,8 +234,9 @@ def save_evaluation(
             ))
 
         if minima_df is not None and not minima_df.empty:
-            _records = [
-                {
+            _records = []
+            for idx, row in minima_df.iterrows():
+                _records.append({
                     "test_id": test.id, "crossing_index": int(idx),
                     "minus_min_time": _clean(row.get("-Min Zeit")),
                     "minus_min_cof": _clean(row.get("-Min CoF")),
@@ -232,24 +244,29 @@ def save_evaluation(
                     "plus_min_cof": _clean(row.get("+Min CoF")),
                     "min_time": _clean(row.get("Min Zeit")),
                     "min_cof": _clean(row.get("Min CoF")),
-                }
-                for idx, row in minima_df.iterrows()
-            ]
+                })
             db.bulk_insert_mappings(Minima, _records)
 
         if raw_df is not None and not raw_df.empty:
             _times = raw_df["Zeit"].tolist()
             _cofs = raw_df["CoF"].tolist()
             _has_filtered = "Filtered CoF" in raw_df.columns
-            _filtered = raw_df["Filtered CoF"].tolist() if _has_filtered else [None] * len(raw_df)
-            _records = [
-                {
+            if _has_filtered:
+                _filtered = raw_df["Filtered CoF"].tolist()
+            else:
+                _filtered = [None] * len(raw_df)
+
+            _records = []
+            for i in range(len(_times)):
+                if _has_filtered:
+                    _filtered_cof_value = _clean(_filtered[i])
+                else:
+                    _filtered_cof_value = None
+                _records.append({
                     "test_id": test.id, "row_index": i,
-                    "time": _clean(t), "cof": _clean(c),
-                    "filtered_cof": _clean(f) if _has_filtered else None,
-                }
-                for i, (t, c, f) in enumerate(zip(_times, _cofs, _filtered))
-            ]
+                    "time": _clean(_times[i]), "cof": _clean(_cofs[i]),
+                    "filtered_cof": _filtered_cof_value,
+                })
             db.bulk_insert_mappings(RawSample, _records)
 
         db.commit()
@@ -312,8 +329,9 @@ def get_cycles(test_id: int) -> list[dict]:
             .order_by(PerCycle.cycle_index)
             .all()
         )
-        return [
-            {
+        out = []
+        for r in rows:
+            out.append({
                 "cycle_index": r.cycle_index,
                 "static_cof_time": r.static_cof_time,
                 "static_cof": r.static_cof,
@@ -327,9 +345,8 @@ def get_cycles(test_id: int) -> list[dict]:
                 "start_dynamic_cof": r.start_dynamic_cof,
                 "end_dynamic_time": r.end_dynamic_time,
                 "end_dynamic_cof": r.end_dynamic_cof,
-            }
-            for r in rows
-        ]
+            })
+        return out
     finally:
         db.close()
 
@@ -344,8 +361,9 @@ def get_minima(test_id: int) -> list[dict]:
             .order_by(Minima.crossing_index)
             .all()
         )
-        return [
-            {
+        out = []
+        for r in rows:
+            out.append({
                 "crossing_index": r.crossing_index,
                 "minus_min_time": r.minus_min_time,
                 "minus_min_cof": r.minus_min_cof,
@@ -353,9 +371,8 @@ def get_minima(test_id: int) -> list[dict]:
                 "plus_min_cof": r.plus_min_cof,
                 "min_time": r.min_time,
                 "min_cof": r.min_cof,
-            }
-            for r in rows
-        ]
+            })
+        return out
     finally:
         db.close()
 
@@ -388,44 +405,56 @@ def get_full_table(test_id: int):
     def _pad(values):
         return list(values) + [np.nan] * (n - len(values))
 
+    def _column(collection, attribute_name):
+        """Pull one attribute out of every row in `collection` into a plain
+        list, then pad it with NaN so every column ends up the same length."""
+        values = []
+        for row in collection:
+            values.append(getattr(row, attribute_name))
+        return _pad(values)
+
     cols = {}
     if raw:
-        cols["Time [s]"] = _pad([r.time for r in raw])
-        cols["CoF"] = _pad([r.cof for r in raw])
-        if any(r.filtered_cof is not None for r in raw):
-            cols["Filtered CoF"] = _pad([r.filtered_cof for r in raw])
+        cols["Time [s]"] = _column(raw, "time")
+        cols["CoF"] = _column(raw, "cof")
 
-    cols.update({
-        "Static CoF time [s]":    _pad([c.static_cof_time for c in cycles]),
-        "Static CoF":             _pad([c.static_cof for c in cycles]),
-        "Dynamic CoF time [s]":   _pad([c.dynamic_cof_time for c in cycles]),
-        "Dynamic CoF":            _pad([c.dynamic_cof for c in cycles]),
-        "Dynamic std dev":        _pad([c.dynamic_sd for c in cycles]),
-        "Dynamic N":              _pad([c.dynamic_n for c in cycles]),
-        "Dynamic CoF sum":        _pad([c.dynamic_sigma for c in cycles]),
-        "Dynamic CoF variance":   _pad([c.dynamic_variance for c in cycles]),
-        "Time range [s]":         _pad([r.time_range for r in results]),
-        "Static mean CoF":        _pad([r.static_mean_cof for r in results]),
-        "Static std dev":         _pad([r.static_sd for r in results]),
-        "Static N":               _pad([r.static_n for r in results]),
-        "Static CoF sum":         _pad([r.static_sum for r in results]),
-        "Static CoF variance":    _pad([r.static_variance for r in results]),
-        "Dynamic mean CoF":       _pad([r.dynamic_mean_cof for r in results]),
-        "Dynamic mean std dev":   _pad([r.dynamic_sd for r in results]),
-        "Dynamic mean N":         _pad([r.dynamic_n for r in results]),
-        "Dynamic CoF avg×N":      _pad([r.dynamic_sum for r in results]),
-        "Dynamic CoF var (step)": _pad([r.dynamic_variance for r in results]),
-        "-Min time [s]":          _pad([m.minus_min_time for m in mins]),
-        "-Min CoF":               _pad([m.minus_min_cof for m in mins]),
-        "+Min time [s]":          _pad([m.plus_min_time for m in mins]),
-        "+Min CoF":               _pad([m.plus_min_cof for m in mins]),
-        "Min time [s]":           _pad([m.min_time for m in mins]),
-        "CoF minima":             _pad([m.min_cof for m in mins]),
-        "Dynamic start time [s]": _pad([c.start_dynamic_time for c in cycles]),
-        "Dynamic start CoF":      _pad([c.start_dynamic_cof for c in cycles]),
-        "Dynamic end time [s]":   _pad([c.end_dynamic_time for c in cycles]),
-        "Dynamic end CoF":        _pad([c.end_dynamic_cof for c in cycles]),
-    })
+        has_filtered_cof = False
+        for r in raw:
+            if r.filtered_cof is not None:
+                has_filtered_cof = True
+        if has_filtered_cof:
+            cols["Filtered CoF"] = _column(raw, "filtered_cof")
+
+    cols["Static CoF time [s]"] = _column(cycles, "static_cof_time")
+    cols["Static CoF"] = _column(cycles, "static_cof")
+    cols["Dynamic CoF time [s]"] = _column(cycles, "dynamic_cof_time")
+    cols["Dynamic CoF"] = _column(cycles, "dynamic_cof")
+    cols["Dynamic std dev"] = _column(cycles, "dynamic_sd")
+    cols["Dynamic N"] = _column(cycles, "dynamic_n")
+    cols["Dynamic CoF sum"] = _column(cycles, "dynamic_sigma")
+    cols["Dynamic CoF variance"] = _column(cycles, "dynamic_variance")
+    cols["Time range [s]"] = _column(results, "time_range")
+    cols["Static mean CoF"] = _column(results, "static_mean_cof")
+    cols["Static std dev"] = _column(results, "static_sd")
+    cols["Static N"] = _column(results, "static_n")
+    cols["Static CoF sum"] = _column(results, "static_sum")
+    cols["Static CoF variance"] = _column(results, "static_variance")
+    cols["Dynamic mean CoF"] = _column(results, "dynamic_mean_cof")
+    cols["Dynamic mean std dev"] = _column(results, "dynamic_sd")
+    cols["Dynamic mean N"] = _column(results, "dynamic_n")
+    cols["Dynamic CoF avg×N"] = _column(results, "dynamic_sum")
+    cols["Dynamic CoF var (step)"] = _column(results, "dynamic_variance")
+    cols["-Min time [s]"] = _column(mins, "minus_min_time")
+    cols["-Min CoF"] = _column(mins, "minus_min_cof")
+    cols["+Min time [s]"] = _column(mins, "plus_min_time")
+    cols["+Min CoF"] = _column(mins, "plus_min_cof")
+    cols["Min time [s]"] = _column(mins, "min_time")
+    cols["CoF minima"] = _column(mins, "min_cof")
+    cols["Dynamic start time [s]"] = _column(cycles, "start_dynamic_time")
+    cols["Dynamic start CoF"] = _column(cycles, "start_dynamic_cof")
+    cols["Dynamic end time [s]"] = _column(cycles, "end_dynamic_time")
+    cols["Dynamic end CoF"] = _column(cycles, "end_dynamic_cof")
+
     return pd.DataFrame(cols)
 
 
