@@ -19,6 +19,7 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     _start_step = int(params["start_step_row"])
     _end_step   = int(params["end_step_row"])
     _col_time   = int(params["col_time"])
+    _step_col_time = int(params["step_col_time"])
 
     # ── Main data ────────────────────────────────────────────────────────────
     if _stop_main > _start_main:
@@ -27,13 +28,17 @@ def parse_main_and_step_data(raw_text: str, params: dict):
         _nrows = None
     df_raw = pd.read_csv(
         io.StringIO(raw_text), sep="\t",
-        # start_main_row is the 1-indexed spreadsheet row of the header;
-        # -2 converts it to a 0-indexed skiprows count (row 1 -> skiprows 0).
-        skiprows=_start_main - 2,
+        # start_main_row is the 1-indexed line where the real data starts -
+        # there is no header row to look for, so pandas must not treat the
+        # first line as column names (header=None). Which column is which
+        # (Zeit, RK OFT Links, ...) is decided purely by the column numbers
+        # the user gives (col_time, col_left, ...), never by guessing from
+        # the raw text.
+        skiprows=_start_main - 1,
         nrows=_nrows,
         decimal=",", low_memory=False,
+        header=None,
     )
-    df_raw.columns = df_raw.columns.str.strip()
     df_raw = df_raw.apply(pd.to_numeric, errors="coerce")
 
     # ── Step data (optional) ────────────────────────────────────────────────
@@ -41,23 +46,32 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     _has_step = bool(params["has_step"])
     _step_rows_given = _start_step > 0 and _end_step > _start_step
     if _has_step and _step_rows_given:
-        # Same 1-indexed-row -> 0-indexed-list-slice conversion as above.
-        _step_lines = _lines[_start_step - 2 : _end_step]
+        # 1-indexed line number -> 0-indexed list position: line N is at
+        # position N-1, so the header line itself starts the slice here.
+        _step_lines = _lines[_start_step - 1 : _end_step]
+        print("Step lines being read:")
+        for _line in _step_lines:
+            print(_line)
         _step_text = "\n".join(_step_lines)
-        step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",")
-        step_df.columns = step_df.columns.str.strip()
+        # These lines are pure data, chosen by the user - there is no header
+        # row to look for, so pandas must not treat the first line as column
+        # names (header=None). Which column holds Startzeit is decided by
+        # step_col_time (given by the user), never guessed from the raw text.
+        step_df = pd.read_csv(io.StringIO(_step_text), sep="\t", decimal=",", header=None)
         for _c in step_df.columns[1:]:
             step_df[_c] = pd.to_numeric(step_df[_c], errors="coerce")
-        _t_col = step_df.columns[1]
+        _t_col = step_df.columns[_step_col_time - 1]
         if _col_time > 0:
             _zeit_col = df_raw.columns[_col_time - 1]
         else:
             _zeit_col = df_raw.columns[1]
         step_df["Endzeit [s]"] = step_df[_t_col].shift(-1)
         step_df.loc[step_df.index[-1], "Endzeit [s]"] = df_raw[_zeit_col].max()
-        if _t_col != "Startzeit [s]":
-            step_df = step_df.rename(columns={_t_col: "Startzeit [s]"})
+        step_df = step_df.rename(columns={_t_col: "Startzeit [s]"})
         step_df["inactive"] = False
+        print("Endzeit [s] computed for each step:")
+        for _value in step_df["Endzeit [s]"]:
+            print(_value)
 
     return df_raw, step_df
 

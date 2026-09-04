@@ -77,6 +77,15 @@ def _(mo):
     return get_offset, set_offset
 
 
+@app.cell
+def _(mo):
+    # Holds the last successfully parsed (df_raw, load_msg, step_df), so
+    # editing a field doesn't blank out the result until Calculate is
+    # actually clicked again.
+    get_parsed_data, set_parsed_data = mo.state(None)
+    return get_parsed_data, set_parsed_data
+
+
 # ── Widgets / forms ────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
@@ -128,11 +137,24 @@ def _(mo):
 
 
 @app.cell
-def _(file_upload, mo):
-    # All raw-data parsing settings live in one form: nothing here takes effect
-    # until "Calculate" is pressed, no matter which field was edited or how
-    # (typing, tabbing away, clicking elsewhere) — mo.ui.form only publishes
-    # .value on explicit submit, unlike bare mo.ui widgets which are live.
+def _(mo):
+    # Kept outside the form (live, not submit-only) so unchecking it can
+    # grey out the step fields below right away, without needing "Calculate".
+    has_step_checkbox = mo.ui.checkbox(label="Has step data", value=True)
+    return (has_step_checkbox,)
+
+
+@app.cell
+def _(mo):
+    # A separate button (not a form's built-in submit button) so it can be
+    # placed anywhere in the layout, independent of the fields.
+    calculate_button = mo.ui.run_button(label="Calculate")
+    return (calculate_button,)
+
+
+@app.cell
+def _(file_upload, has_step_checkbox, mo):
+    _step_fields_disabled = not has_step_checkbox.value
     if file_upload.value:
         _total = len(file_upload.value[0].contents.decode("latin-1").splitlines())
     else:
@@ -142,16 +164,19 @@ def _(file_upload, mo):
         '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load Correction</span>{nlc}</div>'
         '<hr class="divider">'
-        '{has_step}'
+        '<p class="section-label" style="margin:0">STEP DATA</p>'
         '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Step</span>{start_step_row}</div>'
         '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">End Step</span>{end_step_row}</div>'
         '<div style="display:flex;align-items:center;gap:8px">'
+        '<span style="font-size:0.82rem;color:#444;min-width:160px">Step Time col #</span>{step_col_time}</div>'
+        '<hr class="divider">'
+        '<p class="section-label" style="margin:0">MAIN DATA</p>'
+        '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Main Data</span>{start_main_row}</div>'
         '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">Stop Main Data</span>{stop_main_row}</div>'
-        '<hr class="divider">'
         '<div style="display:flex;align-items:center;gap:8px">'
         '<span style="font-size:0.82rem;color:#444;min-width:160px">Time col #</span>{col_time}</div>'
         '<div style="display:flex;align-items:center;gap:8px">'
@@ -164,16 +189,16 @@ def _(file_upload, mo):
     )
     raw_data_form = _raw_data_tpl.batch(
         nlc=mo.ui.text(value=""),
-        has_step=mo.ui.checkbox(label="Has step data", value=True),
-        start_step_row=mo.ui.text(value="0"),
-        end_step_row=mo.ui.text(value="0"),
+        start_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
+        end_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
+        step_col_time=mo.ui.text(value="1", disabled=_step_fields_disabled),
         start_main_row=mo.ui.text(value="41"),
         stop_main_row=mo.ui.text(value=str(_total)),
         col_time=mo.ui.text(value="1"),
-        col_left=mo.ui.text(value="14"),
-        col_right=mo.ui.text(value="15"),
-        col_load=mo.ui.text(value="4"),
-    ).form(submit_button_label="Calculate", bordered=False)
+        col_left=mo.ui.text(value="13"),
+        col_right=mo.ui.text(value="14"),
+        col_load=mo.ui.text(value="3"),
+    )
     return (raw_data_form,)
 
 
@@ -227,36 +252,52 @@ def _(mo):
 
 # ── Data pipeline ──────────────────────────────────────────────────────────
 @app.cell
-def _(data_loader, file_upload, mo, raw_data_form):
-    df_raw  = None
-    step_df = None
-    load_msg = mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
+def _(calculate_button, data_loader, file_upload, get_parsed_data, has_step_checkbox, mo, raw_data_form, set_parsed_data):
+    # raw_data_form's fields are live now (not a submit-gated form), so this
+    # cell re-runs on every keystroke too - but it only re-parses the file
+    # when Calculate was actually clicked. Otherwise it just re-reads the
+    # last computed result from state, so editing a field doesn't blank out
+    # the current result.
+    if calculate_button.value:
+        _p = raw_data_form.value
+        _file_given = bool(file_upload.value)
+        _params_given = _p is not None
+        _start_row_given = _params_given and int(_p["start_main_row"]) > 0
+        if _file_given and _params_given and _start_row_given:
+            try:
+                _raw = file_upload.value[0].contents.decode("latin-1")
+                _p = dict(_p)
+                _p["has_step"] = has_step_checkbox.value
+                _df_raw, _step_df = data_loader.parse_main_and_step_data(_raw, _p)
+                _load_msg = mo.callout(
+                    mo.md(f"**{file_upload.value[0].name}** — {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
+                    kind="success",
+                )
+                set_parsed_data((_df_raw, _load_msg, _step_df, _p))
+            except Exception as _e:
+                set_parsed_data((None, mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"), None, None))
 
-    _p = raw_data_form.value
-    _file_given = bool(file_upload.value)
-    _params_given = _p is not None
-    _start_row_given = _params_given and int(_p["start_main_row"]) > 0
-    if _file_given and _params_given and _start_row_given:
-        try:
-            _raw = file_upload.value[0].contents.decode("latin-1")
-            df_raw, step_df = data_loader.parse_main_and_step_data(_raw, _p)
-
-            load_msg = mo.callout(
-                mo.md(f"**{file_upload.value[0].name}** — {len(df_raw):,} rows, {len(df_raw.columns)} columns: `{list(df_raw.columns)}`"),
-                kind="success",
-            )
-        except Exception as _e:
-            load_msg = mo.callout(mo.md(f"**Error:** {_e}"), kind="danger")
-    return df_raw, load_msg, step_df
+    _parsed = get_parsed_data()
+    if _parsed is None:
+        df_raw = None
+        step_df = None
+        committed_params = None
+        load_msg = mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
+    else:
+        df_raw, load_msg, step_df, committed_params = _parsed
+    return committed_params, df_raw, load_msg, step_df
 
 
 @app.cell
-def _(cof_calc, df_raw, get_offset, mo, raw_data_form, step_df, utility_functions):
+def _(cof_calc, committed_params, df_raw, get_offset, mo, step_df, utility_functions):
     df_display = None
     display_msg = None
     if df_raw is not None:
         try:
-            _p = raw_data_form.value
+            # Use the params from the last Calculate click, not the fields'
+            # current (possibly since-edited) live values - column choices
+            # shouldn't take effect until Calculate is clicked either.
+            _p = committed_params
             _cols = df_raw.columns
             _rename = {}
             _col_time  = int(_p["col_time"])
@@ -890,7 +931,7 @@ def _(cof_eval, df_display, df_proc, filter_form, mo, pd, stats_error, stats_res
 
 # ── Final layout ───────────────────────────────────────────────────────────
 @app.cell
-def _(data_loader, display_msg, file_upload, load_msg, mo, raw_data_form):
+def _(calculate_button, data_loader, display_msg, file_upload, has_step_checkbox, load_msg, mo, raw_data_form):
     if file_upload.value:
         _rvm_test = file_upload.value[0].name.replace(".txt", "")
     else:
@@ -931,7 +972,10 @@ def _(data_loader, display_msg, file_upload, load_msg, mo, raw_data_form):
                 f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
                 f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
         mo.Html('<hr class="divider">'),
-        raw_data_form,
+        has_step_checkbox,
+        mo.hstack([raw_data_form], justify="start"),
+        mo.Html('<hr class="divider">'),
+        mo.hstack([calculate_button], justify="start"),
         mo.Html('<hr class="divider">'),
         load_msg,
         _display_msg_html,
