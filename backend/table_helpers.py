@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 
 
 def pad(arr, n):
@@ -81,3 +82,19 @@ def decimate_min_max(x, y, max_points):
             out_y.append(min_value)
 
     return out_x, out_y
+
+
+def combine_padded(df_a, df_b):
+    """Combine two DataFrames of different lengths side by side into one,
+    padding whichever is shorter with NaN so every column ends up the same
+    length. Used only for a one-off Excel export (never displayed in the
+    app), since a real per-sample table can be far longer than a per-cycle
+    table, and padding the shorter one up to match is a lot of empty cells.
+    """
+    n = max(len(df_a), len(df_b))
+    cols = {}
+    for col in df_a.columns:
+        cols[col] = pad(df_a[col], n)
+    for col in df_b.columns:
+        cols[col] = pad(df_b[col], n)
+    return pd.DataFrame(cols)

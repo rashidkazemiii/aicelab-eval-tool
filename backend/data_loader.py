@@ -1,6 +1,20 @@
 import io
+import os
+import tempfile
+import time
 
 import pandas as pd
+
+
+def is_ready_to_parse(file_present: bool, params: dict | None) -> bool:
+    """True once there's an uploaded file and a real start_main_row, so
+    Calculate has enough to try parsing.
+    """
+    if not file_present:
+        return False
+    if params is None:
+        return False
+    return int(params["start_main_row"]) > 0
 
 
 def parse_main_and_step_data(raw_text: str, params: dict):
@@ -76,36 +90,54 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     return df_raw, step_df
 
 
-def parse_preview_table(raw_text: str) -> pd.DataFrame:
-    """Build the full-file line-by-line preview table shown in the Raw Data
-    tab: every line of the upload (including headers/step rows), split on
-    tab, unfiltered, with a leading 1-indexed "#" row-number column.
+def _unique_temp_csv_path(base_name: str) -> str:
+    # A unique name per call, not a fixed one: once Excel has opened a file,
+    # Windows keeps it locked for as long as Excel has it open, so writing
+    # the same path again on a second click fails with PermissionError.
+    unique_suffix = str(int(time.time() * 1000))
+    return os.path.join(tempfile.gettempdir(), f"{base_name}_{unique_suffix}.csv")
 
-    NOT the same computation as parse_main_and_step_data, despite the
-    superficial similarity of reading the same raw text — this shows the
-    entire raw file for user reference, while parse_main_and_step_data slices
-    out just the numeric main-data block used for calculation. Do not merge
-    the two; that would risk a real behavior change in either code path.
+
+def open_in_excel(raw_text: str, file_name: str) -> str:
+    """Write the raw upload out as a semicolon-separated .csv and open it in
+    Excel. Semicolon, not comma, because the data itself uses a comma as its
+    decimal point (German locale) - a comma-separated .csv would split every
+    number's decimal point into its own column. Semicolon is also the
+    default CSV list separator on a comma-decimal Windows system, so Excel
+    opens the file with columns already split, no import wizard needed.
+
+    Returns the temp file path that was written and opened.
     """
-    _lines = raw_text.splitlines()
+    csv_lines = []
+    for line in raw_text.splitlines():
+        csv_lines.append(line.replace("\t", ";"))
+    csv_text = "\n".join(csv_lines)
 
-    _rows = []
-    for _line in _lines:
-        _rows.append(_line.split("\t"))
+    if file_name:
+        base_name = os.path.splitext(file_name)[0]
+    else:
+        base_name = "raw_data"
+    path = _unique_temp_csv_path(base_name)
+    with open(path, "w", encoding="latin-1") as f:
+        f.write(csv_text)
 
-    _ncols = 0
-    for _row in _rows:
-        if len(_row) > _ncols:
-            _ncols = len(_row)
+    os.startfile(path)
+    return path
 
-    _rows_padded = []
-    for _row in _rows:
-        _rows_padded.append(_row + [""] * (_ncols - len(_row)))
 
-    _column_names = []
-    for _i in range(_ncols):
-        _column_names.append(str(_i))
+def open_dataframe_in_excel(df: pd.DataFrame, base_name: str) -> str:
+    """Write a DataFrame out as a semicolon-separated .csv (same reasoning
+    as open_in_excel - the numbers themselves use '.' as their decimal
+    point, but the surrounding raw files are German-locale, so semicolon
+    keeps this consistent with the rest of the app's Excel exports) and open
+    it in Excel. Returns the temp file path that was written and opened.
 
-    df_file = pd.DataFrame(_rows_padded, columns=_column_names)
-    df_file.insert(0, "#", range(1, len(_lines) + 1))
-    return df_file
+    Meant for a table that's too large to send to the browser and show
+    inline (mo.ui.table) without tripping marimo's output-size limit - the
+    combined per-sample + per-cycle results table, say - where Excel is the
+    only practical way left to look at it as one table.
+    """
+    path = _unique_temp_csv_path(base_name)
+    df.to_csv(path, index=False, sep=";")
+    os.startfile(path)
+    return path

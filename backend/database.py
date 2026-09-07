@@ -21,7 +21,7 @@ from typing import Optional
 import pandas as pd
 from sqlalchemy import (
     Column, DateTime, Float, ForeignKey, Integer, String, Text,
-    create_engine, inspect, text,
+    create_engine, func, inspect, text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -319,6 +319,58 @@ def list_tests() -> list[dict]:
         db.close()
 
 
+def list_tests_df() -> pd.DataFrame:
+    """list_tests(), as a DataFrame with the right columns present even when
+    there are no saved tests yet - so the History table doesn't render with a
+    blank schema.
+    """
+    tests = list_tests()
+    if tests:
+        return pd.DataFrame(tests)
+    return pd.DataFrame(columns=[
+        "id", "file_name", "data_type", "uploaded_at", "filter_window",
+        "static_range", "dynamic_min", "dynamic_max",
+        "static_mean_cof", "dynamic_mean_cof", "steps",
+    ])
+
+
+def save_full_evaluation(
+    file_name: str,
+    filter_params,
+    eval_params,
+    df_display: pd.DataFrame,
+    df_proc: pd.DataFrame,
+    filter_active: bool,
+    cof_eval: dict,
+    stats_result: pd.DataFrame,
+) -> int:
+    """Build the raw-sample dataframe from the current pipeline state and
+    persist one full evaluation via save_evaluation(). Returns the new
+    test.id. The caller is responsible for any overwrite/conflict handling
+    (find_existing_test + delete_test) before calling this - it always
+    inserts a fresh row.
+    """
+    raw_df = df_display[["Zeit", "CoF"]].copy()
+    if filter_active:
+        raw_df["Filtered CoF"] = df_proc["CoF"].values
+    if filter_params:
+        filter_window = int(filter_params["filter_points"])
+    else:
+        filter_window = None
+    return save_evaluation(
+        file_name=file_name,
+        data_type="OFT",
+        filter_window=filter_window,
+        static_range=float(eval_params["static_range"]),
+        dynamic_min=float(eval_params["dyn_min"]),
+        dynamic_max=float(eval_params["dyn_max"]),
+        stats_df=stats_result,
+        per_cycle_df=cof_eval["cof_res"],
+        raw_df=raw_df,
+        minima_df=cof_eval["minima"],
+    )
+
+
 def get_cycles(test_id: int) -> list[dict]:
     """Per-cycle rows for one test, ordered by cycle_index."""
     db = SessionLocal()
@@ -377,17 +429,65 @@ def get_minima(test_id: int) -> list[dict]:
         db.close()
 
 
-def get_full_table(test_id: int):
-    """Reconstruct the exact CoF Analysis results table for a saved test —
-    same columns, same padding, as app.py's results_panel builds live."""
-    import numpy as np
+def count_raw_samples(test_id: int) -> int:
+    """How many raw samples are saved for a test - a cheap count, without
+    fetching the (possibly 100,000+ row) table itself."""
+    db = SessionLocal()
+    try:
+        return db.query(func.count(RawSample.id)).filter(RawSample.test_id == test_id).scalar()
+    finally:
+        db.close()
 
+
+def count_cycles(test_id: int) -> int:
+    """How many evaluated cycles are saved for a test - a cheap count,
+    without fetching the per-cycle table itself."""
+    db = SessionLocal()
+    try:
+        return db.query(func.count(PerCycle.id)).filter(PerCycle.test_id == test_id).scalar()
+    finally:
+        db.close()
+
+
+def get_full_raw_table(test_id: int) -> pd.DataFrame:
+    """Per-sample table for a saved test: Time, CoF, and (if filtering was
+    used) Filtered CoF - one row per raw sample. Same shape as the live
+    Results page's raw table (results_table.build_raw_table)."""
     db = SessionLocal()
     try:
         raw = (
             db.query(RawSample).filter(RawSample.test_id == test_id)
             .order_by(RawSample.row_index).all()
         )
+    finally:
+        db.close()
+
+    times = []
+    cofs = []
+    filtered_cofs = []
+    has_filtered_cof = False
+    for r in raw:
+        times.append(r.time)
+        cofs.append(r.cof)
+        filtered_cofs.append(r.filtered_cof)
+        if r.filtered_cof is not None:
+            has_filtered_cof = True
+
+    cols = {"Time [s]": times, "CoF": cofs}
+    if has_filtered_cof:
+        cols["Filtered CoF"] = filtered_cofs
+    return pd.DataFrame(cols)
+
+
+def get_full_eval_table(test_id: int) -> pd.DataFrame:
+    """Per-cycle/per-step evaluation table for a saved test - one row per
+    cycle/step/zero-crossing, padded only up to each other's row count (not
+    to the raw sample count). Same shape as the live Results page's
+    evaluation table (results_table.build_eval_table)."""
+    import numpy as np
+
+    db = SessionLocal()
+    try:
         cycles = (
             db.query(PerCycle).filter(PerCycle.test_id == test_id)
             .order_by(PerCycle.cycle_index).all()
@@ -400,7 +500,7 @@ def get_full_table(test_id: int):
     finally:
         db.close()
 
-    n = max(len(raw), len(cycles), len(results), len(mins))
+    n = max(len(cycles), len(results), len(mins))
 
     def _pad(values):
         return list(values) + [np.nan] * (n - len(values))
@@ -414,17 +514,6 @@ def get_full_table(test_id: int):
         return _pad(values)
 
     cols = {}
-    if raw:
-        cols["Time [s]"] = _column(raw, "time")
-        cols["CoF"] = _column(raw, "cof")
-
-        has_filtered_cof = False
-        for r in raw:
-            if r.filtered_cof is not None:
-                has_filtered_cof = True
-        if has_filtered_cof:
-            cols["Filtered CoF"] = _column(raw, "filtered_cof")
-
     cols["Static CoF time [s]"] = _column(cycles, "static_cof_time")
     cols["Static CoF"] = _column(cycles, "static_cof")
     cols["Dynamic CoF time [s]"] = _column(cycles, "dynamic_cof_time")
