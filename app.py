@@ -34,15 +34,15 @@ def _(mo):
 def _(mo):
     mo.Html("""
     <style>
+      body { background: #eef1f4; }
       .navbar {
         background: #1f2a40; padding: 0 24px; height: 50px;
         display: flex; align-items: center; justify-content: space-between;
-        border-bottom: 1px solid #2d3748; border-radius: 8px 8px 0 0;
+        border-radius: 8px 8px 0 0;
       }
       .navbar-title { color: #4cceac; font-weight: 700; font-size: 1rem; letter-spacing: 0.5px; }
       .navbar-version { color: #fff; font-size: 0.75rem; margin-left: 10px; }
       .navbar-user { color: #aaa; font-size: 0.8rem; }
-      .panel { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
       .panel-title { font-weight: 700; color: #1f2a40; font-size: 0.85rem; margin: 0 0 12px 0; }
       .section-label { font-weight: 700; color: #999; font-size: 0.6rem; letter-spacing: 1px; margin: 0 0 6px 0; }
       .divider { border: none; border-top: 1px solid #eee; margin: 10px 0; }
@@ -65,7 +65,33 @@ def _(mo):
       }
     </style>
     """)
-    return
+
+    # A shared inline style (not a CSS class) for wrapping composites that
+    # contain real interactive widgets (forms, buttons) - mo.Html can't wrap
+    # a live widget tree in a literal HTML string without losing its
+    # interactivity, so card styling for those has to go through
+    # Html.style() on the vstack/hstack itself instead of a CSS class.
+    PANEL_STYLE = {
+        "background": "#fff",
+        "border-radius": "8px",
+        "padding": "16px",
+        "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
+    }
+    # Same card look, but as a fixed-height flex column with the button
+    # pinned to the bottom - so the 4 action cards (Actions/Filter/
+    # Evaluate/Save) line their buttons up on one baseline regardless of
+    # how many fields the middle of each card has.
+    ACTION_CARD_STYLE = {
+        "background": "#fff",
+        "border-radius": "8px",
+        "padding": "16px",
+        "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
+        "display": "flex",
+        "flex-direction": "column",
+        "justify-content": "space-between",
+        "min-height": "110px",
+    }
+    return ACTION_CARD_STYLE, PANEL_STYLE
 
 
 # ── App state ──────────────────────────────────────────────────────────────
@@ -86,16 +112,24 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    # A single shared status message, shown in one place on the page.
-    # Whichever action last had something to say (Calculate, Filter,
-    # Evaluate, Save, Open in Excel) calls set_status_msg() to replace it -
-    # so there's exactly one message box, always showing the latest one,
+    # One shared status message per tab, each shown in a single place on
+    # that tab's page. Whichever action on that tab last had something to
+    # say calls its set_..._status_msg() to replace it - so each tab has
+    # exactly one message box, always showing that tab's own latest action,
     # instead of every action having its own separate, independently-timed
-    # message box scattered around the page.
-    get_status_msg, set_status_msg = mo.state(
+    # message box scattered around the page. Kept as two separate states
+    # (not one shared one) so an action on the Analysis tab never overwrites
+    # what's showing on the History tab, or vice versa.
+    get_results_status_msg, set_results_status_msg = mo.state(
         mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
     )
-    return get_status_msg, set_status_msg
+    return get_results_status_msg, set_results_status_msg
+
+
+@app.cell
+def _(mo):
+    get_history_status_msg, set_history_status_msg = mo.state(mo.Html(''))
+    return get_history_status_msg, set_history_status_msg
 
 
 # ── Widgets / forms ────────────────────────────────────────────────────────
@@ -177,17 +211,17 @@ def _(mo):
 
 
 @app.cell
-def _(data_loader, file_upload, mo, open_excel_btn, set_status_msg):
+def _(data_loader, file_upload, mo, open_excel_btn, set_results_status_msg):
     if open_excel_btn.value:
         if file_upload.value:
             _raw = file_upload.value[0].contents.decode("latin-1")
             try:
                 data_loader.open_in_excel(_raw, file_upload.value[0].name)
-                set_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
+                set_results_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
             except Exception as _e:
-                set_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
+                set_results_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
         else:
-            set_status_msg(mo.callout(mo.md("Upload a file first."), kind="warn"))
+            set_results_status_msg(mo.callout(mo.md("Upload a file first."), kind="warn"))
     return
 
 
@@ -198,33 +232,38 @@ def _(file_upload, has_step_checkbox, mo):
         _total = len(file_upload.value[0].contents.decode("latin-1").splitlines())
     else:
         _total = 0
+    # Inline styles throughout, not CSS classes: a page-level <style> rule
+    # can style plain elements like <hr>/<p> fine (see .divider,
+    # .section-label elsewhere), but a label sitting in the same flex row as
+    # a marimo widget needs an explicit inline min-width to reliably line up
+    # - same reasoning as the width:60px wrapper already used for
+    # Filter/Evaluate's inputs below.
+    _row = '<div style="display:flex;align-items:center;gap:8px">' \
+           '<span style="font-size:0.82rem;color:#444;min-width:160px;flex-shrink:0">{label}</span>{{{field}}}</div>'
+    _grid_open = '<div style="display:grid;grid-template-columns:repeat(2, minmax(240px, 1fr));gap:10px 32px">'
+    _grid_close = '</div>'
+
     _raw_data_tpl = mo.Html(
-        '<div style="display:flex;flex-direction:column;gap:10px">'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load Correction</span>{nlc}</div>'
-        '<hr class="divider">'
+        '<div style="display:flex;flex-direction:column;gap:14px">'
+        + _row.format(label="Normal Load Correction", field="nlc")
+        + '<hr class="divider">'
         '<p class="section-label" style="margin:0">STEP DATA</p>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Step</span>{start_step_row}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">End Step</span>{end_step_row}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Step Time col #</span>{step_col_time}</div>'
-        '<hr class="divider">'
+        + _grid_open
+        + _row.format(label="Start Step", field="start_step_row")
+        + _row.format(label="End Step", field="end_step_row")
+        + _row.format(label="Step Time col #", field="step_col_time")
+        + _grid_close
+        + '<hr class="divider">'
         '<p class="section-label" style="margin:0">MAIN DATA</p>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Start Main Data</span>{start_main_row}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Stop Main Data</span>{stop_main_row}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Time col #</span>{col_time}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Left col #</span>{col_left}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Friction Right col #</span>{col_right}</div>'
-        '<div style="display:flex;align-items:center;gap:8px">'
-        '<span style="font-size:0.82rem;color:#444;min-width:160px">Normal Load col #</span>{col_load}</div>'
-        '</div>'
+        + _grid_open
+        + _row.format(label="Start Main Data", field="start_main_row")
+        + _row.format(label="Stop Main Data", field="stop_main_row")
+        + _row.format(label="Time col #", field="col_time")
+        + _row.format(label="Friction Left col #", field="col_left")
+        + _row.format(label="Friction Right col #", field="col_right")
+        + _row.format(label="Normal Load col #", field="col_load")
+        + _grid_close
+        + '</div>'
     )
     raw_data_form = _raw_data_tpl.batch(
         nlc=mo.ui.text(value=""),
@@ -300,7 +339,7 @@ def _(
     mo,
     raw_data_form,
     set_parsed_data,
-    set_status_msg,
+    set_results_status_msg,
 ):
     # raw_data_form's fields are live now (not a submit-gated form), so this
     # cell re-runs on every keystroke too - but it only re-parses the file
@@ -316,13 +355,13 @@ def _(
                 _p["has_step"] = has_step_checkbox.value
                 _df_raw, _step_df = data_loader.parse_main_and_step_data(_raw, _p)
                 set_parsed_data((_df_raw, _step_df, _p))
-                set_status_msg(mo.callout(
+                set_results_status_msg(mo.callout(
                     mo.md(f"**{file_upload.value[0].name}** — {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
                     kind="success",
                 ))
             except Exception as _e:
                 set_parsed_data((None, None, None))
-                set_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
+                set_results_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
 
     _parsed = get_parsed_data()
     if _parsed is None:
@@ -335,7 +374,7 @@ def _(
 
 
 @app.cell
-def _(committed_params, df_raw, get_offset, mo, pipeline, set_status_msg, step_df):
+def _(committed_params, df_raw, get_offset, mo, pipeline, set_results_status_msg, step_df):
     df_display = None
     if df_raw is not None:
         try:
@@ -345,30 +384,30 @@ def _(committed_params, df_raw, get_offset, mo, pipeline, set_status_msg, step_d
             df_display = pipeline.compute_display_df(df_raw, step_df, committed_params, get_offset())
         except Exception as _e:
             df_display = None
-            set_status_msg(mo.callout(mo.md(f"**CoF Error:** {_e}"), kind="danger"))
+            set_results_status_msg(mo.callout(mo.md(f"**CoF Error:** {_e}"), kind="danger"))
     return (df_display,)
 
 
 @app.cell
-def _(df_display, filter_form, mo, pipeline, set_status_msg):
+def _(df_display, filter_form, mo, pipeline, set_results_status_msg):
     if df_display is not None:
         try:
             df_proc = pipeline.compute_filtered_df(df_display, filter_form.value)
         except Exception as _e:
             df_proc = df_display.copy()
-            set_status_msg(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
+            set_results_status_msg(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
     else:
         df_proc = None
     return (df_proc,)
 
 
 @app.cell
-def _(df_display, df_proc, eval_form, mo, pipeline, set_status_msg):
+def _(df_display, df_proc, eval_form, mo, pipeline, set_results_status_msg):
     cof_eval = None
     try:
         cof_eval = pipeline.compute_evaluation(df_display, df_proc, eval_form.value)
     except Exception as _e:
-        set_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
+        set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
     return (cof_eval,)
 
 
@@ -398,7 +437,7 @@ def _(
     overwrite_btn,
     pipeline,
     save_form,
-    set_status_msg,
+    set_results_status_msg,
     stats_result,
 ):
     _save_form_submitted = save_form.value is not None
@@ -410,7 +449,7 @@ def _(
         _eparams = eval_form.value
         _existing = db_mod.find_existing_test(_fname)
         if _existing is not None and not overwrite_btn.value:
-            set_status_msg(mo.vstack([
+            set_results_status_msg(mo.vstack([
                 mo.callout(
                     mo.md(
                         f"A test named **{_fname}** (saved {_existing.uploaded_at}) "
@@ -428,9 +467,9 @@ def _(
                 _test_id = db_mod.save_full_evaluation(
                     _fname, _fparams, _eparams, df_display, df_proc, _filter_active, cof_eval, stats_result,
                 )
-                set_status_msg(mo.callout(mo.md(f"Saved as test **#{_test_id}**."), kind="success"))
+                set_results_status_msg(mo.callout(mo.md(f"Saved as test **#{_test_id}**."), kind="success"))
             except Exception as _e:
-                set_status_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
+                set_results_status_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
     return
 
 
@@ -460,19 +499,18 @@ def _(db_mod, delete_btn, mo, refresh_btn):
 
 
 @app.cell
-def _(delete_btn, db_mod, history_table, mo):
-    delete_msg = mo.Html('')
+def _(delete_btn, db_mod, history_table, mo, set_history_status_msg):
     if delete_btn.value:
         _sel = history_table.value
         if _sel is not None and len(_sel) > 0:
             _id = int(_sel.iloc[0]["id"])
             if db_mod.delete_test(_id):
-                delete_msg = mo.callout(mo.md(f"Deleted test **#{_id}**. Click Refresh to update the list."), kind="success")
+                set_history_status_msg(mo.callout(mo.md(f"Deleted test **#{_id}**. Click Refresh to update the list."), kind="success"))
             else:
-                delete_msg = mo.callout(mo.md(f"Test #{_id} not found."), kind="warn")
+                set_history_status_msg(mo.callout(mo.md(f"Test #{_id} not found."), kind="warn"))
         else:
-            delete_msg = mo.callout(mo.md("Select a row first."), kind="warn")
-    return (delete_msg,)
+            set_history_status_msg(mo.callout(mo.md("Select a row first."), kind="warn"))
+    return
 
 
 @app.cell
@@ -495,7 +533,7 @@ def _(db_mod, history_table, mo, open_history_excel_btn):
 
 
 @app.cell
-def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, set_status_msg, table_helpers):
+def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, set_history_status_msg, table_helpers):
     if open_history_excel_btn.value:
         _sel = history_table.value
         if _sel is not None and len(_sel) > 0:
@@ -505,11 +543,11 @@ def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, set_status
                 _eval_table = db_mod.get_full_eval_table(_test_id)
                 _combined = table_helpers.combine_padded(_raw_table, _eval_table)
                 data_loader.open_dataframe_in_excel(_combined, f"test_{_test_id}_results")
-                set_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
+                set_history_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
             except Exception as _e:
-                set_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
+                set_history_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
         else:
-            set_status_msg(mo.callout(mo.md("Select a saved test first."), kind="warn"))
+            set_history_status_msg(mo.callout(mo.md("Select a saved test first."), kind="warn"))
     return
 
 
@@ -584,7 +622,7 @@ def _(
     open_results_excel_btn,
     pipeline,
     results_table,
-    set_status_msg,
+    set_results_status_msg,
     stats_error,
     stats_result,
     table_helpers,
@@ -599,21 +637,23 @@ def _(
             else:
                 _combined = _df_raw_results
             data_loader.open_dataframe_in_excel(_combined, "results")
-            set_status_msg(mo.callout(mo.md("Opened results in Excel."), kind="success"))
+            set_results_status_msg(mo.callout(mo.md("Opened results in Excel."), kind="success"))
         except Exception as _e:
-            set_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
+            set_results_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
     return
 
 
 # ── Final layout ───────────────────────────────────────────────────────────
 @app.cell
 def _(
+    ACTION_CARD_STYLE,
+    PANEL_STYLE,
     calculate_button,
     cof_chart,
     eval_form,
     file_upload,
     filter_form,
-    get_status_msg,
+    get_results_status_msg,
     has_step_checkbox,
     mo,
     offset_form,
@@ -627,53 +667,67 @@ def _(
     else:
         _rvm_test = "—"
 
-    results_tab = mo.vstack([
+    _upload_card = mo.vstack([
         mo.hstack([file_upload, open_excel_btn], justify="start", align="center"),
-        get_status_msg(),
+        get_results_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
                 f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
                 f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
-        mo.Html('<hr class="divider">'),
+    ], gap=1).style(PANEL_STYLE)
+
+    _raw_data_card = mo.vstack([
+        mo.Html('<p class="panel-title">Raw Data</p>'),
         has_step_checkbox,
-        mo.hstack([raw_data_form], justify="start"),
+        raw_data_form,
         mo.Html('<hr class="divider">'),
-        mo.hstack([calculate_button], justify="start"),
+        calculate_button,
+    ], gap=2).style(PANEL_STYLE)
+
+    _actions_row = mo.hstack([
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+    ], gap=2, align="stretch", widths="equal")
+
+    _viz_card = mo.vstack([
+        mo.Html('<p class="panel-title">Analysis Visualization</p>'),
+        cof_chart,
         mo.Html('<hr class="divider">'),
-        mo.hstack([
-            mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_form], gap=1),
-            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
-            mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1),
-            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
-            mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_form], gap=1),
-            mo.Html('<div style="width:1px;background:#eee;align-self:stretch"></div>'),
-            mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_form], gap=1),
-        ], gap=3, align="start"),
-        mo.Html('<hr class="divider">'),
-        mo.vstack([
-            mo.Html('<p class="panel-title">Analysis Visualization</p>'),
-            cof_chart,
-            mo.Html('<hr class="divider">'),
-            results_panel,
-        ], gap=1),
-    ], gap=2)
+        results_panel,
+    ], gap=1).style(PANEL_STYLE)
+
+    results_tab = mo.vstack([
+        _upload_card,
+        _raw_data_card,
+        _actions_row,
+        _viz_card,
+    ], gap=2).style({"padding": "20px 0"})
     return (results_tab,)
 
 
 @app.cell
-def _(cycles_panel, delete_btn, delete_msg, history_chart, history_table, mo, refresh_btn):
-    history_tab = mo.vstack([
+def _(PANEL_STYLE, cycles_panel, delete_btn, get_history_status_msg, history_chart, history_table, mo, refresh_btn):
+    _tests_card = mo.vstack([
         mo.hstack([refresh_btn, delete_btn], gap=2, justify="start"),
-        delete_msg,
+        get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),
         history_table,
-        mo.Html('<hr class="divider">'),
+    ], gap=2).style(PANEL_STYLE)
+
+    _chart_card = mo.vstack([
         mo.Html('<p class="panel-title">Chart</p>'),
         history_chart,
         mo.Html('<hr class="divider">'),
         cycles_panel,
-    ], gap=2)
+    ], gap=1).style(PANEL_STYLE)
+
+    history_tab = mo.vstack([
+        _tests_card,
+        _chart_card,
+    ], gap=2).style({"padding": "20px 0"})
     return (history_tab,)
 
 
@@ -689,10 +743,10 @@ def _(history_tab, mo, results_tab):
     mo.vstack([
         _navbar,
         mo.ui.tabs({
-            "📊  Results":  results_tab,
-            "🗂  History":  history_tab,
+            "📊  Analysis":  results_tab,
+            "🗂  History":   history_tab,
         }),
-    ], gap=0)
+    ], gap=0).style({"max-width": "1280px", "margin": "0 auto"})
     return
 
 
