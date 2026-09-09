@@ -43,6 +43,12 @@ def _(mo):
       .navbar-title { color: #4cceac; font-weight: 700; font-size: 1rem; letter-spacing: 0.5px; }
       .navbar-version { color: #fff; font-size: 0.75rem; margin-left: 10px; }
       .navbar-user { color: #aaa; font-size: 0.8rem; }
+      .navbar-right { display: flex; align-items: center; gap: 14px; }
+      .navbar-help {
+        color: #4cceac; font-size: 0.78rem; font-weight: 600; text-decoration: none;
+        border: 1px solid #4cceac; border-radius: 5px; padding: 4px 10px;
+      }
+      .navbar-help:hover { background: #4cceac; color: #1f2a40; }
       .panel-title { font-weight: 700; color: #1f2a40; font-size: 0.85rem; margin: 0 0 12px 0; }
       .section-label { font-weight: 700; color: #999; font-size: 0.6rem; letter-spacing: 1px; margin: 0 0 6px 0; }
       .divider { border: none; border-top: 1px solid #eee; margin: 10px 0; }
@@ -738,7 +744,10 @@ def _(history_tab, mo, results_tab):
     _navbar = mo.Html("""
     <div class="navbar">
       <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
-      <span class="navbar-user">Marimo</span>
+      <div class="navbar-right">
+        <a class="navbar-help" href="https://claude.ai/code/artifact/df5fa7fc-9e5c-4c54-8d36-e4e2ac3bf641" target="_blank" rel="noopener">❓ Help</a>
+        <span class="navbar-user">Marimo</span>
+      </div>
     </div>
     """)
 

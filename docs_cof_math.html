@@ -1,0 +1,446 @@
+<title>The CoF Ledger</title>
+<style>
+  :root{
+    --bg:#f2f5f6;
+    --surface:#ffffff;
+    --surface-alt:#e8eef0;
+    --ink:#172328;
+    --ink-soft:#55666d;
+    --line:#d7e0e3;
+    --accent:#b5651d;
+    --accent-deep:#8a4a14;
+    --accent-tint:#f2e3d3;
+    --code-ink:#2f4858;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#10161a;
+      --surface:#171f23;
+      --surface-alt:#1e282d;
+      --ink:#e7edef;
+      --ink-soft:#9db0b6;
+      --line:#2a363c;
+      --accent:#e2954f;
+      --accent-deep:#f4b579;
+      --accent-tint:#3a2c1c;
+      --code-ink:#9dc3d8;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10161a;
+    --surface:#171f23;
+    --surface-alt:#1e282d;
+    --ink:#e7edef;
+    --ink-soft:#9db0b6;
+    --line:#2a363c;
+    --accent:#e2954f;
+    --accent-deep:#f4b579;
+    --accent-tint:#3a2c1c;
+    --code-ink:#9dc3d8;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Source Serif 4', Georgia, 'Times New Roman', serif;
+    font-size:16px;
+    line-height:1.6;
+  }
+  h1,h2,h3,.eyebrow,.stage-num,.rail a{
+    font-family:'Archivo', 'Arial Narrow', sans-serif;
+  }
+  h1,h2,h3{ text-wrap:balance; margin:0; color:var(--ink); }
+
+  .v{ font-style:italic; }
+  .fn{ font-style:normal; }
+  sub, sup{ font-size:0.72em; }
+  .frac{
+    display:inline-flex; flex-direction:column; align-items:center;
+    vertical-align:middle; text-align:center; margin:0 .22em;
+    line-height:1.2; font-size:.94em; position:relative; top:.16em;
+  }
+  .frac .num, .frac .den{ display:block; padding:0 .3em; white-space:nowrap; }
+  .frac .num{ border-bottom:1.3px solid currentColor; }
+  .sqrt{ white-space:nowrap; }
+  .sqrt::before{ content:"√"; margin-right:-.06em; }
+  .sqrt .rad{ display:inline-block; border-top:1.3px solid currentColor; padding:0 .18em; }
+  .rnd{
+    color:var(--accent-deep); font-weight:600; font-style:normal;
+    background:var(--accent-tint); padding:0 .25em; border-radius:3px;
+  }
+  .op{ margin:0 .28em; color:var(--ink-soft); }
+  .src{
+    font-family:'IBM Plex Mono', ui-monospace, monospace;
+    font-size:.68rem; color:var(--ink-soft); background:var(--surface);
+    border:1px solid var(--line); padding:.15em .55em; border-radius:3px;
+    white-space:nowrap; letter-spacing:.01em;
+  }
+  code{
+    font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:.88em;
+    color:var(--code-ink); background:var(--surface-alt);
+    padding:.05em .35em; border-radius:3px;
+  }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:2.5rem 1.5rem 6rem; }
+
+  header.top{
+    display:flex; flex-direction:column; gap:.9rem;
+    padding-bottom:2rem; margin-bottom:2rem; border-bottom:1px solid var(--line);
+  }
+  .eyebrow{
+    font-size:.72rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--accent-deep);
+  }
+  header.top h1{ font-size:2.3rem; font-weight:800; }
+  header.top p.dek{
+    max-width:62ch; color:var(--ink-soft); font-size:1.05rem; margin:0;
+  }
+  .meta-row{
+    display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.3rem;
+  }
+
+  .layout{
+    display:grid; grid-template-columns:200px minmax(0,1fr); gap:3rem; align-items:start;
+  }
+  @media (max-width:900px){
+    .layout{ grid-template-columns:1fr; }
+  }
+
+  .rail{
+    position:sticky; top:1.5rem; display:flex; flex-direction:column; gap:.15rem;
+  }
+  @media (max-width:900px){
+    .rail{
+      position:static; flex-direction:row; flex-wrap:wrap; gap:.4rem .6rem;
+      padding-bottom:1.5rem; margin-bottom:1rem; border-bottom:1px solid var(--line);
+    }
+  }
+  .rail a{
+    display:flex; gap:.55rem; align-items:baseline; text-decoration:none;
+    color:var(--ink-soft); font-size:.78rem; padding:.35rem .4rem; border-radius:4px;
+    transition:color .15s, background .15s;
+  }
+  .rail a:hover{ color:var(--ink); background:var(--surface-alt); }
+  .rail a.active{ color:var(--accent-deep); background:var(--accent-tint); font-weight:700; }
+  .rail .stage-num{ font-weight:800; font-size:.72rem; color:var(--ink-soft); min-width:1.4em; }
+  .rail a.active .stage-num{ color:var(--accent-deep); }
+
+  main{ min-width:0; }
+
+  section.stage{ margin-bottom:3.2rem; scroll-margin-top:1.5rem; }
+  .stage-head{
+    display:flex; align-items:baseline; gap:.85rem; margin-bottom:.6rem;
+  }
+  .stage-head .stage-num{
+    font-size:1.6rem; font-weight:800; color:var(--line); line-height:1;
+  }
+  .stage-head h2{ font-size:1.35rem; font-weight:700; }
+  section.stage > p{ max-width:66ch; }
+  section.stage > p.note{
+    max-width:66ch; color:var(--ink-soft); font-size:.92rem;
+  }
+
+  .math-block{
+    margin:1.1rem 0; padding:1rem 1.3rem; background:var(--surface-alt);
+    border:1px solid var(--line); border-radius:6px; overflow-x:auto;
+    font-size:1.08rem; line-height:2.3;
+  }
+  .math-block.rounding{ border-left:3px solid var(--accent); }
+  .math-block .case{ display:flex; gap:.8rem; align-items:baseline; white-space:nowrap; }
+  .math-block .case + .case{ margin-top:.35rem; }
+  .cond{ font-family:'IBM Plex Mono',monospace; font-size:.74rem; color:var(--ink-soft); }
+
+  .legend{
+    width:100%; border-collapse:collapse; margin:1rem 0 0; font-size:.92rem;
+  }
+  .legend th, .legend td{
+    text-align:left; padding:.5rem .7rem; border-bottom:1px solid var(--line);
+    font-variant-numeric:tabular-nums;
+  }
+  .legend th{
+    font-family:'Archivo',sans-serif; font-size:.68rem; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--ink-soft); font-weight:700;
+  }
+  .legend td.sym{ font-style:italic; font-size:1.05rem; width:2.5rem; }
+
+  .example{
+    margin:1rem 0; padding:.9rem 1.2rem; background:var(--surface);
+    border:1px dashed var(--line); border-radius:6px; font-size:.92rem;
+  }
+  .example .eg-label{
+    font-family:'Archivo',sans-serif; font-size:.68rem; font-weight:700;
+    letter-spacing:.08em; text-transform:uppercase; color:var(--accent-deep);
+    display:block; margin-bottom:.4rem;
+  }
+  .example table{ border-collapse:collapse; margin-top:.4rem; }
+  .example td{ padding:.15rem .9rem .15rem 0; font-variant-numeric:tabular-nums; }
+  .example td.k{ color:var(--ink-soft); }
+
+  table.ledger{
+    width:100%; border-collapse:collapse; font-size:.87rem; margin-top:1rem;
+  }
+  table.ledger th, table.ledger td{
+    text-align:left; padding:.6rem .8rem; border-bottom:1px solid var(--line);
+    vertical-align:top;
+  }
+  table.ledger th{
+    font-family:'Archivo',sans-serif; font-size:.66rem; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--ink-soft); font-weight:700;
+  }
+  table.ledger tr:last-child td{ border-bottom:none; }
+  table.ledger td.precision{ white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+  .foot{
+    margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--line);
+    color:var(--ink-soft); font-size:.85rem; max-width:70ch;
+  }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;600&display=swap">
+
+<div class="wrap">
+
+  <header class="top">
+    <span class="eyebrow">Eval_Tool — friction evaluation pipeline</span>
+    <h1>The CoF Ledger</h1>
+    <p class="dek">How raw <span class="v">Links</span>/<span class="v">Rechts</span>/<span class="v">Belastung</span> samples become the static and dynamic CoF numbers on the Results page — every formula the code runs, in the order it runs them, with every rounding step called out instead of hidden.</p>
+    <div class="meta-row">
+      <span class="src">physics/CoF.py</span>
+      <span class="src">physics/utility_functions.py</span>
+      <span class="src">physics/statistics.py</span>
+      <span class="src">pipeline.py</span>
+      <span class="src">results_table.py</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="rail" id="rail">
+      <a href="#legend"><span class="stage-num">00</span>Symbols</a>
+      <a href="#stage-1"><span class="stage-num">01</span>CoF per sample</a>
+      <a href="#stage-2"><span class="stage-num">02</span>Offset &amp; filter</a>
+      <a href="#stage-3"><span class="stage-num">03</span>Zero crossings</a>
+      <a href="#stage-4"><span class="stage-num">04</span>One stroke or a pause?</a>
+      <a href="#stage-5"><span class="stage-num">05</span>Static &amp; dynamic CoF</a>
+      <a href="#stage-6"><span class="stage-num">06</span>The last stroke</a>
+      <a href="#stage-7"><span class="stage-num">07</span>Per-step statistics</a>
+      <a href="#ledger"><span class="stage-num">08</span>Rounding ledger</a>
+    </nav>
+
+    <main>
+
+      <section class="stage" id="legend">
+        <div class="stage-head"><span class="stage-num">00</span><h2>Symbols</h2></div>
+        <p>Every raw column keeps its instrument name in the code (German, from the SRV tribometer export) — the table below is the only translation needed to read the formulas that follow.</p>
+        <table class="legend">
+          <tr><th>Symbol</th><th>Raw / config name</th><th>Meaning</th><th>Set in</th></tr>
+          <tr><td class="sym"><span class="v">L</span><sub>i</sub></td><td><code>RK OFT Links</code></td><td>Left friction force, sample <span class="v">i</span></td><td>“Friction Left col #”</td></tr>
+          <tr><td class="sym"><span class="v">R</span><sub>i</sub></td><td><code>RK OFT Rechts</code></td><td>Right friction force, sample <span class="v">i</span></td><td>“Friction Right col #”</td></tr>
+          <tr><td class="sym"><span class="v">W</span><sub>i</sub></td><td><code>Belastung</code></td><td>Normal load, sample <span class="v">i</span></td><td>“Normal Load col #”</td></tr>
+          <tr><td class="sym">λ</td><td><code>nlc</code></td><td>Normal Load Correction (optional constant)</td><td>“Normal Load Correction”</td></tr>
+          <tr><td class="sym">μ<sub>i</sub></td><td><code>CoF</code></td><td>Coefficient of friction, sample <span class="v">i</span> — computed, not raw</td><td>—</td></tr>
+          <tr><td class="sym"><span class="v">t</span><sub>i</sub></td><td><code>Zeit</code></td><td>Time, sample <span class="v">i</span> (s)</td><td>“Time col #”</td></tr>
+          <tr><td class="sym"><span class="v">n</span><sub>s</sub></td><td><code>Drehzahl</code></td><td>Rotational speed of step <span class="v">s</span> (rev/min)</td><td>“Drehzahl col #”</td></tr>
+          <tr><td class="sym"><span class="v">k</span></td><td>—</td><td>Cycle index: one stroke, between two zero-crossings</td><td>—</td></tr>
+          <tr><td class="sym"><span class="v">s</span></td><td>—</td><td>Step index: one row of the Step Data table</td><td>—</td></tr>
+        </table>
+      </section>
+
+      <section class="stage" id="stage-1">
+        <div class="stage-head"><span class="stage-num">01</span><h2>CoF per sample</h2></div>
+        <p><span class="src">physics/CoF.py:9</span> turns the three raw force channels into one CoF value per sample. Which formula runs depends on the Normal Load Correction, λ:</p>
+        <div class="math-block">
+          <div class="case"><span class="cond">λ not given</span><span class="op">→</span> μ<sub>i</sub> = <span class="frac"><span class="num"><span class="v">L</span><sub>i</sub> + <span class="v">R</span><sub>i</sub></span><span class="den"><span class="v">W</span><sub>i</sub></span></span></div>
+          <div class="case"><span class="cond">λ = 0</span><span class="op">→</span> μ<sub>i</sub> = <span class="v">L</span><sub>i</sub> + <span class="v">R</span><sub>i</sub> <span class="op">(flagged: not a true CoF, unitless force sum)</span></div>
+          <div class="case"><span class="cond">λ ≠ 0</span><span class="op">→</span> μ<sub>i</sub> = <span class="frac"><span class="num"><span class="v">L</span><sub>i</sub> + <span class="v">R</span><sub>i</sub></span><span class="den"><span class="v">W</span><sub>i</sub> − λ</span></span> <span class="op">, undefined (NaN) if</span> <span class="v">W</span><sub>i</sub> = λ</div>
+        </div>
+        <p class="note">A row where λ overshoots <span class="v">W</span><sub>i</sub> (i.e. <span class="v">W</span><sub>i</sub> &lt; λ) isn't rejected — it produces a sign-flipped μ<sub>i</sub> silently.</p>
+        <div class="math-block rounding">
+          μ<sub>i</sub> ← <span class="rnd">round(μ<sub>i</sub>, 5)</span> <span class="op">— <span class="src">pipeline.py:52</span>, immediately after the formula above. Every later stage reads this already-rounded value.</span>
+        </div>
+      </section>
+
+      <section class="stage" id="stage-2">
+        <div class="stage-head"><span class="stage-num">02</span><h2>Offset &amp; filter (optional)</h2></div>
+        <p>Two independent, optional passes over μ — and they don't feed the same later stage. This is the detail most worth knowing: <strong>Filter never touches the CoF numbers that get reported.</strong></p>
+        <div class="math-block rounding">
+          <div class="case">Offset (toggle) <span class="op">→</span> μ<sub>i</sub> ← <span class="rnd">round(μ<sub>i</sub> − mean(μ), 15)</span></div>
+          <div class="cond" style="margin-top:.3rem"><span class="src">utility_functions.py:40</span> — mean taken over the whole trimmed range. This result <em>is</em> what every later stage sees as “μ”.</div>
+        </div>
+        <div class="math-block rounding">
+          <div class="case">Filter (form) <span class="op">→</span> μ′<sub>i</sub> ← <span class="rnd">round(median<sub>window w</sub>(μ), 15)</span></div>
+          <div class="cond" style="margin-top:.3rem"><span class="src">utility_functions.py:88</span> — a centered rolling median, window <span class="v">w</span> samples wide. μ′ is used <strong>only</strong> to find zero-crossings (Stage 03) and decide stroke timing. Stage 05's static/dynamic CoF values are still read from μ, not μ′.</div>
+        </div>
+      </section>
+
+      <section class="stage" id="stage-3">
+        <div class="stage-head"><span class="stage-num">03</span><h2>Zero crossings</h2></div>
+        <p><span class="src">utility_functions.py:98 Find_minima()</span> walks μ′ (the filtered signal, or μ itself if Filter wasn't used) sample by sample and records every sign change — each one is a stroke reversal.</p>
+        <div class="math-block">
+          A crossing is recorded between samples <span class="v">i</span>−1, <span class="v">i</span> when both hold:
+          <div class="case" style="margin-top:.4rem"><span class="v">t</span><sub>i</sub> − <span class="v">t</span><sub>i−1</sub> &lt; 0.002 s <span class="op">(else the samples are too far apart to trust as one crossing)</span></div>
+          <div class="case">μ<sub>i−1</sub> and μ<sub>i</sub> differ in sign</div>
+        </div>
+        <p>The two straddling samples are labelled by sign — (<span class="v">t</span><sup>−</sup>, μ<sup>−</sup>) the one below zero, (<span class="v">t</span><sup>+</sup>, μ<sup>+</sup>) the one at or above it — and linearly interpolated to the instant μ actually crosses zero:</p>
+        <div class="math-block">
+          <span class="v">t</span><sub>0</sub> = <span class="frac"><span class="num"><span class="v">t</span><sup>+</sup>μ<sup>−</sup> − <span class="v">t</span><sup>−</sup>μ<sup>+</sup></span><span class="den">μ<sup>−</sup> − μ<sup>+</sup></span></span>
+        </div>
+        <p class="note">A separate diagnostic (not shown here) flags any crossing spaced under 50% of the file's average crossing spacing as “noisy data” — it's a warning only, it doesn't exclude anything from the stages below.</p>
+      </section>
+
+      <section class="stage" id="stage-4">
+        <div class="stage-head"><span class="stage-num">04</span><h2>One stroke, or a pause between steps?</h2></div>
+        <p>Consecutive crossings only become one stroke if they're close enough together — otherwise the gap is assumed to be a pause between test steps and the pair is thrown out. The threshold used to decide that used to be a single fixed constant; it now adapts to each step's own speed when Drehzahl is supplied:</p>
+        <div class="math-block">
+          <span class="v">τ</span><sub>pause</sub>(<span class="v">s</span>) = max<big>(</big> 1.0 s , &nbsp;1.5 × <span class="frac"><span class="num">30</span><span class="den"><span class="v">n</span><sub>s</sub></span></span> <big>)</big>
+          <div class="cond" style="margin-top:.4rem">30 / <span class="v">n</span><sub>s</sub> is step <span class="v">s</span>'s own expected half-stroke period, in seconds, from <span class="v">n</span><sub>s</sub> in rev/min. Falls back to the fixed 1.0 s alone when no Drehzahl is known for that step. <span class="src">utility_functions.py:228</span></div>
+        </div>
+        <p>A crossing pair at times <span class="v">t</span><sub>k−1</sub>, <span class="v">t</span><sub>k</sub> becomes a cycle only if <span class="v">t</span><sub>k</sub> − <span class="v">t</span><sub>k−1</sub> ≤ <span class="v">τ</span><sub>pause</sub>(<span class="v">s</span>) — otherwise it's disregarded, no value produced.</p>
+        <div class="example">
+          <span class="eg-label">Worked example</span>
+          <table>
+            <tr><td class="k">Drehzahl 120 rev/min</td><td>half-period = 30/120 = 0.25 s</td><td>τ<sub>pause</sub> = max(1.0, 1.5×0.25) = <strong>1.0 s</strong> — the fixed floor wins</td></tr>
+            <tr><td class="k">Drehzahl 15 rev/min</td><td>half-period = 30/15 = 2.0 s</td><td>τ<sub>pause</sub> = max(1.0, 1.5×2.0) = <strong>3.0 s</strong> — the step's own period wins</td></tr>
+          </table>
+        </div>
+      </section>
+
+      <section class="stage" id="stage-5">
+        <div class="stage-head"><span class="stage-num">05</span><h2>Static &amp; dynamic CoF, per cycle</h2></div>
+        <p><span class="src">utility_functions.py:183 Evaluate()</span> — for a cycle spanning sample index <span class="v">idx</span><sub>k−1</sub> to <span class="v">idx</span><sub>k</sub> (<span class="v">N</span> = <span class="v">idx</span><sub>k</sub> − <span class="v">idx</span><sub>k−1</sub> samples), three percentages from the Evaluate form set where in the stroke each value is measured:</p>
+        <div class="math-block">
+          <span class="v">a</span> = Static % / 100 &nbsp;&nbsp;<span class="v">b</span> = Dyn min % / 100 &nbsp;&nbsp;<span class="v">c</span> = Dyn max % / 100
+        </div>
+        <p>Every sample position below is rounded <em>half up</em> (VBA-style: <span class="fn">round½</span>(<span class="v">x</span>) = ⌊<span class="v">x</span> + 0.5⌋) — not Python's default banker's rounding:</p>
+        <div class="math-block rounding">
+          <div class="case"><span class="v">end</span> = <span class="v">idx</span><sub>k−1</sub> + <span class="rnd">round½(<span class="v">a</span> · <span class="v">N</span>)</span></div>
+          <div class="case"><span class="v">ds</span> = <span class="v">idx</span><sub>k−1</sub> + <span class="rnd">round½(<span class="v">b</span> · <span class="v">N</span>)</span></div>
+          <div class="case"><span class="v">de</span> = <span class="v">idx</span><sub>k−1</sub> + <span class="rnd">round½(<span class="v">c</span> · <span class="v">N</span>)</span></div>
+        </div>
+        <p><strong>Static CoF</strong> — the peak (or trough) of μ over samples [<span class="v">idx</span><sub>k−1</sub>, <span class="v">end</span>], matching whichever direction the stroke moved:</p>
+        <div class="math-block">
+          μ*<sub>k</sub> = <span class="fn">max</span><sub>[idx<sub>k−1</sub>,end]</sub>(μ) if μ<sub>end</sub> &gt; 0, &nbsp; <span class="fn">min</span><sub>[idx<sub>k−1</sub>,end]</sub>(μ) if μ<sub>end</sub> &lt; 0
+        </div>
+        <p><strong>Dynamic CoF</strong> — the mean of μ over the middle window [<span class="v">ds</span>, <span class="v">de</span>], <span class="v">n</span> = number of samples in it:</p>
+        <div class="math-block">
+          <div class="case">μ̄<sub>k</sub> = <span class="frac"><span class="num">1</span><span class="den"><span class="v">n</span></span></span>Σ<sub>[ds,de]</sub> μ</div>
+          <div class="case">SD<sub>k</sub> = sample std. dev. (n−1 divisor) of μ over [<span class="v">ds</span>,<span class="v">de</span>]</div>
+          <div class="case">σ<sub>k</sub> = |μ̄<sub>k</sub>| · <span class="v">n</span> &nbsp;<span class="op">— a pool-ready “Σ|μ|”, carried forward to Stage 07</span></div>
+          <div class="case">v<sub>k</sub> = SD<sub>k</sub><sup>2</sup>(<span class="v">n</span>−1) + σ<sub>k</sub><sup>2</sup>/<span class="v">n</span> &nbsp;<span class="op">— a pool-ready “Σμ²”, also carried forward</span></div>
+        </div>
+        <div class="example">
+          <span class="eg-label">Worked example — defaults (Static 10%, Dyn 20–80%), stroke from sample 1000 to 1200 (N = 200)</span>
+          <table>
+            <tr><td class="k">end</td><td>1000 + round½(0.10×200) = <strong>1020</strong></td><td>static window: first 10% of the stroke</td></tr>
+            <tr><td class="k">ds</td><td>1000 + round½(0.20×200) = <strong>1040</strong></td><td rowspan="2">dynamic window: the middle 60% of the stroke</td></tr>
+            <tr><td class="k">de</td><td>1000 + round½(0.80×200) = <strong>1160</strong></td></tr>
+          </table>
+        </div>
+        <p class="note">The code's own window is shifted two rows earlier than shown here (<span class="src">utility_functions.py:246</span>) — a fixed legacy offset carried over byte-for-byte from the reference VBA workbook's row addressing, not a separate rounding rule.</p>
+      </section>
+
+      <section class="stage" id="stage-6">
+        <div class="stage-head"><span class="stage-num">06</span><h2>The last stroke</h2></div>
+        <p>A cycle needs two crossings — one to start it, one to close it. A recording almost never stops exactly on a reversal, so the final stroke has no closing crossing to pair with. Rather than drop it, it's closed against the last recorded sample instead, reusing Stage 05's formulas with one substitution:</p>
+        <div class="math-block">
+          <span class="v">idx</span><sub>k</sub> <span class="op">→</span> <span class="fn">last sample index of the recording</span>
+        </div>
+        <p class="note">Its window is only as long as whatever data remains after the last crossing — shorter than a normal full stroke, since the real second reversal never happened before the recording ended. <span class="src">utility_functions.py:301</span></p>
+      </section>
+
+      <section class="stage" id="stage-7">
+        <div class="stage-head"><span class="stage-num">07</span><h2>Per-step statistics</h2></div>
+        <p><span class="src">physics/statistics.py:5 CoF_Stat()</span> — for step <span class="v">s</span> spanning [Start<sub>s</sub>, End<sub>s</sub>], gather every cycle <span class="v">k</span> whose static-CoF time falls inside that window (count <span class="v">n</span><sub>s</sub>). Static and dynamic are combined two different ways:</p>
+        <p><strong>Static</strong> — recomputed directly from each cycle's |μ*<sub>k</sub>| in the window:</p>
+        <div class="math-block">
+          <div class="case">X̄<sub>s</sub> = mean( |μ*<sub>k</sub>| , <span class="v">k</span> ∈ <span class="v">s</span> ) &nbsp;&nbsp; SD<sub>s</sub> = sample std. dev. of the same set</div>
+          <div class="case">(X̄N)<sub>s</sub> = X̄<sub>s</sub> · <span class="v">n</span><sub>s</sub> &nbsp;&nbsp; Var<sub>s</sub> = SD<sub>s</sub><sup>2</sup>(<span class="v">n</span><sub>s</sub>−1) + (X̄N)<sub>s</sub><sup>2</sup>/<span class="v">n</span><sub>s</sub></div>
+        </div>
+        <p><strong>Dynamic</strong> — pooled from each cycle's already-computed σ<sub>k</sub>, v<sub>k</sub> (Stage 05) — never re-touches raw samples:</p>
+        <div class="math-block">
+          <div class="case"><span class="v">N</span><sub>s</sub> = Σ<sub>k∈s</sub> <span class="v">n</span><sub>k</sub> &nbsp;&nbsp; (σN)<sub>s</sub> = Σ<sub>k∈s</sub> σ<sub>k</sub> &nbsp;&nbsp; V<sub>s</sub> = Σ<sub>k∈s</sub> v<sub>k</sub></div>
+          <div class="case">Ā<sub>s</sub> = <span class="frac"><span class="num">(σN)<sub>s</sub></span><span class="den"><span class="v">N</span><sub>s</sub></span></span> &nbsp;&nbsp; SD<sub>s</sub> = <span class="sqrt"><span class="rad"><span class="frac"><span class="num">V<sub>s</sub> − (σN)<sub>s</sub><sup>2</sup>/<span class="v">N</span><sub>s</sub></span><span class="den"><span class="v">N</span><sub>s</sub> − 1</span></span></span></span></div>
+        </div>
+        <p class="note">A step with zero surviving cycles in its window (Stage 04's threshold rejected all of them, or Stage 05 skipped them as degenerate) simply produces no row — not a zero, an absence.</p>
+      </section>
+
+      <section class="stage" id="ledger">
+        <div class="stage-head"><span class="stage-num">08</span><h2>Rounding ledger</h2></div>
+        <p>Every place the code rounds a number, in the order it happens, gathered in one place:</p>
+        <table class="ledger">
+          <tr><th>Where</th><th>Rounds</th><th>Precision</th><th>Effect</th></tr>
+          <tr>
+            <td><span class="src">pipeline.py:52</span></td>
+            <td>μ<sub>i</sub>, right after Stage 01's formula</td>
+            <td class="precision">5 decimals</td>
+            <td>The one rounding every later number is built from.</td>
+          </tr>
+          <tr>
+            <td><span class="src">utility_functions.py:40</span></td>
+            <td>μ<sub>i</sub> after Offset, if the toggle is on</td>
+            <td class="precision">15 decimals</td>
+            <td>Floating-point cleanup only — feeds every later stage.</td>
+          </tr>
+          <tr>
+            <td><span class="src">utility_functions.py:88</span></td>
+            <td>μ′<sub>i</sub> after Filter, if the form ran</td>
+            <td class="precision">15 decimals</td>
+            <td>Floating-point cleanup only — feeds crossing detection (Stage 03) alone, never the reported CoF values.</td>
+          </tr>
+          <tr>
+            <td><span class="src">pipeline.py:55</span></td>
+            <td>Trim boundary — max step Endzeit</td>
+            <td class="precision">nearest 1 s <span style="opacity:.7">(Python round, ties-to-even)</span></td>
+            <td>Can move the cutoff by up to 0.5 s — the only rounding that decides which raw samples exist at all.</td>
+          </tr>
+          <tr>
+            <td><span class="src">utility_functions.py:16</span></td>
+            <td>Every sample-index offset in Stages 04–06 (<span class="fn">end</span>, <span class="v">ds</span>, <span class="v">de</span>, …)</td>
+            <td class="precision">round½ = ⌊x+0.5⌋ <span style="opacity:.7">(VBA-style, not Python's default)</span></td>
+            <td>Decides exactly which sample rows bound every static/dynamic window.</td>
+          </tr>
+          <tr>
+            <td><span class="src">results_table.py</span></td>
+            <td>Static/Dynamic CoF family shown in the Results table</td>
+            <td class="precision">15 decimals</td>
+            <td>Display only — “no known rationale beyond matching the reference VBA tool's output column-by-column” (the code's own comment).</td>
+          </tr>
+          <tr>
+            <td><span class="src">results_table.py</span></td>
+            <td>“−Min CoF” column</td>
+            <td class="precision">16 decimals</td>
+            <td>Display only, same as above.</td>
+          </tr>
+          <tr>
+            <td><span class="src">results_table.py</span></td>
+            <td>“+Min CoF” column</td>
+            <td class="precision">18 decimals</td>
+            <td>Display only, same as above.</td>
+          </tr>
+        </table>
+      </section>
+
+      <p class="foot">Formulas and file:line references reflect the code as of this write-up. Where the reference VBA tool's row-addressing left a fixed offset in the code (Stage 05's −3/−2 shift, the degenerate-cycle skip when a window rounds to zero width), this page keeps the underlying math visible and treats the offset as a footnote rather than folding it into the formula itself.</p>
+
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var sections = links.map(function(a){ return document.querySelector(a.getAttribute('href')); });
+  if(!('IntersectionObserver' in window)) return;
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(entry){
+      var idx = sections.indexOf(entry.target);
+      if(idx === -1) return;
+      if(entry.isIntersecting){
+        links.forEach(function(l){ l.classList.remove('active'); });
+        links[idx].classList.add('active');
+      }
+    });
+  }, { rootMargin: '-15% 0px -75% 0px' });
+  sections.forEach(function(s){ if(s) io.observe(s); });
+})();
+</script>
