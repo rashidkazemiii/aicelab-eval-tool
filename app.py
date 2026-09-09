@@ -252,6 +252,7 @@ def _(file_upload, has_step_checkbox, mo):
         + _row.format(label="Start Step", field="start_step_row")
         + _row.format(label="End Step", field="end_step_row")
         + _row.format(label="Step Time col #", field="step_col_time")
+        + _row.format(label="Drehzahl col #", field="step_col_speed")
         + _grid_close
         + '<hr class="divider">'
         '<p class="section-label" style="margin:0">MAIN DATA</p>'
@@ -270,6 +271,7 @@ def _(file_upload, has_step_checkbox, mo):
         start_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
         end_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
         step_col_time=mo.ui.text(value="1", disabled=_step_fields_disabled),
+        step_col_speed=mo.ui.text(value="0", disabled=_step_fields_disabled),
         start_main_row=mo.ui.text(value="41"),
         stop_main_row=mo.ui.text(value=str(_total)),
         col_time=mo.ui.text(value="1"),

@@ -82,6 +82,10 @@ def parse_main_and_step_data(raw_text: str, params: dict):
         step_df["Endzeit [s]"] = step_df[_t_col].shift(-1)
         step_df.loc[step_df.index[-1], "Endzeit [s]"] = df_raw[_zeit_col].max()
         step_df = step_df.rename(columns={_t_col: "Startzeit [s]"})
+        _step_col_speed = int(params.get("step_col_speed", 0))
+        if _step_col_speed > 0:
+            _speed_col = step_df.columns[_step_col_speed - 1]
+            step_df = step_df.rename(columns={_speed_col: "Drehzahl"})
         step_df["inactive"] = False
         print("Endzeit [s] computed for each step:")
         for _value in step_df["Endzeit [s]"]:

@@ -7,11 +7,30 @@ logger = logging.getLogger(__name__)
 
 SRV_TIME_GAP_THRESHOLD = 1.0  # seconds; gap larger than this marks a new test step/pause
 ZERO_CROSSING_TIME_GAP_THRESHOLD = 0.002  # seconds; samples farther apart than this aren't treated as a zero crossing
+# Safety margin over a step's own expected half-stroke period (60 / Drehzahl / 2)
+# before treating a gap between crossings as a pause, for a step slow enough that
+# SRV_TIME_GAP_THRESHOLD alone would mistake every real stroke for one.
+PAUSE_SAFETY_FACTOR = 1.5
 
 
 def _vba_round(x):
     """Round half up, matching VBA's WorksheetFunction.Round (Python's round() is banker's rounding)."""
     return math.floor(x + 0.5)
+
+
+def assign_step_speed(df, step_df):
+    """Map each step's Drehzahl (rotational speed, U/min) onto the raw
+    samples that fall inside that step's time window. Lets Find_minima/
+    Evaluate look up the expected stroke period for whichever step a
+    zero-crossing falls in, instead of assuming one speed for the whole
+    file. `step_df` must have "Drehzahl" - the caller checks for that.
+    """
+    df = df.copy()
+    df["Drehzahl"] = np.nan
+    for _, row in step_df.iterrows():
+        mask = (df["Zeit"] >= row["Startzeit [s]"]) & (df["Zeit"] <= row["Endzeit [s]"])
+        df.loc[mask, "Drehzahl"] = row["Drehzahl"]
+    return df
 
 
 def offset(df):
@@ -182,6 +201,7 @@ def Evaluate(
 
     Time = df["Zeit"].tolist()
     Stroke = df[column].tolist()
+    Speed = df["Drehzahl"].tolist() if "Drehzahl" in df.columns else None
     negMinTime = minima["-Min Zeit"].tolist()
 
     startIndex = []
@@ -206,7 +226,13 @@ def Evaluate(
         startIndex.append(Time.index(negMinTime[i]) + 1)
 
     for i in range(1, len(negMinTime)):
-        if negMinTime[i] - negMinTime[i - 1] > SRV_TIME_GAP_THRESHOLD:
+        gap_threshold = SRV_TIME_GAP_THRESHOLD
+        if Speed is not None:
+            drehzahl = Speed[startIndex[i - 1] - 1]
+            if drehzahl and drehzahl > 0:
+                half_period = 30.0 / drehzahl  # (60 / Drehzahl) / 2
+                gap_threshold = max(SRV_TIME_GAP_THRESHOLD, PAUSE_SAFETY_FACTOR * half_period)
+        if negMinTime[i] - negMinTime[i - 1] > gap_threshold:
             # gap spans a pause between test steps — disregard this cycle
             continue
         try:
@@ -271,6 +297,64 @@ def Evaluate(
         except Exception as e:
             logger.warning("Skipping cycle %d: %s", i, e)
             continue
+
+    # The recording almost always stops mid-stroke, so the last detected
+    # crossing has no following crossing to pair with - the loop above can
+    # only evaluate a cycle once it has both endpoints, so that trailing
+    # stroke (and whatever step it falls in, if it has no other complete
+    # strokes) would otherwise be silently dropped. Close it against the
+    # last recorded sample instead, using the same math as one loop
+    # iteration above but with the end of the data standing in for the
+    # missing closing crossing.
+    if len(negMinTime) >= 1:
+        try:
+            prevIndex = startIndex[-1]
+            nextIndex = len(Time)
+            endIndex = prevIndex + _vba_round(a * (nextIndex - prevIndex))
+            if prevIndex == endIndex:
+                raise Exception(
+                    f"The starting and ending index are the same : {endIndex}."
+                )
+            movingTimeRange = Time[prevIndex - 3 : endIndex - 2]
+            movingRange = Stroke[prevIndex - 3 : endIndex - 2]
+            if Stroke[endIndex - 1] > 0:
+                maxStroke.append(max(movingRange))
+                index = 0
+                biggest_value = movingRange[0]
+                for j in range(1, len(movingRange)):
+                    if movingRange[j] > biggest_value:
+                        biggest_value = movingRange[j]
+                        index = j
+            elif Stroke[endIndex - 1] < 0:
+                maxStroke.append(min(movingRange))
+                index = 0
+                smallest_value = movingRange[0]
+                for j in range(1, len(movingRange)):
+                    if movingRange[j] < smallest_value:
+                        smallest_value = movingRange[j]
+                        index = j
+            else:
+                raise Exception("Endpoint value is exactly zero.")
+            maxStrokeTime.append(movingTimeRange[index])
+            startdynamicIndex.append(prevIndex + _vba_round(b * (nextIndex - prevIndex)))
+            enddynamicIndex.append(prevIndex + _vba_round(c * (nextIndex - prevIndex)))
+            startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
+            enddynamicTime.append(Time[enddynamicIndex[-1] - 1])
+            startdynamicCoF.append(Stroke[startdynamicIndex[-1] - 1])
+            enddynamicCoF.append(Stroke[enddynamicIndex[-1] - 1])
+
+            movingdynamicRange = Stroke[startdynamicIndex[-1] - 3 : enddynamicIndex[-1] - 2]
+            dynamicCoFTime.append((startdynamicTime[-1] + enddynamicTime[-1]) / 2)
+            dynamicCoF.append(sum(movingdynamicRange) / len(movingdynamicRange))
+            dynamicCoFSD.append(np.std(movingdynamicRange, ddof=1))
+            dynamicCoFn.append(len((movingdynamicRange)))
+            dynamicCoFsigma.append(abs(dynamicCoF[-1]) * dynamicCoFn[-1])
+            dynamicCoFvariance.append(
+                dynamicCoFSD[-1] ** 2 * (dynamicCoFn[-1] - 1)
+                + dynamicCoFsigma[-1] ** 2 / dynamicCoFn[-1]
+            )
+        except Exception as e:
+            logger.warning("Skipping trailing stroke: %s", e)
 
     if column == "CoF":
         res_df = pd.DataFrame(

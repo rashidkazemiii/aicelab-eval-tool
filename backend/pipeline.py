@@ -54,6 +54,8 @@ def compute_display_df(df_raw, step_df, params, offset_on):
         trim_start = float(step_df["Startzeit [s]"].min())
         trim_end = round(float(step_df["Endzeit [s]"].max()))
         df_display = utility_functions.trim(df_display, trim_start, trim_end)
+        if "Drehzahl" in step_df.columns:
+            df_display = utility_functions.assign_step_speed(df_display, step_df)
     if offset_on:
         df_display = utility_functions.offset(df_display)
     return df_display
