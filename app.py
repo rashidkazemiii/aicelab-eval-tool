@@ -17,8 +17,9 @@ def _():
     import charts
     import results_table
     import table_helpers
+    import settings_store
 
-    return charts, data_loader, mo, pipeline, results_table, table_helpers
+    return charts, data_loader, mo, pipeline, results_table, settings_store, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -69,6 +70,25 @@ def _(mo):
         min-width: 0 !important;
         overflow: hidden !important;
       }
+      /* marimo colors a form's submit button yellow/orange when the fields
+         differ from what was last submitted, and gray once they match -
+         a "pending changes" cue that reads as "broken/disabled" here. Force
+         one plain, always-the-same button color instead - targeting the
+         real type="submit" attribute (not just data-testid) since that's
+         the one thing guaranteed to still be on the button in a production
+         build. */
+      button[type="submit"],
+      button[type="submit"][data-testid="marimo-plugin-form-submit-button"] {
+        background-color: #1f2a40 !important;
+        background: #1f2a40 !important;
+        border-color: #1f2a40 !important;
+        color: #fff !important;
+        box-shadow: none !important;
+      }
+      button[type="submit"]:hover {
+        background-color: #16202f !important;
+        background: #16202f !important;
+      }
     </style>
     """)
 
@@ -116,6 +136,36 @@ def _(mo):
     return get_parsed_data, set_parsed_data
 
 
+
+@app.cell
+def _(mo):
+    # Snapshot of the Filter fields taken when Filter was clicked, plus the
+    # file it was clicked for. The snapshot is what actually gets applied -
+    # editing the fields afterwards doesn't re-filter anything until Filter
+    # is clicked again. The file id is what stops a Filter clicked for an
+    # earlier file from silently carrying over to the next one.
+    get_filter_params, set_filter_params = mo.state(None)
+    return get_filter_params, set_filter_params
+
+
+@app.cell
+def _(mo):
+    get_filter_file_id, set_filter_file_id = mo.state(None)
+    return get_filter_file_id, set_filter_file_id
+
+
+@app.cell
+def _(mo):
+    get_eval_params, set_eval_params = mo.state(None)
+    return get_eval_params, set_eval_params
+
+
+@app.cell
+def _(mo):
+    get_eval_file_id, set_eval_file_id = mo.state(None)
+    return get_eval_file_id, set_eval_file_id
+
+
 @app.cell
 def _(mo):
     # One shared status message per tab, each shown in a single place on
@@ -147,39 +197,25 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    def make_submit_only_form(submit_button_label, **form_kwargs):
-        # Hidden field so the form has something to batch; the form's own
-        # submit button is the only thing rendered, matching Filter/Evaluate's
-        # chrome.
-        _hidden = mo.Html(
-            '<div style="visibility:hidden;height:26px">{v}</div>'
-        ).batch(v=mo.ui.text(value=""))
-        return _hidden.form(submit_button_label=submit_button_label, **form_kwargs)
-    return (make_submit_only_form,)
+    offset_btn = mo.ui.run_button(label="Offset")
+    return (offset_btn,)
 
 
 @app.cell
-def _(get_offset, make_submit_only_form, set_offset):
-    def flip_offset(_ignored_new_value):
-        set_offset(not get_offset())
-
-    if get_offset():
-        _offset_button_label = "Offset (ON)"
-    else:
-        _offset_button_label = "Offset"
-
-    offset_form = make_submit_only_form(
-        _offset_button_label,
-        bordered=False,
-        on_change=flip_offset,
-    )
-    return (offset_form,)
+def _(offset_btn, set_offset):
+    # Toggles in its own cell rather than through an on_change on the button,
+    # so the cell that builds offset_btn never has to reference get_offset
+    # (which would rebuild the button on every click). The updater-function
+    # form of the setter flips the value without reading it here either.
+    if offset_btn.value:
+        set_offset(lambda was_on: not was_on)
+    return
 
 
 @app.cell
-def _(make_submit_only_form):
-    save_form = make_submit_only_form("💾 Save", bordered=False)
-    return (save_form,)
+def _(mo):
+    save_btn = mo.ui.run_button(label="💾 Save")
+    return (save_btn,)
 
 
 @app.cell
@@ -196,18 +232,13 @@ def _(mo):
     return (has_step_checkbox,)
 
 
-@app.cell
-def _(mo):
-    # A separate button (not a form's built-in submit button) so it can be
-    # placed anywhere in the layout, independent of the fields.
-    calculate_button = mo.ui.run_button(label="Calculate")
-    return (calculate_button,)
 
 
 @app.cell
 def _(mo):
     open_excel_btn = mo.ui.run_button(label="📂 Open in Excel")
     return (open_excel_btn,)
+
 
 
 @app.cell
@@ -232,12 +263,27 @@ def _(data_loader, file_upload, mo, open_excel_btn, set_results_status_msg):
 
 
 @app.cell
-def _(file_upload, has_step_checkbox, mo):
+def _(has_step_checkbox, mo, settings_store):
+    # Deliberately does not depend on file_upload: marimo reconstructs every
+    # mo.ui element in this cell (resetting it to its literal value= here)
+    # whenever the cell re-runs, and it used to depend on file_upload just to
+    # default Stop Main Data to the new file's line count - so every fresh
+    # upload wiped out every field here, not just that one. Not needed:
+    # parse_main_and_step_data already treats stop_main_row <= start_main_row
+    # (0 included) as "read to the end of the file" (data_loader.py:39-42),
+    # so a plain static default gets the same result without the coupling.
+    #
+    # Also deliberately does NOT depend on get_last_raw_params (the reactive
+    # state set right after each Calculate submission): that would make this
+    # cell - and therefore raw_data_form itself - get rebuilt as a brand-new
+    # object right after every single Calculate click, which is exactly the
+    # kind of churn this cell is designed to avoid elsewhere. Reading the
+    # settings file directly is a plain function call, not a tracked
+    # reactive value, so it seeds the fields once (on startup, or whenever
+    # this cell happens to re-run for another reason, like the checkbox
+    # below) without creating that dependency.
+    _saved = settings_store.load_raw_data_settings() or {}
     _step_fields_disabled = not has_step_checkbox.value
-    if file_upload.value:
-        _total = len(file_upload.value[0].contents.decode("latin-1").splitlines())
-    else:
-        _total = 0
     # Inline styles throughout, not CSS classes: a page-level <style> rule
     # can style plain elements like <hr>/<p> fine (see .divider,
     # .section-label elsewhere), but a label sitting in the same flex row as
@@ -264,7 +310,7 @@ def _(file_upload, has_step_checkbox, mo):
         '<p class="section-label" style="margin:0">MAIN DATA</p>'
         + _grid_open
         + _row.format(label="Start Main Data", field="start_main_row")
-        + _row.format(label="Stop Main Data", field="stop_main_row")
+        + _row.format(label="Stop Main Data (0 = end of file)", field="stop_main_row")
         + _row.format(label="Time col #", field="col_time")
         + _row.format(label="Friction Left col #", field="col_left")
         + _row.format(label="Friction Right col #", field="col_right")
@@ -273,19 +319,31 @@ def _(file_upload, has_step_checkbox, mo):
         + '</div>'
     )
     raw_data_form = _raw_data_tpl.batch(
-        nlc=mo.ui.text(value=""),
-        start_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
-        end_step_row=mo.ui.text(value="0", disabled=_step_fields_disabled),
-        step_col_time=mo.ui.text(value="1", disabled=_step_fields_disabled),
-        step_col_speed=mo.ui.text(value="0", disabled=_step_fields_disabled),
-        start_main_row=mo.ui.text(value="41"),
-        stop_main_row=mo.ui.text(value=str(_total)),
-        col_time=mo.ui.text(value="1"),
-        col_left=mo.ui.text(value="13"),
-        col_right=mo.ui.text(value="14"),
-        col_load=mo.ui.text(value="3"),
+        nlc=mo.ui.text(value=_saved.get("nlc", "")),
+        start_step_row=mo.ui.text(value=_saved.get("start_step_row", "0"), disabled=_step_fields_disabled),
+        end_step_row=mo.ui.text(value=_saved.get("end_step_row", "0"), disabled=_step_fields_disabled),
+        step_col_time=mo.ui.text(value=_saved.get("step_col_time", "1"), disabled=_step_fields_disabled),
+        step_col_speed=mo.ui.text(value=_saved.get("step_col_speed", "0"), disabled=_step_fields_disabled),
+        start_main_row=mo.ui.text(value=_saved.get("start_main_row", "41")),
+        stop_main_row=mo.ui.text(value=_saved.get("stop_main_row", "0")),
+        col_time=mo.ui.text(value=_saved.get("col_time", "1")),
+        col_left=mo.ui.text(value=_saved.get("col_left", "13")),
+        col_right=mo.ui.text(value=_saved.get("col_right", "14")),
+        col_load=mo.ui.text(value=_saved.get("col_load", "3")),
     )
     return (raw_data_form,)
+
+
+@app.cell
+def _(mo):
+    # A plain button, not a .form() submit button: no yellow/gray "pending
+    # changes" color, always looks the same. Its own cell has zero
+    # dependencies, so it's never rebuilt - unlike a .form(), a run_button's
+    # .value is edge-triggered (True for one render right after the click,
+    # then back to False) without needing any "was this a fresh click"
+    # identity tracking.
+    calculate_btn = mo.ui.run_button(label="Calculate")
+    return (calculate_btn,)
 
 
 @app.cell
@@ -303,14 +361,20 @@ def _(mo):
         '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter method</span>{method}</div>'
         '</div>'
     )
-    filter_form = _filter_tpl.batch(
+    filter_fields = _filter_tpl.batch(
         filter_points=mo.ui.text(value="25"),
         method=mo.ui.dropdown(
             options={"VBA-exact (slow)": "vba", "Fast (approximate)": "fast"},
             value="VBA-exact (slow)",
         ),
-    ).form(submit_button_label="Filter", bordered=False)
-    return (filter_form,)
+    )
+    return (filter_fields,)
+
+
+@app.cell
+def _(mo):
+    filter_btn = mo.ui.run_button(label="Filter")
+    return (filter_btn,)
 
 
 @app.cell
@@ -328,18 +392,24 @@ def _(mo):
         '<div style="width:60px">{dyn_max}</div></div>'
         '</div>'
     )
-    eval_form = _eval_tpl.batch(
+    eval_fields = _eval_tpl.batch(
         static_range=mo.ui.text(value="10.0"),
         dyn_min=mo.ui.text(value="20.0"),
         dyn_max=mo.ui.text(value="80.0"),
-    ).form(submit_button_label="Evaluate", bordered=False)
-    return (eval_form,)
+    )
+    return (eval_fields,)
+
+
+@app.cell
+def _(mo):
+    eval_btn = mo.ui.run_button(label="Evaluate")
+    return (eval_btn,)
 
 
 # ── Data pipeline ──────────────────────────────────────────────────────────
 @app.cell
 def _(
-    calculate_button,
+    calculate_btn,
     data_loader,
     file_upload,
     get_parsed_data,
@@ -348,27 +418,41 @@ def _(
     raw_data_form,
     set_parsed_data,
     set_results_status_msg,
+    settings_store,
 ):
-    # raw_data_form's fields are live now (not a submit-gated form), so this
-    # cell re-runs on every keystroke too - but it only re-parses the file
-    # when Calculate was actually clicked. Otherwise it just re-reads the
-    # last computed result from state, so editing a field doesn't blank out
-    # the current result.
-    if calculate_button.value:
-        _p = raw_data_form.value
+    # raw_data_form is a plain, live batch now (not a .form()) - its .value
+    # updates on every keystroke, but that alone doesn't do anything here:
+    # the actual parse only runs when calculate_btn.value is True, which is
+    # only the case for the one render right after Calculate is clicked
+    # (a run_button's value is edge-triggered, back to False immediately
+    # after). Typing still causes this cell to re-run (raw_data_form is a
+    # dependency), but each such re-run just evaluates this condition as
+    # False and falls through to re-reading get_parsed_data() unchanged.
+    _p = raw_data_form.value
+    if calculate_btn.value:
+        # Every Calculate press wipes out whatever was previously computed
+        # first, then parses fresh from the raw file - never patches or
+        # reuses the old result.
+        set_parsed_data(None)
+        settings_store.save_raw_data_settings(_p)
         if data_loader.is_ready_to_parse(bool(file_upload.value), _p):
             try:
                 _raw = file_upload.value[0].contents.decode("latin-1")
                 _p = dict(_p)
                 _p["has_step"] = has_step_checkbox.value
                 _df_raw, _step_df = data_loader.parse_main_and_step_data(_raw, _p)
-                set_parsed_data((_df_raw, _step_df, _p))
+                # Tagged with the file it was parsed from (name, size), so a
+                # later upload can't leave stale results looking like they
+                # belong to the new file - see the df_display cell below,
+                # which is the one place that actually has to make that call.
+                _file_id = (file_upload.value[0].name, len(file_upload.value[0].contents))
+                set_parsed_data((_df_raw, _step_df, _p, _file_id))
                 set_results_status_msg(mo.callout(
                     mo.md(f"**{file_upload.value[0].name}** — {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
                     kind="success",
                 ))
             except Exception as _e:
-                set_parsed_data((None, None, None))
+                set_parsed_data((None, None, None, None))
                 set_results_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
 
     _parsed = get_parsed_data()
@@ -376,15 +460,51 @@ def _(
         df_raw = None
         step_df = None
         committed_params = None
+        parsed_file_id = None
     else:
-        df_raw, step_df, committed_params = _parsed
-    return committed_params, df_raw, step_df
+        df_raw, step_df, committed_params, parsed_file_id = _parsed
+    return committed_params, df_raw, parsed_file_id, step_df
 
 
 @app.cell
-def _(committed_params, df_raw, get_offset, mo, pipeline, set_results_status_msg, step_df):
+def _(mo):
+    get_seen_upload_id, set_seen_upload_id = mo.state(None)
+    return get_seen_upload_id, set_seen_upload_id
+
+
+@app.cell
+def _(file_upload, get_seen_upload_id, set_parsed_data, set_seen_upload_id):
+    # Wipes any previously-calculated result the instant a different file
+    # lands in the upload box - before Calculate is even pressed - so the
+    # old file's data/chart never lingers behind a new upload. Guarded by
+    # get_seen_upload_id so this only fires once per actual file change, not
+    # on every rerun this cell happens to be part of.
+    _current_file_id = (
+        (file_upload.value[0].name, len(file_upload.value[0].contents))
+        if file_upload.value else None
+    )
+    if _current_file_id != get_seen_upload_id():
+        set_seen_upload_id(_current_file_id)
+        set_parsed_data(None)
+    return
+
+
+@app.cell
+def _(committed_params, df_raw, file_upload, get_offset, mo, parsed_file_id, pipeline, set_results_status_msg, step_df):
+    # df_raw sticks around (by design - see the pipeline cell above) so
+    # editing a field doesn't blank the result until Calculate is clicked
+    # again. But that means it can also still be holding a previous file's
+    # data after a new upload with no Calculate click for it yet - checking
+    # its tagged file id against what's actually in file_upload right now is
+    # what actually clears the chart for the new file, right here where
+    # df_display (the chart's real input) gets built, rather than relying on
+    # a separate step to clear it proactively somewhere upstream.
+    _current_file_id = (
+        (file_upload.value[0].name, len(file_upload.value[0].contents))
+        if file_upload.value else None
+    )
     df_display = None
-    if df_raw is not None:
+    if df_raw is not None and parsed_file_id == _current_file_id:
         try:
             # Use the params from the last Calculate click, not the fields'
             # current (possibly since-edited) live values - column choices
@@ -397,26 +517,61 @@ def _(committed_params, df_raw, get_offset, mo, pipeline, set_results_status_msg
 
 
 @app.cell
-def _(df_display, filter_form, mo, pipeline, set_results_status_msg):
+def _(
+    df_display,
+    filter_btn,
+    filter_fields,
+    get_filter_file_id,
+    get_filter_params,
+    mo,
+    parsed_file_id,
+    pipeline,
+    set_filter_file_id,
+    set_filter_params,
+    set_results_status_msg,
+):
+    if filter_btn.value:
+        set_filter_params(filter_fields.value)
+        set_filter_file_id(parsed_file_id)
+    # None (not yet run for the file that's active right now) unless Filter
+    # was actually clicked while this same file was the one loaded.
+    active_filter_params = get_filter_params() if get_filter_file_id() == parsed_file_id else None
     if df_display is not None:
         try:
-            df_proc = pipeline.compute_filtered_df(df_display, filter_form.value)
+            df_proc = pipeline.compute_filtered_df(df_display, active_filter_params)
         except Exception as _e:
             df_proc = df_display.copy()
             set_results_status_msg(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
     else:
         df_proc = None
-    return (df_proc,)
+    return active_filter_params, df_proc
 
 
 @app.cell
-def _(df_display, df_proc, eval_form, mo, pipeline, set_results_status_msg):
+def _(
+    df_display,
+    df_proc,
+    eval_btn,
+    eval_fields,
+    get_eval_file_id,
+    get_eval_params,
+    mo,
+    parsed_file_id,
+    pipeline,
+    set_eval_file_id,
+    set_eval_params,
+    set_results_status_msg,
+):
+    if eval_btn.value:
+        set_eval_params(eval_fields.value)
+        set_eval_file_id(parsed_file_id)
+    active_eval_params = get_eval_params() if get_eval_file_id() == parsed_file_id else None
     cof_eval = None
     try:
-        cof_eval = pipeline.compute_evaluation(df_display, df_proc, eval_form.value)
+        cof_eval = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
     except Exception as _e:
         set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
-    return (cof_eval,)
+    return active_eval_params, cof_eval
 
 
 @app.cell
@@ -434,27 +589,30 @@ def _(cof_eval, df_display, pipeline, step_df):
 # ── DB save ────────────────────────────────────────────────────────────────
 @app.cell
 def _(
+    active_eval_params,
+    active_filter_params,
     cof_eval,
     db_mod,
     df_display,
     df_proc,
-    eval_form,
     file_upload,
-    filter_form,
     mo,
     overwrite_btn,
     pipeline,
-    save_form,
+    save_btn,
     set_results_status_msg,
     stats_result,
 ):
-    _save_form_submitted = save_form.value is not None
+    # Both save_btn and overwrite_btn are plain run_buttons: True for exactly
+    # one render right after their own click, then back to False on their
+    # own - so neither needs any "was this actually a new click" tracking.
+    _save_clicked = save_btn.value or overwrite_btn.value
     _have_eval_results = cof_eval is not None and stats_result is not None
     _have_file_and_data = bool(file_upload.value) and df_display is not None
-    if _save_form_submitted and _have_eval_results and _have_file_and_data:
+    if _save_clicked and _have_eval_results and _have_file_and_data:
         _fname = file_upload.value[0].name
-        _fparams = filter_form.value
-        _eparams = eval_form.value
+        _fparams = active_filter_params
+        _eparams = active_eval_params
         _existing = db_mod.find_existing_test(_fname)
         if _existing is not None and not overwrite_btn.value:
             set_results_status_msg(mo.vstack([
@@ -491,12 +649,16 @@ def _(mo):
 
 
 @app.cell
-def _(db_mod, delete_btn, mo, refresh_btn):
-    # Reference these so marimo tracks them as real dependencies (reactivity
-    # is derived from names actually used in the body, not the signature) —
-    # this is what makes Refresh/Delete actually re-query the database.
+def _(db_mod, mo, refresh_btn):
+    # Reference this so marimo tracks it as a real dependency (reactivity is
+    # derived from names actually used in the body, not the signature) - this
+    # is what makes Refresh actually re-query the database. Delete is
+    # deliberately NOT a dependency here: re-running this cell reconstructs
+    # mo.ui.table, which resets its selection - if Delete triggered that
+    # rebuild too, it would always find "no row selected" on its own click,
+    # since this cell (which produces history_table) runs before the delete
+    # cell (which reads history_table.value) in the same pass.
     refresh_btn.value
-    delete_btn.value
 
     history_df = db_mod.list_tests_df()
     history_table = mo.ui.table(
@@ -577,12 +739,17 @@ def _(charts, db_mod, history_table, mo):
         if _fig is None:
             history_chart = mo.callout(mo.md("No raw signal saved for this test."), kind="info")
         else:
-            history_chart = mo.ui.plotly(_fig, config={"scrollZoom": True, "displayModeBar": True})
+            # Same iframe wrapping as the live CoF Analysis chart, not
+            # mo.ui.plotly directly: a saved test's figure is still built
+            # from the full per-cycle marker tables, and mo.ui.plotly sends
+            # the whole thing through marimo's own reactive output channel,
+            # which enforces a size limit the raw HTML iframe below doesn't.
+            history_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"history-{_test_id}"))
     return (history_chart,)
 
 
 @app.cell
-def _(charts, cof_eval, df_display, df_proc, filter_form, mo, pipeline, step_df):
+def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_file_id, pipeline, step_df):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -590,9 +757,18 @@ def _(charts, cof_eval, df_display, df_proc, filter_form, mo, pipeline, step_df)
             "Upload a file to see the chart</div>"
         )
     else:
-        _filter_active = pipeline.is_filter_active(filter_form.value, df_proc)
+        _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
         _fig = charts.build_cof_figure(df_display, df_proc, cof_eval, step_df, _filter_active)
-        cof_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig))
+        # df_display only ever gets built from data tagged with the file
+        # that's actually in the upload box right now (see the df_display
+        # cell above) - so this name is never stale, unlike just reading
+        # file_upload directly here would risk if the two ever raced.
+        _fname = parsed_file_id[0] if parsed_file_id else "—"
+        cof_chart = mo.vstack([
+            mo.Html(f'<p style="font-size:0.72rem;color:#888;margin:0 0 4px 0">'
+                     f'Showing: <strong>{_fname}</strong></p>'),
+            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key="live")),
+        ], gap=0)
     return (cof_chart,)
 
 
@@ -621,11 +797,11 @@ def _(cof_eval, df_display, mo, open_results_excel_btn):
 
 @app.cell
 def _(
+    active_filter_params,
     cof_eval,
     data_loader,
     df_display,
     df_proc,
-    filter_form,
     mo,
     open_results_excel_btn,
     pipeline,
@@ -637,7 +813,7 @@ def _(
 ):
     if open_results_excel_btn.value and df_display is not None:
         try:
-            _filter_active = pipeline.is_filter_active(filter_form.value, df_proc)
+            _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
             _df_raw_results = results_table.build_raw_table(df_display, df_proc, _filter_active)
             _df_eval_results = results_table.build_eval_table(cof_eval, stats_result, stats_error)
             if _df_eval_results is not None:
@@ -652,111 +828,226 @@ def _(
 
 
 # ── Final layout ───────────────────────────────────────────────────────────
+# Split into independent cells (rather than one monolithic layout cell) so
+# that a widget somewhere getting rebuilt with a new identity - which
+# happens legitimately whenever get_results_status_msg()'s content changes,
+# i.e. after nearly every action in the app - only forces a re-render of
+# the one small card that actually reads it, instead of resending the
+# entire tab (chart included) and risking the frontend losing its
+# connection to every other button in the process.
 @app.cell
-def _(
-    ACTION_CARD_STYLE,
-    PANEL_STYLE,
-    calculate_button,
-    cof_chart,
-    eval_form,
-    file_upload,
-    filter_form,
-    get_results_status_msg,
-    has_step_checkbox,
-    mo,
-    offset_form,
-    open_excel_btn,
-    raw_data_form,
-    results_panel,
-    save_form,
-):
+def _(file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, parsed_file_id):
     if file_upload.value:
         _rvm_test = file_upload.value[0].name.replace(".txt", "")
     else:
         _rvm_test = "—"
 
-    _upload_card = mo.vstack([
+    # Raw Data's fields deliberately keep their values across an upload (see
+    # raw_data_form's own cell) instead of resetting to defaults - but that
+    # also means the Calculate button's color (marimo grays it out once the
+    # fields match what was last submitted) stops being a reliable "you still
+    # need to press this" cue: a newly uploaded file whose fields happen to
+    # already match won't turn the button yellow again. This banner is the
+    # explicit substitute - it compares the file actually in the upload box
+    # against the one the current results were parsed from.
+    _current_file_id = (
+        (file_upload.value[0].name, len(file_upload.value[0].contents))
+        if file_upload.value else None
+    )
+    if file_upload.value and _current_file_id != parsed_file_id:
+        _status = mo.callout(mo.md("**New file uploaded** — click **Calculate** to parse it."), kind="warn")
+    else:
+        _status = get_results_status_msg()
+
+    upload_card = mo.vstack([
         mo.hstack([file_upload, open_excel_btn], justify="start", align="center"),
-        get_results_status_msg(),
+        _status,
         mo.Html('<hr class="divider">'),
         mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
                 f'<span style="font-size:0.6rem;color:#999;font-weight:700;letter-spacing:1px">RVM TEST</span>'
                 f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
     ], gap=1).style(PANEL_STYLE)
+    return (upload_card,)
 
-    _raw_data_card = mo.vstack([
+
+@app.cell
+def _(calculate_btn, has_step_checkbox, mo, PANEL_STYLE, raw_data_form):
+    raw_data_card = mo.vstack([
         mo.Html('<p class="panel-title">Raw Data</p>'),
         has_step_checkbox,
         raw_data_form,
-        mo.Html('<hr class="divider">'),
-        calculate_button,
+        calculate_btn,
     ], gap=2).style(PANEL_STYLE)
+    return (raw_data_card,)
 
-    _actions_row = mo.hstack([
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_form], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+
+@app.cell
+def _(
+    ACTION_CARD_STYLE,
+    eval_btn,
+    eval_fields,
+    filter_btn,
+    filter_fields,
+    get_offset,
+    mo,
+    offset_btn,
+    save_btn,
+):
+    _offset_badge = (
+        mo.Html('<span style="font-size:0.7rem;color:#4cceac;font-weight:700">ON</span>')
+        if get_offset() else mo.Html("")
+    )
+    actions_row = mo.hstack([
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_btn, _offset_badge], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_fields, filter_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_fields, eval_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
+        mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
     ], gap=2, align="stretch", widths="equal")
+    return (actions_row,)
 
-    _viz_card = mo.vstack([
+
+@app.cell
+def _(cof_chart, mo, PANEL_STYLE, results_panel):
+    viz_card = mo.vstack([
         mo.Html('<p class="panel-title">Analysis Visualization</p>'),
         cof_chart,
         mo.Html('<hr class="divider">'),
         results_panel,
     ], gap=1).style(PANEL_STYLE)
+    return (viz_card,)
 
+
+@app.cell
+def _(actions_row, mo, raw_data_card, upload_card, viz_card):
     results_tab = mo.vstack([
-        _upload_card,
-        _raw_data_card,
-        _actions_row,
-        _viz_card,
+        upload_card,
+        raw_data_card,
+        actions_row,
+        viz_card,
     ], gap=2).style({"padding": "20px 0"})
     return (results_tab,)
 
 
 @app.cell
-def _(PANEL_STYLE, cycles_panel, delete_btn, get_history_status_msg, history_chart, history_table, mo, refresh_btn):
-    _tests_card = mo.vstack([
+def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, mo, refresh_btn):
+    tests_card = mo.vstack([
         mo.hstack([refresh_btn, delete_btn], gap=2, justify="start"),
         get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),
         history_table,
     ], gap=2).style(PANEL_STYLE)
+    return (tests_card,)
 
-    _chart_card = mo.vstack([
+
+@app.cell
+def _(PANEL_STYLE, cycles_panel, history_chart, mo):
+    chart_card = mo.vstack([
         mo.Html('<p class="panel-title">Chart</p>'),
         history_chart,
         mo.Html('<hr class="divider">'),
         cycles_panel,
     ], gap=1).style(PANEL_STYLE)
+    return (chart_card,)
 
+
+@app.cell
+def _(chart_card, mo, tests_card):
     history_tab = mo.vstack([
-        _tests_card,
-        _chart_card,
+        tests_card,
+        chart_card,
     ], gap=2).style({"padding": "20px 0"})
     return (history_tab,)
 
 
 @app.cell
-def _(history_tab, mo, results_tab):
-    _navbar = mo.Html("""
+def _(mo):
+    import pathlib as _pathlib
+    import webbrowser as _webbrowser
+
+    # A plain <a href="file://..."> link doesn't work here: the app is served
+    # over http://localhost, and browsers silently block navigation from an
+    # http(s) page to a file:// URL (it just does nothing, no error, no
+    # console message). Opening the browser from the Python side instead
+    # (via a button's on_click) sidesteps that restriction entirely, since
+    # it isn't a same-page navigation at all.
+    _help_url = (_pathlib.Path(__file__).parent / "docs_cof_math.html").resolve().as_uri()
+
+    def _open_help(value):
+        _webbrowser.open(_help_url)
+        return value
+
+    help_button = mo.ui.button(label="❓ Help", on_click=_open_help)
+    return (help_button,)
+
+
+@app.cell
+def _(mo):
+    # A separate flag from get_offset/get_last_raw_params etc.: which of the
+    # two main sections (Analysis vs History) is currently shown.
+    get_active_tab, set_active_tab = mo.state("results")
+    return get_active_tab, set_active_tab
+
+
+@app.cell
+def _(mo, set_active_tab):
+    # Deliberately does not depend on get_active_tab: unlike mo.ui.tabs
+    # (a single stateful, interactive component that owns its own "which
+    # tab" state internally), these are two plain buttons whose own identity
+    # never needs to change - switching tabs only has to update which
+    # content is shown below them, not rebuild the switcher itself.
+    def _show_results(_v):
+        set_active_tab("results")
+        return _v
+
+    def _show_history(_v):
+        set_active_tab("history")
+        return _v
+
+    tab_results_btn = mo.ui.button(label="📊  Analysis", on_click=_show_results)
+    tab_history_btn = mo.ui.button(label="🗂  History", on_click=_show_history)
+    return tab_history_btn, tab_results_btn
+
+
+@app.cell
+def _(get_active_tab, help_button, history_tab, mo, results_tab, tab_history_btn, tab_results_btn):
+    # mo.ui.tabs previously wrapped results_tab/history_tab directly. That
+    # meant the outermost, page-wide wrapper was itself a stateful,
+    # interactive widget that got rebuilt as a brand-new object every time
+    # results_tab changed identity - which happens repeatedly (confirmed via
+    # debug logging: 5 rebuilds from a single Calculate click alone), since
+    # results_tab's own combiner cell depends on several cards that each
+    # update at a different point in the reactive cascade. Rebuilding an
+    # interactive tabs component that many times in a row is the most
+    # plausible explanation for raw_data_form's Calculate button losing its
+    # connection afterward. Plain conditional rendering below has no
+    # equivalent "own state to reinitialize" - only the two buttons above
+    # are truly interactive, and they never get rebuilt.
+    _navbar = mo.Html(f"""
     <div class="navbar">
       <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
       <div class="navbar-right">
-        <a class="navbar-help" href="https://claude.ai/code/artifact/df5fa7fc-9e5c-4c54-8d36-e4e2ac3bf641" target="_blank" rel="noopener">❓ Help</a>
+        {help_button}
         <span class="navbar-user">Marimo</span>
       </div>
     </div>
     """)
 
+    _active = get_active_tab()
+    _results_underline = 'border-bottom:2px solid #4cceac' if _active == "results" else 'border-bottom:2px solid transparent'
+    _history_underline = 'border-bottom:2px solid #4cceac' if _active == "history" else 'border-bottom:2px solid transparent'
+
+    _switcher = mo.hstack([
+        mo.Html(f'<div style="{_results_underline};padding-bottom:2px">{tab_results_btn}</div>'),
+        mo.Html(f'<div style="{_history_underline};padding-bottom:2px">{tab_history_btn}</div>'),
+    ], gap=2, justify="start")
+
+    _content = results_tab if _active == "results" else history_tab
+
     mo.vstack([
         _navbar,
-        mo.ui.tabs({
-            "📊  Analysis":  results_tab,
-            "🗂  History":   history_tab,
-        }),
+        _switcher,
+        _content,
     ], gap=0).style({"max-width": "1280px", "margin": "0 auto"})
     return
 

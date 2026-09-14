@@ -104,38 +104,46 @@ def Find_minima(df, column):
     each pair. Returns a DataFrame with the raw pre/post-crossing samples
     ("-Min"/"+Min" columns) and the interpolated crossing ("Min") columns.
     """
-    firstIteration = True
     negativeTime = []
     negativeArray = []
     positiveTime = []
     positiveArray = []
 
-    for index, row in df.iterrows():
-        if firstIteration:
-            prevValue = row[column]
-            prevTime = row["Zeit"]
-            firstIteration = False
-        else:
-            currentValue = row[column]
-            currentTime = row["Zeit"]
-            if currentTime - prevTime < ZERO_CROSSING_TIME_GAP_THRESHOLD:
-                went_negative_to_positive = prevValue < 0 and currentValue >= 0
-                went_positive_to_negative = prevValue >= 0 and currentValue < 0
-                if went_negative_to_positive or went_positive_to_negative:
-                    if prevValue < 0:
-                        negativeArray.append(prevValue)
-                        negativeTime.append(prevTime)
-                    else:
-                        positiveArray.append(prevValue)
-                        positiveTime.append(prevTime)
-                    if currentValue < 0:
-                        negativeArray.append(currentValue)
-                        negativeTime.append(currentTime)
-                    else:
-                        positiveArray.append(currentValue)
-                        positiveTime.append(currentTime)
-            prevValue = currentValue
-            prevTime = currentTime
+    # Vectorized over consecutive-sample pairs (was a df.iterrows() loop over
+    # every single row - fine for a few thousand rows, but a real friction
+    # trace can have hundreds of thousands, where the per-row Python overhead
+    # of iterrows() made Evaluate take long enough to feel like the app had
+    # frozen). Only the pairs that are actually a zero crossing still need a
+    # plain Python loop below (there are far fewer of those than rows).
+    values = df[column].to_numpy()
+    times = df["Zeit"].to_numpy()
+    if len(values) >= 2:
+        prevValue = values[:-1]
+        currentValue = values[1:]
+        prevTime = times[:-1]
+        currentTime = times[1:]
+        within_gap = (currentTime - prevTime) < ZERO_CROSSING_TIME_GAP_THRESHOLD
+        went_negative_to_positive = (prevValue < 0) & (currentValue >= 0)
+        went_positive_to_negative = (prevValue >= 0) & (currentValue < 0)
+        crossing_idx = np.nonzero(
+            within_gap & (went_negative_to_positive | went_positive_to_negative)
+        )[0]
+
+        for idx in crossing_idx:
+            pv, pt = prevValue[idx], prevTime[idx]
+            cv, ct = currentValue[idx], currentTime[idx]
+            if pv < 0:
+                negativeArray.append(pv)
+                negativeTime.append(pt)
+            else:
+                positiveArray.append(pv)
+                positiveTime.append(pt)
+            if cv < 0:
+                negativeArray.append(cv)
+                negativeTime.append(ct)
+            else:
+                positiveArray.append(cv)
+                positiveTime.append(ct)
     if len(negativeTime) > len(positiveTime):
         negativeTime.pop()
         negativeArray.pop()
@@ -143,11 +151,12 @@ def Find_minima(df, column):
         positiveTime.pop()
         positiveArray.pop()
 
+    # j = crossing index: one per detected zero-crossing (0, 1, 2, ...).
     theoreticalTime = []
-    for i in range(len(negativeTime)):
+    for j in range(len(negativeTime)):
         theoreticalTime.append(
-            (positiveTime[i] * negativeArray[i] - negativeTime[i] * positiveArray[i])
-            / (negativeArray[i] - positiveArray[i])
+            (positiveTime[j] * negativeArray[j] - negativeTime[j] * positiveArray[j])
+            / (negativeArray[j] - positiveArray[j])
         )
 
     # check if filtering is necessary
@@ -156,15 +165,15 @@ def Find_minima(df, column):
 
     timetocheck = negativeTime
     timeSpan = []
-    for i in range(len(timetocheck) - 1):
-        timeSpan.append(timetocheck[i + 1] - timetocheck[i])
+    for j in range(len(timetocheck) - 1):
+        timeSpan.append(timetocheck[j + 1] - timetocheck[j])
     if not len(timeSpan) == 0:
         averagetimeSpan = sum(timeSpan) / len(timeSpan)
     else:
         averagetimeSpan = 1
         logger.warning("No time spans found in zero-crossing detection — check data continuity")
-    for i in range(len(timeSpan)):
-        if timeSpan[i] < 0.5 * averagetimeSpan and timeSpan[i] != 0:
+    for j in range(len(timeSpan)):
+        if timeSpan[j] < 0.5 * averagetimeSpan and timeSpan[j] != 0:
             logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
 
     res = pd.DataFrame(
@@ -222,34 +231,37 @@ def Evaluate(
     dynamicCoFsigma = []
     dynamicCoFvariance = []
 
-    for i in range(len(negMinTime)):
-        startIndex.append(Time.index(negMinTime[i]) + 1)
+    # j = crossing index: startIndex[j] is crossing j's row number in the raw table.
+    for j in range(len(negMinTime)):
+        startIndex.append(Time.index(negMinTime[j]) + 1)
 
-    for i in range(1, len(negMinTime)):
+    # k = cycle index: cycle k is the stroke between crossing k-1 and crossing k -
+    # it reuses j's own numbering rather than counting separately.
+    for k in range(1, len(negMinTime)):
         gap_threshold = SRV_TIME_GAP_THRESHOLD
         if Speed is not None:
-            drehzahl = Speed[startIndex[i - 1] - 1]
+            drehzahl = Speed[startIndex[k - 1] - 1]
             if drehzahl and drehzahl > 0:
                 half_period = 30.0 / drehzahl  # (60 / Drehzahl) / 2
                 gap_threshold = max(SRV_TIME_GAP_THRESHOLD, PAUSE_SAFETY_FACTOR * half_period)
-        if negMinTime[i] - negMinTime[i - 1] > gap_threshold:
+        if negMinTime[k] - negMinTime[k - 1] > gap_threshold:
             # gap spans a pause between test steps — disregard this cycle
             continue
         try:
-            endIndex = startIndex[i - 1] + _vba_round(
-                a * (startIndex[i] - startIndex[i - 1])
+            endIndex = startIndex[k - 1] + _vba_round(
+                a * (startIndex[k] - startIndex[k - 1])
             )
-            if startIndex[i - 1] == endIndex:
+            if startIndex[k - 1] == endIndex:
                 raise Exception(
-                    f"The starting and ending index are the same : {endIndex}. Check that {startIndex[i]} and {startIndex[i - 1]} are not too close. This happend for time = {Time[startIndex[i - 1]]}"
+                    f"The starting and ending index are the same : {endIndex}. Check that {startIndex[k]} and {startIndex[k - 1]} are not too close. This happend for time = {Time[startIndex[k - 1]]}"
                 )
             # Windows are shifted by -3/-2: the VBA macro builds these ranges via
             # Range("AD"&pos&":AD"&pos), i.e. it uses the array position as a literal
             # sheet row number. Since the sheet's data starts at row 3 (rows 1-2 are
             # headers), that address is 2 rows earlier than the position it's meant
             # to reference. Replicated here for parity with the VBA tool.
-            movingTimeRange = Time[startIndex[i - 1] - 3 : endIndex - 2]
-            movingRange = Stroke[startIndex[i - 1] - 3 : endIndex - 2]
+            movingTimeRange = Time[startIndex[k - 1] - 3 : endIndex - 2]
+            movingRange = Stroke[startIndex[k - 1] - 3 : endIndex - 2]
             if Stroke[endIndex - 1] > 0:
                 maxStroke.append(max(movingRange))
                 # Find the position of the biggest value in movingRange. If
@@ -257,27 +269,27 @@ def Evaluate(
                 # (same rule Python's own max() uses).
                 index = 0
                 biggest_value = movingRange[0]
-                for j in range(1, len(movingRange)):
-                    if movingRange[j] > biggest_value:
-                        biggest_value = movingRange[j]
-                        index = j
+                for m in range(1, len(movingRange)):
+                    if movingRange[m] > biggest_value:
+                        biggest_value = movingRange[m]
+                        index = m
             elif Stroke[endIndex - 1] < 0:
                 maxStroke.append(min(movingRange))
                 # Same idea, but looking for the smallest value instead.
                 index = 0
                 smallest_value = movingRange[0]
-                for j in range(1, len(movingRange)):
-                    if movingRange[j] < smallest_value:
-                        smallest_value = movingRange[j]
-                        index = j
+                for m in range(1, len(movingRange)):
+                    if movingRange[m] < smallest_value:
+                        smallest_value = movingRange[m]
+                        index = m
             else:
                 continue
             maxStrokeTime.append(movingTimeRange[index])
             startdynamicIndex.append(
-                startIndex[i - 1] + _vba_round(b * (startIndex[i] - startIndex[i - 1]))
+                startIndex[k - 1] + _vba_round(b * (startIndex[k] - startIndex[k - 1]))
             )
             enddynamicIndex.append(
-                startIndex[i - 1] + _vba_round(c * (startIndex[i] - startIndex[i - 1]))
+                startIndex[k - 1] + _vba_round(c * (startIndex[k] - startIndex[k - 1]))
             )
             startdynamicTime.append(Time[startdynamicIndex[-1] - 1])
             enddynamicTime.append(Time[enddynamicIndex[-1] - 1])
@@ -295,7 +307,7 @@ def Evaluate(
                 + dynamicCoFsigma[-1] ** 2 / dynamicCoFn[-1]
             )
         except Exception as e:
-            logger.warning("Skipping cycle %d: %s", i, e)
+            logger.warning("Skipping cycle %d: %s", k, e)
             continue
 
     # The recording almost always stops mid-stroke, so the last detected
@@ -321,18 +333,18 @@ def Evaluate(
                 maxStroke.append(max(movingRange))
                 index = 0
                 biggest_value = movingRange[0]
-                for j in range(1, len(movingRange)):
-                    if movingRange[j] > biggest_value:
-                        biggest_value = movingRange[j]
-                        index = j
+                for m in range(1, len(movingRange)):
+                    if movingRange[m] > biggest_value:
+                        biggest_value = movingRange[m]
+                        index = m
             elif Stroke[endIndex - 1] < 0:
                 maxStroke.append(min(movingRange))
                 index = 0
                 smallest_value = movingRange[0]
-                for j in range(1, len(movingRange)):
-                    if movingRange[j] < smallest_value:
-                        smallest_value = movingRange[j]
-                        index = j
+                for m in range(1, len(movingRange)):
+                    if movingRange[m] < smallest_value:
+                        smallest_value = movingRange[m]
+                        index = m
             else:
                 raise Exception("Endpoint value is exactly zero.")
             maxStrokeTime.append(movingTimeRange[index])

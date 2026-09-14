@@ -53,14 +53,24 @@ def build_history_figure(raw_df, eval_df):
         return None
 
     fig = go.Figure()
+    # Same reasoning as the live CoF Analysis chart (build_cof_figure below):
+    # a saved test can have 100,000+ raw samples, which is both slow to pan/
+    # zoom and, rendered through mo.ui.plotly, large enough to trip marimo's
+    # own output-size limit - decimate before adding either raw-sample trace.
+    cof_x, cof_y = table_helpers.decimate_min_max(
+        raw_df["Time [s]"], raw_df["CoF"], CHART_MAX_POINTS
+    )
     fig.add_trace(go.Scattergl(
-        x=raw_df["Time [s]"], y=raw_df["CoF"],
+        x=cof_x, y=cof_y,
         mode="lines", name="CoF",
         line=dict(color="#2980b9", width=2),
     ))
     if "Filtered CoF" in raw_df.columns:
+        filtered_x, filtered_y = table_helpers.decimate_min_max(
+            raw_df["Time [s]"], raw_df["Filtered CoF"], CHART_MAX_POINTS
+        )
         fig.add_trace(go.Scattergl(
-            x=raw_df["Time [s]"], y=raw_df["Filtered CoF"],
+            x=filtered_x, y=filtered_y,
             mode="lines", name="Filtered CoF",
             line=dict(color="#e67e22", width=1.5),
         ))
@@ -159,7 +169,7 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active):
     return fig
 
 
-def figure_to_zoom_iframe_html(fig):
+def figure_to_zoom_iframe_html(fig, zoom_key="default"):
     """Wrap `fig` in a self-contained <iframe> tag with persistent x-zoom.
 
     The Y-axis is fixedrange (locked against manual drag/scroll) but is NOT
@@ -173,9 +183,17 @@ def figure_to_zoom_iframe_html(fig):
     visible plot area.
 
     srcdoc iframe: scripts execute, same origin as parent so window.parent is
-    accessible. __cofXR on the parent window stores the x-axis zoom range
+    accessible. window.parent.__cofXR stores each chart's x-axis zoom range
     across cell re-renders (marimo rebuilds this whole figure/iframe on every
-    reactive update, so the zoom range has to live outside of it to survive).
+    reactive update, so the zoom range has to live outside of it to survive),
+    keyed by `zoom_key` since window.parent is shared by every iframe on the
+    page - without a distinct key per chart, switching to a different test in
+    History (or between History and the live Analysis chart) would apply
+    whatever x-range was last zoomed to on an unrelated, differently-scaled
+    dataset, leaving the new chart looking blank until Autoscale was clicked.
+    Callers must pass a key that changes whenever the underlying dataset does
+    (e.g. the test id), so a genuinely different chart starts back at
+    autorange instead of inheriting a stale window.
     """
     # CDN URL is pinned to the installed plotly version (avoids version mismatch).
     buf = io.StringIO()
@@ -189,6 +207,7 @@ def figure_to_zoom_iframe_html(fig):
     fig_dict = json.loads(fig.to_json())
     data_json = json.dumps(fig_dict["data"])
     layout_json = json.dumps(fig_dict["layout"])
+    zoom_key_json = json.dumps(str(zoom_key))
 
     iframe_html = f"""<!DOCTYPE html>
 <html><head>
@@ -265,7 +284,10 @@ function scheduleYRefit(xMin, xMax) {{
 }}
 
 window.onload = function() {{
-  var xr; try {{ xr = window.parent.__cofXR; }} catch(e) {{}}
+  var ZOOM_KEY = {zoom_key_json};
+  var store; try {{ window.parent.__cofXR = window.parent.__cofXR || {{}}; store = window.parent.__cofXR; }} catch(e) {{ store = {{}}; }}
+
+  var xr = store[ZOOM_KEY];
   if (xr) {{ l.xaxis = l.xaxis || {{}}; l.xaxis.range = xr; l.xaxis.autorange = false; }}
 
   var initialXMin = xr ? xr[0] : null, initialXMax = xr ? xr[1] : null;
@@ -278,9 +300,9 @@ window.onload = function() {{
         var newXMin = null, newXMax = null;
         if ("xaxis.range[0]" in e) {{
           newXMin = e["xaxis.range[0]"]; newXMax = e["xaxis.range[1]"];
-          try {{ window.parent.__cofXR = [newXMin, newXMax]; }} catch(ex) {{}}
+          try {{ store[ZOOM_KEY] = [newXMin, newXMax]; }} catch(ex) {{}}
         }} else if (e["xaxis.autorange"]) {{
-          try {{ window.parent.__cofXR = null; }} catch(ex) {{}}
+          try {{ store[ZOOM_KEY] = null; }} catch(ex) {{}}
         }} else {{
           return;  // relayout event unrelated to the x-axis range (e.g. legend click)
         }}

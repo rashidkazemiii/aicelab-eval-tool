@@ -94,7 +94,7 @@
   }
   header.top h1{ font-size:2.3rem; font-weight:800; }
   header.top p.dek{
-    max-width:62ch; color:var(--ink-soft); font-size:1.05rem; margin:0;
+    color:var(--ink-soft); font-size:1.05rem; margin:0;
   }
   .meta-row{
     display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.3rem;
@@ -136,9 +136,8 @@
     font-size:1.6rem; font-weight:800; color:var(--line); line-height:1;
   }
   .stage-head h2{ font-size:1.35rem; font-weight:700; }
-  section.stage > p{ max-width:66ch; }
   section.stage > p.note{
-    max-width:66ch; color:var(--ink-soft); font-size:.92rem;
+    color:var(--ink-soft); font-size:.92rem;
   }
 
   .math-block{
@@ -193,7 +192,7 @@
 
   .foot{
     margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--line);
-    color:var(--ink-soft); font-size:.85rem; max-width:70ch;
+    color:var(--ink-soft); font-size:.85rem;
   }
 </style>
 
@@ -244,7 +243,7 @@
           <tr><td class="sym"><span class="v">i</span></td><td>—</td><td>Sample index: one row of the raw data table</td><td>—</td></tr>
           <tr><td class="sym"><span class="v">j</span></td><td>—</td><td>Crossing index: one per detected zero-crossing (Stage 03) — <span class="v">startIndex[j]</span> is crossing <span class="v">j</span>'s row number</td><td>—</td></tr>
           <tr><td class="sym"><span class="v">k</span></td><td>—</td><td>Cycle index: the stroke between crossing <span class="v">k</span>−1 and crossing <span class="v">k</span> — reuses <span class="v">j</span>'s own numbering, it isn't renumbered</td><td>—</td></tr>
-          <tr><td class="sym"><span class="v">s</span></td><td>—</td><td>Step index: one row of the Step Data table</td><td>—</td></tr>
+          <tr><td class="sym"><span class="v">s</span></td><td><code>step_df</code></td><td>Step index: one phase of the test, with its own Start<sub>s</sub>/End<sub>s</sub> time window and (optionally) its own <span class="v">n</span><sub>s</sub>. Not entered by hand — parsed from the Step Data section of the raw file: Start<sub>s</sub> comes from that section's own time column, End<sub>s</sub> is the next step's Start (or the file's last time, for the final step).</td><td><span class="src">data_loader.py:82</span></td></tr>
         </table>
       </section>
 
