@@ -90,3 +90,48 @@ def build_eval_table(cof_eval, stats_result, stats_error):
         return pd.DataFrame(cols)
     except Exception as e:
         return pd.DataFrame({"Eval error": [str(e)]})
+
+
+# The only evaluation columns shown in the app's tables (Analysis and
+# History). These are the per-step summary columns; everything else in the
+# full table (per-cycle CoF values, minima, dynamic start/end points) is
+# still exported to Excel, just not displayed in the page.
+SHOWN_COLUMNS = [
+    "Time range [s]",
+    "Static mean CoF",
+    "Static std dev",
+    "Static N",
+    "Static CoF sum",
+    "Static CoF variance",
+    "Dynamic mean CoF",
+    "Dynamic mean std dev",
+    "Dynamic mean N",
+    "Dynamic CoF avg×N",
+    "Dynamic CoF var (step)",
+]
+
+
+def shown_columns_only(eval_df):
+    """Cut the full evaluation table down to just SHOWN_COLUMNS for display.
+
+    The full table is padded so every column is as long as the longest one
+    (per-cycle columns usually have far more rows than the per-step summary
+    columns). After dropping the per-cycle columns, those padding rows would
+    be completely empty, so they are removed too.
+
+    Passes None and the one-column "Eval error" table through unchanged.
+    """
+    if eval_df is None:
+        return None
+    if "Eval error" in eval_df.columns:
+        return eval_df
+
+    kept = []
+    for name in SHOWN_COLUMNS:
+        if name in eval_df.columns:
+            kept.append(name)
+
+    shown = eval_df[kept]
+    shown = shown.dropna(how="all")
+    shown = shown.reset_index(drop=True)
+    return shown

@@ -662,32 +662,98 @@ def _(db_mod, mo, refresh_btn):
 
     history_df = db_mod.list_tests_df()
     history_table = mo.ui.table(
-        history_df, selection="single",
+        history_df, selection="multi",
         pagination=True, show_column_summaries=False, show_data_types=False,
     )
     return (history_table,)
 
 
 @app.cell
-def _(delete_btn, db_mod, history_table, mo, set_history_status_msg):
+def _():
+    def selected_test_ids(selection):
+        """The id of every currently-selected History row, as a plain list.
+
+        `selection` is mo.ui.table's .value - a DataFrame of the selected
+        rows, or None before anything is picked.
+        """
+        ids = []
+        if selection is not None:
+            for _, row in selection.iterrows():
+                ids.append(int(row["id"]))
+        return ids
+    return (selected_test_ids,)
+
+
+@app.cell
+def _(mo):
+    # Which test's chart is currently drawn. Separate from the table's
+    # selection on purpose: selecting a row is cheap, drawing its chart
+    # re-reads every raw sample it has from the database, so that only
+    # happens when Show chart is actually clicked.
+    get_shown_test_id, set_shown_test_id = mo.state(None)
+    return get_shown_test_id, set_shown_test_id
+
+
+@app.cell
+def _(history_table, mo, selected_test_ids):
+    # Off unless exactly one test is picked: there's nothing to draw for
+    # none, and no single chart to draw for several.
+    _n_selected = len(selected_test_ids(history_table.value))
+    show_chart_btn = mo.ui.run_button(
+        label="📈 Show chart",
+        disabled=_n_selected != 1,
+    )
+    return (show_chart_btn,)
+
+
+@app.cell
+def _(history_table, selected_test_ids, set_shown_test_id, show_chart_btn):
+    if show_chart_btn.value:
+        _ids = selected_test_ids(history_table.value)
+        if len(_ids) == 1:
+            set_shown_test_id(_ids[0])
+    return
+
+
+@app.cell
+def _(delete_btn, db_mod, history_table, mo, selected_test_ids, set_history_status_msg):
     if delete_btn.value:
-        _sel = history_table.value
-        if _sel is not None and len(_sel) > 0:
-            _id = int(_sel.iloc[0]["id"])
-            if db_mod.delete_test(_id):
-                set_history_status_msg(mo.callout(mo.md(f"Deleted test **#{_id}**. Click Refresh to update the list."), kind="success"))
+        _ids = selected_test_ids(history_table.value)
+        if len(_ids) > 0:
+            _deleted = []
+            _missing = []
+            for _id in _ids:
+                if db_mod.delete_test(_id):
+                    _deleted.append(str(_id))
+                else:
+                    _missing.append(str(_id))
+            if len(_missing) == 0:
+                set_history_status_msg(mo.callout(
+                    mo.md(f"Deleted test(s) **#{', #'.join(_deleted)}**. Click Refresh to update the list."),
+                    kind="success",
+                ))
+            elif len(_deleted) == 0:
+                set_history_status_msg(mo.callout(
+                    mo.md(f"Test(s) #{', #'.join(_missing)} not found."), kind="warn",
+                ))
             else:
-                set_history_status_msg(mo.callout(mo.md(f"Test #{_id} not found."), kind="warn"))
+                set_history_status_msg(mo.callout(
+                    mo.md(
+                        f"Deleted **#{', #'.join(_deleted)}**, but #{', #'.join(_missing)} "
+                        "was not found. Click Refresh to update the list."
+                    ),
+                    kind="warn",
+                ))
         else:
             set_history_status_msg(mo.callout(mo.md("Select a row first."), kind="warn"))
     return
 
 
 @app.cell
-def _(db_mod, history_table, mo, open_history_excel_btn):
-    _sel = history_table.value
-    if _sel is not None and len(_sel) > 0:
-        _test_id = int(_sel.iloc[0]["id"])
+def _(db_mod, history_table, mo, open_history_excel_btn, selected_test_ids):
+    _ids = selected_test_ids(history_table.value)
+    if len(_ids) == 1:
+        _test_id = _ids[0]
         _n_raw = db_mod.count_raw_samples(_test_id)
         _n_eval = db_mod.count_cycles(_test_id)
         if _n_raw == 0 and _n_eval == 0:
@@ -697,17 +763,22 @@ def _(db_mod, history_table, mo, open_history_excel_btn):
                 mo.Html(f'<p style="font-size:0.85rem;color:#444;margin:0 0 4px 0">{_n_raw:,} raw samples, {_n_eval:,} evaluated cycles.</p>'),
                 open_history_excel_btn,
             ], gap=1)
+    elif len(_ids) > 1:
+        cycles_panel = mo.callout(
+            mo.md(f"**{len(_ids)} tests selected.** Select exactly one to see its details."),
+            kind="info",
+        )
     else:
         cycles_panel = mo.callout(mo.md("Select a row above to see the full CoF Analysis table for that test."), kind="info")
     return (cycles_panel,)
 
 
 @app.cell
-def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, set_history_status_msg, table_helpers):
+def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, selected_test_ids, set_history_status_msg, table_helpers):
     if open_history_excel_btn.value:
-        _sel = history_table.value
-        if _sel is not None and len(_sel) > 0:
-            _test_id = int(_sel.iloc[0]["id"])
+        _ids = selected_test_ids(history_table.value)
+        if len(_ids) == 1:
+            _test_id = _ids[0]
             try:
                 _raw_table = db_mod.get_full_raw_table(_test_id)
                 _eval_table = db_mod.get_full_eval_table(_test_id)
@@ -717,35 +788,87 @@ def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, set_histor
             except Exception as _e:
                 set_history_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
         else:
-            set_history_status_msg(mo.callout(mo.md("Select a saved test first."), kind="warn"))
+            set_history_status_msg(mo.callout(mo.md("Select exactly one saved test first."), kind="warn"))
     return
 
 
 # ── Charts ─────────────────────────────────────────────────────────────────
 @app.cell
-def _(charts, db_mod, history_table, mo):
-    _sel = history_table.value
-    if _sel is None or len(_sel) == 0:
-        history_chart = mo.Html(
-            '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
-            'background:#fafafa;border-radius:6px;color:#bbb;font-size:13px">'
-            "Select a saved test above to see its chart</div>"
-        )
+def _(charts, db_mod, get_shown_test_id, mo):
+    # Deliberately depends on nothing but which test Show chart was clicked
+    # for - NOT on the table's selection. Building this means re-reading
+    # every raw sample of that test out of the database, so it has to happen
+    # only when a different test is actually shown; if the table's selection
+    # were a dependency here, merely ticking another row would rebuild the
+    # whole figure from scratch.
+    _shown = get_shown_test_id()
+    if _shown is None:
+        shown_chart = None
     else:
-        _test_id = int(_sel.iloc[0]["id"])
-        _raw_table = db_mod.get_full_raw_table(_test_id)
-        _eval_table = db_mod.get_full_eval_table(_test_id)
+        _raw_table = db_mod.get_full_raw_table(_shown)
+        _eval_table = db_mod.get_full_eval_table(_shown)
         _fig = charts.build_history_figure(_raw_table, _eval_table)
         if _fig is None:
-            history_chart = mo.callout(mo.md("No raw signal saved for this test."), kind="info")
+            shown_chart = mo.callout(mo.md("No raw signal saved for this test."), kind="info")
         else:
             # Same iframe wrapping as the live CoF Analysis chart, not
             # mo.ui.plotly directly: a saved test's figure is still built
             # from the full per-cycle marker tables, and mo.ui.plotly sends
             # the whole thing through marimo's own reactive output channel,
             # which enforces a size limit the raw HTML iframe below doesn't.
-            history_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"history-{_test_id}"))
-    return (history_chart,)
+            shown_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"history-{_shown}"))
+    return (shown_chart,)
+
+
+@app.cell
+def _(db_mod, get_shown_test_id, mo, results_table):
+    # The per-step summary of a saved test: one row per step rather than one
+    # per raw sample, so a test whose raw signal is hundreds of thousands of
+    # rows lands here as a handful - small enough to render in the page.
+    # Only results_table.SHOWN_COLUMNS are displayed; the raw Time/CoF/
+    # Filtered CoF columns and the per-cycle/minima columns stay Excel-only
+    # (Open in Excel still exports everything together).
+    _shown = get_shown_test_id()
+    if _shown is None:
+        shown_eval_table = None
+    else:
+        _eval_df = results_table.shown_columns_only(db_mod.get_full_eval_table(_shown))
+        if _eval_df is None or len(_eval_df) == 0:
+            shown_eval_table = mo.callout(mo.md("No evaluated cycles saved for this test."), kind="info")
+        else:
+            shown_eval_table = mo.ui.table(
+                _eval_df, selection=None,
+                pagination=True, show_column_summaries=False, show_data_types=False,
+            )
+    return (shown_eval_table,)
+
+
+@app.cell
+def _(get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, shown_eval_table):
+    # Cheap: only picks between the already-built chart/table and a
+    # placeholder, so changing the table's selection costs nothing. They show
+    # while their own test is the one selected, and hide (without being
+    # thrown away) as soon as the selection is anything else - so
+    # re-selecting it brings them straight back with no database read.
+    _sel_ids = selected_test_ids(history_table.value)
+    _shown = get_shown_test_id()
+    _is_shown_selected = _sel_ids == [_shown]
+    if shown_chart is not None and _is_shown_selected:
+        history_chart = shown_chart
+    else:
+        history_chart = mo.Html(
+            '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
+            'background:#fafafa;border-radius:6px;color:#bbb;font-size:13px">'
+            "Select one saved test above and click Show chart</div>"
+        )
+    if shown_eval_table is not None and _is_shown_selected:
+        history_eval_panel = mo.vstack([
+            mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
+            shown_eval_table,
+        ], gap=1)
+    else:
+        history_eval_panel = mo.Html("")
+    return history_chart, history_eval_panel
 
 
 @app.cell
@@ -796,6 +919,29 @@ def _(cof_eval, df_display, mo, open_results_excel_btn):
 
 
 @app.cell
+def _(cof_eval, mo, results_table, stats_error, stats_result):
+    # Same per-step summary table the History tab shows for a saved test,
+    # but for the file currently being worked on. Only
+    # results_table.SHOWN_COLUMNS are displayed; the raw Time/CoF/Filtered
+    # CoF columns and the per-cycle/minima columns stay Excel-only (Open
+    # Results in Excel still exports everything together).
+    _eval_df = results_table.shown_columns_only(
+        results_table.build_eval_table(cof_eval, stats_result, stats_error)
+    )
+    if _eval_df is None or len(_eval_df) == 0:
+        eval_table_panel = mo.Html("")
+    else:
+        eval_table_panel = mo.vstack([
+            mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
+            mo.ui.table(
+                _eval_df, selection=None,
+                pagination=True, show_column_summaries=False, show_data_types=False,
+            ),
+        ], gap=1)
+    return (eval_table_panel,)
+
+
+@app.cell
 def _(
     active_filter_params,
     cof_eval,
@@ -836,7 +982,7 @@ def _(
 # entire tab (chart included) and risking the frontend losing its
 # connection to every other button in the process.
 @app.cell
-def _(file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, parsed_file_id):
+def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, parsed_file_id):
     if file_upload.value:
         _rvm_test = file_upload.value[0].name.replace(".txt", "")
     else:
@@ -860,7 +1006,7 @@ def _(file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, pars
         _status = get_results_status_msg()
 
     upload_card = mo.vstack([
-        mo.hstack([file_upload, open_excel_btn], justify="start", align="center"),
+        mo.hstack([file_upload, calculate_btn, open_excel_btn], justify="start", align="center"),
         _status,
         mo.Html('<hr class="divider">'),
         mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
@@ -871,12 +1017,11 @@ def _(file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, pars
 
 
 @app.cell
-def _(calculate_btn, has_step_checkbox, mo, PANEL_STYLE, raw_data_form):
+def _(has_step_checkbox, mo, PANEL_STYLE, raw_data_form):
     raw_data_card = mo.vstack([
         mo.Html('<p class="panel-title">Raw Data</p>'),
         has_step_checkbox,
         raw_data_form,
-        calculate_btn,
     ], gap=2).style(PANEL_STYLE)
     return (raw_data_card,)
 
@@ -907,31 +1052,32 @@ def _(
 
 
 @app.cell
-def _(cof_chart, mo, PANEL_STYLE, results_panel):
+def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, results_panel):
     viz_card = mo.vstack([
         mo.Html('<p class="panel-title">Analysis Visualization</p>'),
         cof_chart,
         mo.Html('<hr class="divider">'),
+        eval_table_panel,
         results_panel,
     ], gap=1).style(PANEL_STYLE)
     return (viz_card,)
 
 
 @app.cell
-def _(actions_row, mo, raw_data_card, upload_card, viz_card):
-    results_tab = mo.vstack([
-        upload_card,
-        raw_data_card,
-        actions_row,
-        viz_card,
-    ], gap=2).style({"padding": "20px 0"})
+def _(actions_row, get_show_raw_data, mo, raw_data_card, upload_card, viz_card):
+    _sections = [upload_card]
+    if get_show_raw_data():
+        _sections.append(raw_data_card)
+    _sections.append(actions_row)
+    _sections.append(viz_card)
+    results_tab = mo.vstack(_sections, gap=2).style({"padding": "20px 0"})
     return (results_tab,)
 
 
 @app.cell
-def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, mo, refresh_btn):
+def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, mo, refresh_btn, show_chart_btn):
     tests_card = mo.vstack([
-        mo.hstack([refresh_btn, delete_btn], gap=2, justify="start"),
+        mo.hstack([refresh_btn, show_chart_btn, delete_btn], gap=2, justify="start"),
         get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),
@@ -941,11 +1087,12 @@ def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, mo, refres
 
 
 @app.cell
-def _(PANEL_STYLE, cycles_panel, history_chart, mo):
+def _(PANEL_STYLE, cycles_panel, history_chart, history_eval_panel, mo):
     chart_card = mo.vstack([
         mo.Html('<p class="panel-title">Chart</p>'),
         history_chart,
         mo.Html('<hr class="divider">'),
+        history_eval_panel,
         cycles_panel,
     ], gap=1).style(PANEL_STYLE)
     return (chart_card,)
@@ -983,71 +1130,74 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    # A separate flag from get_offset/get_last_raw_params etc.: which of the
-    # two main sections (Analysis vs History) is currently shown.
-    get_active_tab, set_active_tab = mo.state("results")
-    return get_active_tab, set_active_tab
+    # Raw Data is settings you touch once per file format and then leave
+    # alone, so it's folded away behind this rather than taking up the top
+    # third of the Analysis page permanently. Not a real separate window:
+    # a window opened from Python is a static HTML file with no connection
+    # back to this session, so its input boxes would be dead and Calculate
+    # would have nothing to read.
+    raw_data_toggle_btn = mo.ui.run_button(label="⚙ Raw Data")
+    return (raw_data_toggle_btn,)
 
 
 @app.cell
-def _(mo, set_active_tab):
-    # Deliberately does not depend on get_active_tab: unlike mo.ui.tabs
-    # (a single stateful, interactive component that owns its own "which
-    # tab" state internally), these are two plain buttons whose own identity
-    # never needs to change - switching tabs only has to update which
-    # content is shown below them, not rebuild the switcher itself.
-    def _show_results(_v):
-        set_active_tab("results")
-        return _v
-
-    def _show_history(_v):
-        set_active_tab("history")
-        return _v
-
-    tab_results_btn = mo.ui.button(label="📊  Analysis", on_click=_show_results)
-    tab_history_btn = mo.ui.button(label="🗂  History", on_click=_show_history)
-    return tab_history_btn, tab_results_btn
+def _(mo):
+    get_show_raw_data, set_show_raw_data = mo.state(False)
+    return get_show_raw_data, set_show_raw_data
 
 
 @app.cell
-def _(get_active_tab, help_button, history_tab, mo, results_tab, tab_history_btn, tab_results_btn):
-    # mo.ui.tabs previously wrapped results_tab/history_tab directly. That
-    # meant the outermost, page-wide wrapper was itself a stateful,
-    # interactive widget that got rebuilt as a brand-new object every time
-    # results_tab changed identity - which happens repeatedly (confirmed via
-    # debug logging: 5 rebuilds from a single Calculate click alone), since
-    # results_tab's own combiner cell depends on several cards that each
-    # update at a different point in the reactive cascade. Rebuilding an
-    # interactive tabs component that many times in a row is the most
-    # plausible explanation for raw_data_form's Calculate button losing its
-    # connection afterward. Plain conditional rendering below has no
-    # equivalent "own state to reinitialize" - only the two buttons above
-    # are truly interactive, and they never get rebuilt.
+def _(raw_data_toggle_btn, set_show_raw_data):
+    # Updater-function form of the setter, so this cell never references
+    # get_show_raw_data and therefore never rebuilds the button it reads.
+    if raw_data_toggle_btn.value:
+        set_show_raw_data(lambda was_shown: not was_shown)
+    return
+
+
+@app.cell
+def _(mo):
+    # Which of the two main sections is shown. mo.ui.tabs keys on the tab's
+    # own label, so the state holds the label itself, and the labels live
+    # here (rather than inline below) so the initial value can't drift out of
+    # sync with the dict keys.
+    ANALYSIS_TAB = "📊  Analysis"
+    HISTORY_TAB = "🗂  History"
+    get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
+    return ANALYSIS_TAB, HISTORY_TAB, get_active_tab, set_active_tab
+
+
+@app.cell
+def _(ANALYSIS_TAB, HISTORY_TAB, get_active_tab, history_tab, mo, results_tab, set_active_tab):
+    # value=/on_change= rather than a bare mo.ui.tabs(...): this cell depends
+    # on results_tab/history_tab, which change identity after nearly every
+    # action in the app, so the tabs element is rebuilt often. Without the
+    # remembered value, each of those rebuilds would silently drop the view
+    # back to the first tab mid-work.
+    main_tabs = mo.ui.tabs(
+        {ANALYSIS_TAB: results_tab, HISTORY_TAB: history_tab},
+        value=get_active_tab(),
+        on_change=set_active_tab,
+    )
+    return (main_tabs,)
+
+
+@app.cell
+def _(help_button, main_tabs, mo, raw_data_toggle_btn):
     _navbar = mo.Html(f"""
     <div class="navbar">
       <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
       <div class="navbar-right">
+        {raw_data_toggle_btn}
         {help_button}
         <span class="navbar-user">Marimo</span>
       </div>
     </div>
     """)
 
-    _active = get_active_tab()
-    _results_underline = 'border-bottom:2px solid #4cceac' if _active == "results" else 'border-bottom:2px solid transparent'
-    _history_underline = 'border-bottom:2px solid #4cceac' if _active == "history" else 'border-bottom:2px solid transparent'
-
-    _switcher = mo.hstack([
-        mo.Html(f'<div style="{_results_underline};padding-bottom:2px">{tab_results_btn}</div>'),
-        mo.Html(f'<div style="{_history_underline};padding-bottom:2px">{tab_history_btn}</div>'),
-    ], gap=2, justify="start")
-
-    _content = results_tab if _active == "results" else history_tab
-
     mo.vstack([
         _navbar,
-        _switcher,
-        _content,
+        main_tabs,
     ], gap=0).style({"max-width": "1280px", "margin": "0 auto"})
     return
 

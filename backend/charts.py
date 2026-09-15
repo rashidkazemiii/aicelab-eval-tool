@@ -57,17 +57,18 @@ def build_history_figure(raw_df, eval_df):
     # a saved test can have 100,000+ raw samples, which is both slow to pan/
     # zoom and, rendered through mo.ui.plotly, large enough to trip marimo's
     # own output-size limit - decimate before adding either raw-sample trace.
-    cof_x, cof_y = table_helpers.decimate_min_max(
-        raw_df["Time [s]"], raw_df["CoF"], CHART_MAX_POINTS
-    )
+    # Full resolution is kept around the static CoF points (see
+    # decimate_for_chart), so the static peaks look exactly as measured.
+    static_times = list(eval_df["Static CoF time [s]"].dropna())
+    cof_x, cof_y = decimate_for_chart(raw_df["Time [s]"], raw_df["CoF"], static_times)
     fig.add_trace(go.Scattergl(
         x=cof_x, y=cof_y,
         mode="lines", name="CoF",
         line=dict(color="#2980b9", width=2),
     ))
     if "Filtered CoF" in raw_df.columns:
-        filtered_x, filtered_y = table_helpers.decimate_min_max(
-            raw_df["Time [s]"], raw_df["Filtered CoF"], CHART_MAX_POINTS
+        filtered_x, filtered_y = decimate_for_chart(
+            raw_df["Time [s]"], raw_df["Filtered CoF"], static_times
         )
         fig.add_trace(go.Scattergl(
             x=filtered_x, y=filtered_y,
@@ -105,6 +106,23 @@ def build_history_figure(raw_df, eval_df):
 # how many points the browser actually has to draw.
 CHART_MAX_POINTS = 12000
 
+# Around each static CoF point the raw curve is kept at full resolution
+# (every sample within +/- this many seconds), so the static peak is shown
+# exactly as measured rather than through the decimation buckets. The total
+# number of such full-resolution samples is capped at
+# STATIC_WINDOW_MAX_POINTS; with more cycles than fit, the window narrows.
+STATIC_WINDOW_HALF_WIDTH_S = 0.1
+STATIC_WINDOW_MAX_POINTS = 60000
+
+
+def decimate_for_chart(x, y, static_times):
+    """Decimate one raw-sample trace for the chart, keeping full resolution
+    around the static CoF times (an empty list means plain decimation)."""
+    return table_helpers.decimate_keep_windows(
+        x, y, CHART_MAX_POINTS,
+        static_times, STATIC_WINDOW_HALF_WIDTH_S, STATIC_WINDOW_MAX_POINTS,
+    )
+
 
 def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active):
     """Build the go.Figure for the CoF Analysis tab's chart. `df_display`
@@ -117,17 +135,22 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active):
     else:
         cof_line_color = "#2980b9"
 
-    cof_x, cof_y = table_helpers.decimate_min_max(
-        df_display["Zeit"], df_display["CoF"], CHART_MAX_POINTS
-    )
+    # Full resolution is kept around the static CoF points (see
+    # decimate_for_chart), so the static peaks look exactly as measured.
+    # Before Evaluate has run there are no static points yet, so this is
+    # plain decimation.
+    static_times = []
+    if cof_eval is not None:
+        static_times = list(cof_eval["cof_res"]["staticCoFTime"])
+    cof_x, cof_y = decimate_for_chart(df_display["Zeit"], df_display["CoF"], static_times)
     fig.add_trace(go.Scattergl(
         x=cof_x, y=cof_y,
         mode="lines", name="CoF",
         line=dict(color=cof_line_color, width=2),
     ))
     if filter_active:
-        filtered_x, filtered_y = table_helpers.decimate_min_max(
-            df_proc["Zeit"], df_proc["CoF"], CHART_MAX_POINTS
+        filtered_x, filtered_y = decimate_for_chart(
+            df_proc["Zeit"], df_proc["CoF"], static_times
         )
         fig.add_trace(go.Scattergl(
             x=filtered_x, y=filtered_y,
