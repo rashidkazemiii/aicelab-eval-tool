@@ -291,15 +291,20 @@ def figure_to_zoom_iframe_html(fig, zoom_key="default"):
 <html><head>
 <meta charset="utf-8">
 <style>
-body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif}}
-/* One compact strip above the plot, left edge lined up with the y-axis
-   (the figure's left margin is 60px). Every step gets an identical pill:
-   fixed-width label, fixed-width right-aligned number box, so the boxes
-   line up in a row and wrap cleanly when there are many steps. */
-#pulse-title{{display:none;padding:6px 20px 0 60px;font-weight:700;font-size:10.5px;letter-spacing:.8px;
-  text-transform:uppercase;color:#7a8390;white-space:nowrap}}
-#pulse-row{{display:none;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:34px;
-  padding:4px 20px 6px 60px;font-size:11.5px;color:#555;border-bottom:1px solid #e6e9ed}}
+body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif;background:transparent}}
+/* Two separate cards in the iframe - the pulse-offset strip and the plot -
+   styled like the page's other cards, with a gap between them. They have
+   to share one iframe (typing in a box restyles the plot directly), but
+   they should not look like one thing. The pulse card is only shown when
+   there is a pulse. Every step gets an identical pill: fixed-width label,
+   fixed-width right-aligned number box, so the boxes line up in a row and
+   wrap cleanly when there are many steps. */
+.card{{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+#pulse-card{{display:none;padding:10px 16px 12px 16px;margin-bottom:16px}}
+#plot-card{{padding:8px 8px 4px 0}}
+#pulse-title{{font-weight:700;font-size:10.5px;letter-spacing:.8px;
+  text-transform:uppercase;color:#7a8390;white-space:nowrap;margin-bottom:6px}}
+#pulse-row{{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;font-size:11.5px;color:#555}}
 #pulse-row label{{display:grid;grid-template-columns:132px 62px;align-items:center;gap:6px;
   padding:2px 6px 2px 8px;background:#fff;border:1px solid #dfe3e8;border-radius:5px;white-space:nowrap}}
 #pulse-row label span{{color:#444;overflow:hidden;text-overflow:ellipsis}}
@@ -313,9 +318,11 @@ body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif}}
 </style>
 <script src="{cdn}"></script>
 </head><body>
-<div id="pulse-title">Pulse offset [ms]</div>
-<div id="pulse-row"></div>
-<div id="c" style="width:100vw;height:420px"></div>
+<div id="pulse-card" class="card">
+  <div id="pulse-title">Pulse offset [ms]</div>
+  <div id="pulse-row"></div>
+</div>
+<div id="plot-card" class="card"><div id="c" style="width:100%;height:420px"></div></div>
 <script>
 var d={data_json}, l={layout_json};
 
@@ -400,14 +407,13 @@ function setupPulseOffset() {{
     if (d[i].name === "Speed pulse") {{ pulseIndex = i; }}
   }}
   var row = document.getElementById("pulse-row");
-  var title = document.getElementById("pulse-title");
-  if (pulseIndex < 0) {{ row.style.display = "none"; title.style.display = "none"; return; }}
+  var card = document.getElementById("pulse-card");
+  if (pulseIndex < 0) {{ card.style.display = "none"; return; }}
   var trace = d[pulseIndex];
   var steps = trace.meta || [];
   var pointStep = decodeTypedArray(trace.customdata || []);
-  if (steps.length === 0) {{ row.style.display = "none"; title.style.display = "none"; return; }}
-  row.style.display = "flex";
-  title.style.display = "block";
+  if (steps.length === 0) {{ card.style.display = "none"; return; }}
+  card.style.display = "block";
 
   var originalX = Array.prototype.slice.call(trace.x);
   var offsets; try {{
@@ -512,8 +518,20 @@ window.onload = function() {{
   }}
   if (initialYRange) {{ l.yaxis = l.yaxis || {{}}; l.yaxis.range = initialYRange; l.yaxis.autorange = false; }}
 
+  // The strip's height depends on how many steps the file has, so the
+  // iframe is sized from the inside once everything is laid out (same
+  // origin, so window.frameElement is reachable).
+  function fitIframeHeight() {{
+    try {{
+      var h = document.body.scrollHeight;
+      if (window.frameElement && h > 0) {{ window.frameElement.style.height = (h + 4) + "px"; }}
+    }} catch(e) {{}}
+  }}
+  fitIframeHeight();
+
   Plotly.react("c", d, l, {{ scrollZoom: true, displayModeBar: true, responsive: true }})
     .then(function() {{
+      fitIframeHeight();
       document.getElementById("c").on("plotly_relayout", function(e) {{
         var newXMin = null, newXMax = null;
         if ("xaxis.range[0]" in e) {{
@@ -532,4 +550,6 @@ window.onload = function() {{
 </body></html>"""
 
     srcdoc = iframe_html.replace("&", "&amp;").replace("<", "&lt;").replace("'", "&#39;")
-    return f"<iframe srcdoc='{srcdoc}' style='width:100%;height:500px;border:none;display:block'></iframe>"
+    # The height is a starting value only; the iframe resizes itself to its
+    # content once loaded (fitIframeHeight above).
+    return f"<iframe srcdoc='{srcdoc}' style='width:100%;height:440px;border:none;display:block'></iframe>"

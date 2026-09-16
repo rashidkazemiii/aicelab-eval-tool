@@ -995,7 +995,7 @@ def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_fi
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
-            'background:#fafafa;border-radius:6px;color:#bbb;font-size:13px">'
+            'background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.08);color:#bbb;font-size:13px">'
             "Upload a file to see the chart</div>"
         )
     else:
@@ -1191,15 +1191,18 @@ def _(
 
 @app.cell
 def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_panel):
+    # The chart iframe draws its own cards (pulse-offset strip, plot) so it
+    # sits on the page directly, not inside a white card of its own; the
+    # tables get their own card below it.
     viz_card = mo.vstack([
-        mo.Html('<p class="panel-title">Analysis Visualization</p>'),
         cof_chart,
         # invisible; only there so the chart's JS can find and write to it
         pulse_eval_field.style({"display": "none"}),
-        mo.Html('<hr class="divider">'),
-        eval_table_panel,
-        results_panel,
-    ], gap=1).style(PANEL_STYLE)
+        mo.vstack([
+            eval_table_panel,
+            results_panel,
+        ], gap=1).style(PANEL_STYLE),
+    ], gap=2)
     return (viz_card,)
 
 
