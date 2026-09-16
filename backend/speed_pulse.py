@@ -51,8 +51,9 @@ def build_speed_pulse(df_display, step_df, minima=None):
       "point_step"  - for every x/y point, the 0-based step_df row it
                       belongs to (None on the gap entries) - lets the chart
                       shift one step's pulse without touching the others,
-      "steps"       - list of {"index": 0-based step_df row, "speed": U/min}
-                      for every step that got a pulse, in order,
+      "steps"       - list of {"index": 0-based step_df row, "speed": U/min,
+                      "start": Startzeit [s], "end": Endzeit [s]} for every
+                      step that got a pulse, in order,
       "edges"       - DataFrame, one row per pulse edge: step (0-based row
                       in step_df), speed, time [s], and the level after it.
     """
@@ -148,7 +149,7 @@ def build_speed_pulse(df_display, step_df, minima=None):
         pulse_x.append(step_end)
         pulse_y.append(current_level)
         point_step.append(step_index)
-        steps.append({"index": step_index, "speed": float(speed)})
+        steps.append({"index": step_index, "speed": float(speed), "start": step_start, "end": step_end})
 
     if len(edge_time) == 0:
         return None

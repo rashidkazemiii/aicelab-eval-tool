@@ -100,7 +100,7 @@ def compute_evaluation(df_display, df_proc, eval_params):
         float(eval_params["dyn_min"]),
         float(eval_params["dyn_max"]),
     )
-    return {"minima": minima, "cof_res": cof_res}
+    return {"minima": minima, "cof_res": cof_res, "static_method": "fixed_window"}
 
 
 def pulse_edges_to_minima(df_display, pulse_edges):
@@ -181,7 +181,7 @@ def compute_pulse_evaluation(df_display, pulse_edges, eval_params):
         float(eval_params["dyn_max"]),
         static_mode="first_peak",
     )
-    return {"minima": minima, "cof_res": cof_res}
+    return {"minima": minima, "cof_res": cof_res, "static_method": "pulse"}
 
 
 def compute_stats(cof_eval, df_display, step_df):

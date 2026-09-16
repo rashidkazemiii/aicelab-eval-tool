@@ -300,7 +300,7 @@ body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif}}
   text-transform:uppercase;color:#7a8390;white-space:nowrap}}
 #pulse-row{{display:none;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:34px;
   padding:4px 20px 6px 60px;font-size:11.5px;color:#555;border-bottom:1px solid #e6e9ed}}
-#pulse-row label{{display:grid;grid-template-columns:118px 62px;align-items:center;gap:6px;
+#pulse-row label{{display:grid;grid-template-columns:132px 62px;align-items:center;gap:6px;
   padding:2px 6px 2px 8px;background:#fff;border:1px solid #dfe3e8;border-radius:5px;white-space:nowrap}}
 #pulse-row label span{{color:#444;overflow:hidden;text-overflow:ellipsis}}
 #pulse-row label b{{font-weight:600;color:#1f2a40;margin-right:4px}}
@@ -432,8 +432,11 @@ function setupPulseOffset() {{
   for (var s = 0; s < steps.length; s++) {{
     var label = document.createElement("label");
     var text = document.createElement("span");
+    // Label each box with the step's time range instead of its number
+    // (plain hyphen: the page string has to stay Latin-1, see ANALYSIS_TAB
+    // in app.py).
     var stepName = document.createElement("b");
-    stepName.textContent = "Step " + (steps[s].index + 1);
+    stepName.textContent = Math.round(steps[s].start) + "-" + Math.round(steps[s].end) + " s";
     text.appendChild(stepName);
     text.appendChild(document.createTextNode(steps[s].speed + " U/min"));
     var box = document.createElement("input");

@@ -168,12 +168,6 @@ FIRST_PEAK_SMOOTH_SAMPLES = 3
 FIRST_PEAK_REFINE_SAMPLES = 3
 # The search starts this many samples before the crossing, as a safety margin.
 FIRST_PEAK_START_MARGIN_SAMPLES = 2
-# A sample only counts as a peak if nothing within this many samples on
-# either side (on the smoothed signal) is bigger. The window is this
-# fraction of the search region, but never fewer than the minimum below -
-# so a small wobble on the rising edge is not mistaken for the breakaway.
-FIRST_PEAK_WIDTH_FRACTION = 0.10
-FIRST_PEAK_MIN_WIDTH_SAMPLES = 3
 
 
 def find_first_peak(Stroke, start_i, dyn_start_i, sign):
@@ -184,13 +178,14 @@ def find_first_peak(Stroke, start_i, dyn_start_i, sign):
     plateau begins (the search stops there), and `sign` is +1 when this
     half-cycle is positive and -1 when it is negative.
 
-    Walking forward on a lightly smoothed copy, a sample is the peak when it
-    is positive, not flat, and nothing within +/- the peak-width window is
-    bigger. Later, possibly bigger peaks are stick-slip, not the breakaway.
-    A first "peak" inside the last window of the region means the signal is
-    still climbing into the plateau, so it does not count.
+    Walking forward on a lightly smoothed copy, the peak is simply the first
+    positive sample after which the signal turns down (not lower than the
+    sample before it, higher than the one after it). Nothing else - no
+    minimum width or height - so it is the first breakaway bump, however
+    small, and not a later, bigger one.
 
-    Returns the raw index of the peak, or None when there is no peak.
+    Returns the raw index of the peak, or None when the signal never turns
+    down before the dynamic plateau.
     """
     n = len(Stroke)
     lo = start_i - FIRST_PEAK_START_MARGIN_SAMPLES
@@ -210,36 +205,17 @@ def find_first_peak(Stroke, start_i, dyn_start_i, sign):
         .to_numpy()
     )
 
-    width = int(round(FIRST_PEAK_WIDTH_FRACTION * len(smoothed)))
-    if width < FIRST_PEAK_MIN_WIDTH_SAMPLES:
-        width = FIRST_PEAK_MIN_WIDTH_SAMPLES
-
+    # The median can give a peak a flat top of equal values; ">=" on the
+    # left and ">" on the right lands on the last sample of such a top.
     candidate = -1
     for m in range(1, len(smoothed) - 1):
         if smoothed[m] <= 0:
             continue
-        w_lo = m - width
-        w_hi = m + width
-        if w_lo < 0:
-            w_lo = 0
-        if w_hi > len(smoothed) - 1:
-            w_hi = len(smoothed) - 1
-        is_biggest_nearby = True
-        for w in range(w_lo, w_hi + 1):
-            if smoothed[w] > smoothed[m]:
-                is_biggest_nearby = False
-                break
-        if not is_biggest_nearby:
-            continue
-        is_flat = smoothed[m] == smoothed[m - 1] and smoothed[m] == smoothed[m + 1]
-        if is_flat:
-            continue
-        candidate = m
-        break
+        if smoothed[m] >= smoothed[m - 1] and smoothed[m] > smoothed[m + 1]:
+            candidate = m
+            break
 
     if candidate < 0:
-        return None
-    if candidate >= len(smoothed) - width:
         return None
 
     # Read the exact peak from the raw values around the smoothed location.

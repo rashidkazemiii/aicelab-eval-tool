@@ -49,6 +49,11 @@ class Test(Base):
     static_range  = Column(Float)
     dynamic_min   = Column(Float)
     dynamic_max   = Column(Float)
+    # How the static CoF was found: "fixed_window" (Evaluate - biggest value
+    # in the first static_range % of the cycle) or "pulse" (Evaluate with
+    # pulse - first peak after the speed pulse's edge). NULL on tests saved
+    # before this column existed = fixed_window.
+    static_method = Column(String)
 
     results     = relationship("Result",     back_populates="test",
                                 cascade="all, delete-orphan")
@@ -184,6 +189,7 @@ def save_evaluation(
     per_cycle_df: pd.DataFrame,   # from cof_eval["cof_res"] — one row per cycle
     raw_df: Optional[pd.DataFrame] = None,    # "Zeit", "CoF", optionally "Filtered CoF" — one row per raw sample
     minima_df: Optional[pd.DataFrame] = None, # from cof_eval["minima"] — one row per zero-crossing pair
+    static_method: str = "fixed_window",      # see Test.static_method
 ) -> int:
     """Persist one complete evaluation to the database. Returns the new test.id."""
     db = SessionLocal()
@@ -196,6 +202,7 @@ def save_evaluation(
             file_name=file_name, data_type=data_type,
             filter_window=_filter_window_value,
             static_range=static_range, dynamic_min=dynamic_min, dynamic_max=dynamic_max,
+            static_method=static_method,
         )
         db.add(test)
         db.flush()  # populate test.id before adding children
@@ -294,25 +301,24 @@ def list_tests() -> list[dict]:
         tests = db.query(Test).order_by(Test.id.desc()).all()
         out = []
         for t in tests:
+            # For a test evaluated with the speed pulse the Static % window
+            # was not what found the static CoF, so the column says so
+            # instead of showing a number that was not used.
+            if t.static_method == "pulse":
+                static_range_shown = "pulse"
+            else:
+                static_range_shown = t.static_range
             row = {
                 "id": t.id,
                 "file_name": t.file_name,
                 "data_type": t.data_type,
                 "uploaded_at": t.uploaded_at,
                 "filter_window": t.filter_window,
-                "static_range": t.static_range,
+                "static_range": static_range_shown,
                 "dynamic_min": t.dynamic_min,
                 "dynamic_max": t.dynamic_max,
+                "steps": len(t.results),
             }
-            if t.results:
-                _r = t.results[0]
-                row["static_mean_cof"] = _r.static_mean_cof
-                row["dynamic_mean_cof"] = _r.dynamic_mean_cof
-                row["steps"] = len(t.results)
-            else:
-                row["static_mean_cof"] = None
-                row["dynamic_mean_cof"] = None
-                row["steps"] = 0
             out.append(row)
         return out
     finally:
@@ -329,8 +335,7 @@ def list_tests_df() -> pd.DataFrame:
         return pd.DataFrame(tests)
     return pd.DataFrame(columns=[
         "id", "file_name", "data_type", "uploaded_at", "filter_window",
-        "static_range", "dynamic_min", "dynamic_max",
-        "static_mean_cof", "dynamic_mean_cof", "steps",
+        "static_range", "dynamic_min", "dynamic_max", "steps",
     ])
 
 
@@ -368,6 +373,7 @@ def save_full_evaluation(
         per_cycle_df=cof_eval["cof_res"],
         raw_df=raw_df,
         minima_df=cof_eval["minima"],
+        static_method=cof_eval.get("static_method", "fixed_window"),
     )
 
 
