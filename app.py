@@ -104,21 +104,15 @@ def _(mo):
         "padding": "16px",
         "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
     }
-    # Same card look, but as a fixed-height flex column with the button
-    # pinned to the bottom - so the 3 action cards (Actions/Filter/
-    # Evaluate) line their buttons up on one baseline regardless of
-    # how many fields the middle of each card has.
-    ACTION_CARD_STYLE = {
+    # Same card look, but slim: one row of controls (the Offset / Filter /
+    # Evaluate toolbar) instead of a panel with a title.
+    TOOLBAR_STYLE = {
         "background": "#fff",
         "border-radius": "8px",
-        "padding": "16px",
+        "padding": "10px 16px",
         "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
-        "display": "flex",
-        "flex-direction": "column",
-        "justify-content": "space-between",
-        "min-height": "110px",
     }
-    return ACTION_CARD_STYLE, PANEL_STYLE
+    return PANEL_STYLE, TOOLBAR_STYLE
 
 
 # ── App state ──────────────────────────────────────────────────────────────
@@ -307,38 +301,40 @@ def _(has_step_checkbox, mo, settings_store):
     # below) without creating that dependency.
     _saved = settings_store.load_raw_data_settings() or {}
     _step_fields_disabled = not has_step_checkbox.value
-    # Inline styles throughout, not CSS classes: a page-level <style> rule
-    # can style plain elements like <hr>/<p> fine (see .divider,
-    # .section-label elsewhere), but a label sitting in the same flex row as
-    # a marimo widget needs an explicit inline min-width to reliably line up
-    # - same reasoning as the width:60px wrapper already used for
-    # Filter/Evaluate's inputs below.
-    _row = '<div style="display:flex;align-items:center;gap:8px">' \
-           '<span style="font-size:0.82rem;color:#444;min-width:160px;flex-shrink:0">{label}</span>{{{field}}}</div>'
-    _grid_open = '<div style="display:grid;grid-template-columns:repeat(2, minmax(240px, 1fr));gap:10px 32px">'
-    _grid_close = '</div>'
+    # Three compact rows - one per group - laid out on ONE shared grid:
+    # a fixed group-title column followed by six equal cells, each cell a
+    # right-aligned label next to a narrow input. Same grid for every row,
+    # so the inputs line up in straight columns across GENERAL / STEP DATA /
+    # MAIN DATA. All values are small integers, hence the narrow inputs
+    # (fixed-width wrapper div: marimo's text input is a shadow-DOM component
+    # sized to its host, so a page-level CSS width can't reach it).
+    _field = ('<div style="display:flex;align-items:center;gap:6px">'
+              '<span style="font-size:0.78rem;color:#555;white-space:nowrap;width:104px;text-align:right">{label}</span>'
+              '<div style="width:64px">{{{field}}}</div></div>')
+    _group_open = ('<div style="display:grid;grid-template-columns:84px repeat(6, minmax(0, 1fr));align-items:center;gap:8px 4px">'
+                   '<span class="section-label" style="margin:0;font-size:0.62rem;'
+                   'font-weight:700;letter-spacing:1px;color:#999">{title}</span>')
+    _group_close = '</div>'
 
     _raw_data_tpl = mo.Html(
-        '<div style="display:flex;flex-direction:column;gap:14px">'
-        + _row.format(label="Normal Load Correction", field="nlc")
-        + '<hr class="divider">'
-        '<p class="section-label" style="margin:0">STEP DATA</p>'
-        + _grid_open
-        + _row.format(label="Start Step", field="start_step_row")
-        + _row.format(label="End Step", field="end_step_row")
-        + _row.format(label="Step Time col #", field="step_col_time")
-        + _row.format(label="Drehzahl col #", field="step_col_speed")
-        + _grid_close
-        + '<hr class="divider">'
-        '<p class="section-label" style="margin:0">MAIN DATA</p>'
-        + _grid_open
-        + _row.format(label="Start Main Data", field="start_main_row")
-        + _row.format(label="Stop Main Data (0 = end of file)", field="stop_main_row")
-        + _row.format(label="Time col #", field="col_time")
-        + _row.format(label="Friction Left col #", field="col_left")
-        + _row.format(label="Friction Right col #", field="col_right")
-        + _row.format(label="Normal Load col #", field="col_load")
-        + _grid_close
+        '<div style="display:flex;flex-direction:column;gap:10px">'
+        + _group_open.format(title="GENERAL")
+        + _field.format(label="Load correction", field="nlc")
+        + _group_close
+        + _group_open.format(title="STEP DATA")
+        + _field.format(label="Start row", field="start_step_row")
+        + _field.format(label="End row", field="end_step_row")
+        + _field.format(label="Time col #", field="step_col_time")
+        + _field.format(label="Drehzahl col #", field="step_col_speed")
+        + _group_close
+        + _group_open.format(title="MAIN DATA")
+        + _field.format(label="Start row", field="start_main_row")
+        + _field.format(label="Stop row (0 = end)", field="stop_main_row")
+        + _field.format(label="Time col #", field="col_time")
+        + _field.format(label="Friction L col #", field="col_left")
+        + _field.format(label="Friction R col #", field="col_right")
+        + _field.format(label="Normal load col #", field="col_load")
+        + _group_close
         + '</div>'
     )
     raw_data_form = _raw_data_tpl.batch(
@@ -1143,17 +1139,21 @@ def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PA
 
 @app.cell
 def _(has_step_checkbox, mo, PANEL_STYLE, raw_data_form):
+    # Title and the "Has step data" checkbox share one line; the form
+    # itself is three compact rows below.
     raw_data_card = mo.vstack([
-        mo.Html('<p class="panel-title">Raw Data</p>'),
-        has_step_checkbox,
+        mo.hstack([
+            mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
+            has_step_checkbox,
+        ], justify="space-between", align="center"),
         raw_data_form,
-    ], gap=2).style(PANEL_STYLE)
+    ], gap=1).style(PANEL_STYLE)
     return (raw_data_card,)
 
 
 @app.cell
 def _(
-    ACTION_CARD_STYLE,
+    TOOLBAR_STYLE,
     eval_btn,
     eval_fields,
     filter_btn,
@@ -1162,15 +1162,30 @@ def _(
     mo,
     offset_btn,
 ):
-    _offset_badge = (
-        mo.Html('<span style="font-size:0.7rem;color:#4cceac;font-weight:700">ON</span>')
-        if get_offset() else mo.Html("")
-    )
+    # One slim toolbar instead of three half-empty cards: the controls read
+    # left to right in the order they are used - Offset, Filter, Evaluate -
+    # with a thin vertical rule between the groups.
+    if get_offset():
+        _offset_badge = mo.Html(
+            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#fff;'
+            'background:#4cceac;border-radius:10px;padding:2px 8px">ON</span>'
+        )
+    else:
+        _offset_badge = mo.Html(
+            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#999;'
+            'background:#eef1f4;border-radius:10px;padding:2px 8px">OFF</span>'
+        )
+
+    def _rule():
+        return mo.Html('<div style="width:1px;height:28px;background:#e3e6ea;margin:0 6px"></div>')
+
     actions_row = mo.hstack([
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_btn, _offset_badge], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_fields, filter_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_fields, eval_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-    ], gap=2, align="stretch", widths="equal")
+        offset_btn, _offset_badge,
+        _rule(),
+        filter_fields, filter_btn,
+        _rule(),
+        eval_fields, eval_btn,
+    ], gap=1, align="center", justify="start", wrap=True).style(TOOLBAR_STYLE)
     return (actions_row,)
 
 
@@ -1189,13 +1204,10 @@ def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_pa
 
 
 @app.cell
-def _(actions_row, get_show_raw_data, mo, raw_data_card, upload_card, viz_card):
-    _sections = [upload_card]
-    if get_show_raw_data():
-        _sections.append(raw_data_card)
-    _sections.append(actions_row)
-    _sections.append(viz_card)
-    results_tab = mo.vstack(_sections, gap=2).style({"padding": "20px 0"})
+def _(actions_row, mo, raw_data_card, upload_card, viz_card):
+    results_tab = mo.vstack(
+        [upload_card, raw_data_card, actions_row, viz_card], gap=2
+    ).style({"padding": "20px 0"})
     return (results_tab,)
 
 
@@ -1251,33 +1263,6 @@ def _(mo):
 
     help_button = mo.ui.button(label="&#10067; Help", on_click=_open_help)
     return (help_button,)
-
-
-@app.cell
-def _(mo):
-    # Raw Data is settings you touch once per file format and then leave
-    # alone, so it's folded away behind this rather than taking up the top
-    # third of the Analysis page permanently. Not a real separate window:
-    # a window opened from Python is a static HTML file with no connection
-    # back to this session, so its input boxes would be dead and Calculate
-    # would have nothing to read.
-    raw_data_toggle_btn = mo.ui.run_button(label="&#9881; Raw Data")
-    return (raw_data_toggle_btn,)
-
-
-@app.cell
-def _(mo):
-    get_show_raw_data, set_show_raw_data = mo.state(False)
-    return get_show_raw_data, set_show_raw_data
-
-
-@app.cell
-def _(raw_data_toggle_btn, set_show_raw_data):
-    # Updater-function form of the setter, so this cell never references
-    # get_show_raw_data and therefore never rebuilds the button it reads.
-    if raw_data_toggle_btn.value:
-        set_show_raw_data(lambda was_shown: not was_shown)
-    return
 
 
 @app.cell
@@ -1338,14 +1323,12 @@ def _(get_active_tab, mo, set_active_tab, tab_contents):
 
 
 @app.cell
-def _(help_button, main_tabs, mo, raw_data_toggle_btn):
+def _(help_button, main_tabs, mo):
     _navbar = mo.Html(f"""
     <div class="navbar">
       <div><span class="navbar-title">FRICTION EVALUATION</span><span class="navbar-version">v2.0</span></div>
       <div class="navbar-right">
-        {raw_data_toggle_btn}
         {help_button}
-        <span class="navbar-user">Marimo</span>
       </div>
     </div>
     """)
