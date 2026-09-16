@@ -185,6 +185,27 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    # A saved test brought back from the History tab ("Load into Analysis"):
+    # None, or the dict database.load_test_for_analysis returns. While set,
+    # the Analysis pipeline shows that test instead of an uploaded file -
+    # the signal, filter, evaluation and steps come from the database, and
+    # Filter / Evaluate / Save / Save labels then work on it exactly as on
+    # an uploaded file. Cleared by the next Calculate click.
+    get_loaded_test, set_loaded_test = mo.state(None)
+    return get_loaded_test, set_loaded_test
+
+
+@app.cell
+def _(mo):
+    # Nonce of the last "Save labels" click that was handled, so the same
+    # click is never stored twice when the handler cell re-runs for another
+    # reason.
+    get_labels_nonce, set_labels_nonce = mo.state(None)
+    return get_labels_nonce, set_labels_nonce
+
+
+@app.cell
+def _(mo):
     # One shared status message per tab, each shown in a single place on
     # that tab's page. Whichever action on that tab last had something to
     # say calls its set_..._status_msg() to replace it - so each tab has
@@ -429,9 +450,11 @@ def _(
     has_step_checkbox,
     mo,
     raw_data_form,
+    set_loaded_test,
     set_parsed_data,
     set_results_status_msg,
     settings_store,
+    get_loaded_test,
 ):
     # raw_data_form is a plain, live batch now (not a .form()) - its .value
     # updates on every keystroke, but that alone doesn't do anything here:
@@ -445,8 +468,9 @@ def _(
     if calculate_btn.value:
         # Every Calculate press wipes out whatever was previously computed
         # first, then parses fresh from the raw file - never patches or
-        # reuses the old result.
+        # reuses the old result. A test loaded from History is dropped too.
         set_parsed_data(None)
+        set_loaded_test(None)
         settings_store.save_raw_data_settings(_p)
         if data_loader.is_ready_to_parse(bool(file_upload.value), _p):
             try:
@@ -469,7 +493,21 @@ def _(
                 set_results_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
 
     _parsed = get_parsed_data()
-    if _parsed is None:
+    # Right after a Calculate click the loaded test is gone no matter what
+    # the state still reads in this same run.
+    if calculate_btn.value:
+        _loaded = None
+    else:
+        _loaded = get_loaded_test()
+    if _loaded is not None:
+        # A saved test from History stands in for a parsed file. Its id is
+        # (file name, "test-<id>") so Filter / Evaluate clicks are tracked
+        # per loaded test just like per uploaded file.
+        df_raw = None
+        step_df = _loaded["step_df"]
+        committed_params = None
+        parsed_file_id = (_loaded["file_name"], "test-%d" % _loaded["test_id"])
+    elif _parsed is None:
         df_raw = None
         step_df = None
         committed_params = None
@@ -503,7 +541,7 @@ def _(file_upload, get_seen_upload_id, set_parsed_data, set_seen_upload_id):
 
 
 @app.cell
-def _(committed_params, df_raw, file_upload, get_offset, mo, parsed_file_id, pipeline, set_results_status_msg, step_df):
+def _(committed_params, df_raw, file_upload, get_loaded_test, get_offset, mo, parsed_file_id, pipeline, set_results_status_msg, step_df):
     # df_raw sticks around (by design - see the pipeline cell above) so
     # editing a field doesn't blank the result until Calculate is clicked
     # again. But that means it can also still be holding a previous file's
@@ -517,7 +555,10 @@ def _(committed_params, df_raw, file_upload, get_offset, mo, parsed_file_id, pip
         if file_upload.value else None
     )
     df_display = None
-    if df_raw is not None and parsed_file_id == _current_file_id:
+    _loaded = get_loaded_test()
+    if _loaded is not None:
+        df_display = _loaded["df_display"]
+    elif df_raw is not None and parsed_file_id == _current_file_id:
         try:
             # Use the params from the last Calculate click, not the fields'
             # current (possibly since-edited) live values - column choices
@@ -536,6 +577,7 @@ def _(
     filter_fields,
     get_filter_file_id,
     get_filter_params,
+    get_loaded_test,
     mo,
     parsed_file_id,
     pipeline,
@@ -548,15 +590,22 @@ def _(
         set_filter_file_id(parsed_file_id)
     # None (not yet run for the file that's active right now) unless Filter
     # was actually clicked while this same file was the one loaded.
-    active_filter_params = get_filter_params() if get_filter_file_id() == parsed_file_id else None
-    if df_display is not None:
-        try:
-            df_proc = pipeline.compute_filtered_df(df_display, active_filter_params)
-        except Exception as _e:
-            df_proc = df_display.copy()
-            set_results_status_msg(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
+    _filter_clicked_here = get_filter_file_id() == parsed_file_id
+    _loaded = get_loaded_test()
+    if _loaded is not None and not _filter_clicked_here:
+        # Test from History, Filter not clicked since: show it as saved.
+        active_filter_params = _loaded["filter_params"]
+        df_proc = _loaded["df_proc"]
     else:
-        df_proc = None
+        active_filter_params = get_filter_params() if _filter_clicked_here else None
+        if df_display is not None:
+            try:
+                df_proc = pipeline.compute_filtered_df(df_display, active_filter_params)
+            except Exception as _e:
+                df_proc = df_display.copy()
+                set_results_status_msg(mo.callout(mo.md(f"**Filter error:** {_e}"), kind="danger"))
+        else:
+            df_proc = None
     return active_filter_params, df_proc
 
 
@@ -568,6 +617,7 @@ def _(
     eval_fields,
     get_eval_file_id,
     get_eval_params,
+    get_loaded_test,
     mo,
     parsed_file_id,
     pipeline,
@@ -580,12 +630,20 @@ def _(
         set_eval_params(eval_fields.value)
         set_eval_file_id(parsed_file_id)
         set_eval_mode("crossings")
-    active_eval_params = get_eval_params() if get_eval_file_id() == parsed_file_id else None
-    cof_eval_crossings = None
-    try:
-        cof_eval_crossings = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
-    except Exception as _e:
-        set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
+    _eval_clicked_here = get_eval_file_id() == parsed_file_id
+    _loaded = get_loaded_test()
+    if _loaded is not None and not _eval_clicked_here:
+        # Test from History, Evaluate not clicked since: its saved
+        # evaluation stands in for a fresh one.
+        active_eval_params = _loaded["eval_params"]
+        cof_eval_crossings = _loaded["cof_eval"]
+    else:
+        active_eval_params = get_eval_params() if _eval_clicked_here else None
+        cof_eval_crossings = None
+        try:
+            cof_eval_crossings = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
+        except Exception as _e:
+            set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
     return active_eval_params, cof_eval_crossings
 
 
@@ -597,6 +655,65 @@ def _(charts, mo):
     # page depends on it - only the handler cell below.
     pulse_eval_field = mo.ui.text(value="", placeholder=charts.PULSE_EVAL_PLACEHOLDER)
     return (pulse_eval_field,)
+
+
+@app.cell
+def _(file_upload, get_loaded_test):
+    # The file the Analysis tab is working on: the test loaded from History
+    # if there is one, else the uploaded file. None when neither.
+    _loaded = get_loaded_test()
+    if _loaded is not None:
+        analysis_file_name = _loaded["file_name"]
+    elif file_upload.value:
+        analysis_file_name = file_upload.value[0].name
+    else:
+        analysis_file_name = None
+    return (analysis_file_name,)
+
+
+@app.cell
+def _(charts, mo):
+    # Hidden text field the chart's "Save labels" button writes into (see
+    # setupLabels() in charts.py); found by its placeholder, so that must
+    # stay LABELS_PLACEHOLDER.
+    labels_field = mo.ui.text(value="", placeholder=charts.LABELS_PLACEHOLDER)
+    return (labels_field,)
+
+
+@app.cell
+def _(analysis_file_name, db_mod, get_labels_nonce, labels_field, mo, set_labels_nonce, set_results_status_msg):
+    # Handles a click of the chart's "Save labels" button. The field holds
+    # JSON {"labels": [{"t", "label", "corrected_t"}], "nonce": click id}.
+    # Labels belong to the SAVED test with this file name - the user has to
+    # Save first, otherwise there is no row to attach them to.
+    import json as _json
+    _request = None
+    if labels_field.value:
+        try:
+            _request = _json.loads(labels_field.value)
+        except ValueError:
+            _request = None
+    if _request is not None and _request.get("nonce") != get_labels_nonce():
+        set_labels_nonce(_request.get("nonce"))
+        if analysis_file_name is None:
+            set_results_status_msg(mo.callout(mo.md("Upload and **Save** the test first, then save labels."), kind="warn"))
+        else:
+            _fname = analysis_file_name
+            _test = db_mod.find_existing_test(_fname)
+            if _test is None:
+                set_results_status_msg(mo.callout(
+                    mo.md(f"**{_fname}** is not saved yet. Click **Save** first, then **Save labels**."), kind="warn",
+                ))
+            else:
+                try:
+                    _matched, _unmatched = db_mod.save_cycle_labels(_test.id, _request.get("labels", []))
+                    _msg = f"Saved **{_matched}** labels to test **#{_test.id}**."
+                    if _unmatched > 0:
+                        _msg += f" {_unmatched} point(s) did not match a saved cycle (re-save the test after re-evaluating)."
+                    set_results_status_msg(mo.callout(mo.md(_msg), kind="success"))
+                except Exception as _e:
+                    set_results_status_msg(mo.callout(mo.md(f"**Save labels failed:** {_e}"), kind="danger"))
+    return
 
 
 @app.cell
@@ -692,26 +809,27 @@ def _(cof_eval, df_display, pipeline, step_df):
 def _(
     active_eval_params,
     active_filter_params,
+    analysis_file_name,
     cof_eval,
     db_mod,
     df_display,
     df_proc,
-    file_upload,
     mo,
     overwrite_btn,
     pipeline,
     save_btn,
     set_results_status_msg,
     stats_result,
+    step_df,
 ):
     # Both save_btn and overwrite_btn are plain run_buttons: True for exactly
     # one render right after their own click, then back to False on their
     # own - so neither needs any "was this actually a new click" tracking.
     _save_clicked = save_btn.value or overwrite_btn.value
     _have_eval_results = cof_eval is not None and stats_result is not None
-    _have_file_and_data = bool(file_upload.value) and df_display is not None
+    _have_file_and_data = analysis_file_name is not None and df_display is not None
     if _save_clicked and _have_eval_results and _have_file_and_data:
-        _fname = file_upload.value[0].name
+        _fname = analysis_file_name
         _fparams = active_filter_params
         _eparams = active_eval_params
         _existing = db_mod.find_existing_test(_fname)
@@ -733,8 +851,12 @@ def _(
                 _filter_active = pipeline.is_filter_active(_fparams, df_proc)
                 _test_id = db_mod.save_full_evaluation(
                     _fname, _fparams, _eparams, df_display, df_proc, _filter_active, cof_eval, stats_result,
+                    step_df=step_df,
                 )
-                set_results_status_msg(mo.callout(mo.md(f"Saved as test **#{_test_id}**."), kind="success"))
+                set_results_status_msg(mo.callout(mo.md(
+                    f"Saved as test **#{_test_id}**. "
+                    "If you have labels on the chart, click **Save labels** to store them on this copy."
+                ), kind="success"))
             except Exception as _e:
                 set_results_status_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
     return
@@ -746,7 +868,25 @@ def _(mo):
     refresh_btn = mo.ui.run_button(label="&#128260; Refresh")
     delete_btn = mo.ui.run_button(label="&#128465; Delete selected", kind="danger")
     open_history_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
-    return delete_btn, open_history_excel_btn, refresh_btn
+    open_labels_excel_btn = mo.ui.run_button(label="&#128194; Open labels in Excel")
+    return delete_btn, open_history_excel_btn, open_labels_excel_btn, refresh_btn
+
+
+@app.cell
+def _(data_loader, db_mod, mo, open_labels_excel_btn, set_history_status_msg):
+    # Every hand-made label across all saved tests, one row per labelled
+    # cycle - the training table for a future peak detector.
+    if open_labels_excel_btn.value:
+        try:
+            _labels_df = db_mod.export_labels_df()
+            if len(_labels_df) == 0:
+                set_history_status_msg(mo.callout(mo.md("No labels saved yet."), kind="info"))
+            else:
+                data_loader.open_dataframe_in_excel(_labels_df, "labels")
+                set_history_status_msg(mo.callout(mo.md(f"Opened {len(_labels_df):,} labels in Excel."), kind="success"))
+        except Exception as _e:
+            set_history_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
+    return
 
 
 @app.cell
@@ -804,7 +944,45 @@ def _(history_table, mo, selected_test_ids):
         label="&#128200; Show chart",
         disabled=_n_selected != 1,
     )
-    return (show_chart_btn,)
+    load_to_analysis_btn = mo.ui.run_button(
+        label="&#128202; Load into Analysis",
+        disabled=_n_selected != 1,
+    )
+    return load_to_analysis_btn, show_chart_btn
+
+
+@app.cell
+def _(
+    ANALYSIS_TAB,
+    db_mod,
+    history_table,
+    load_to_analysis_btn,
+    mo,
+    selected_test_ids,
+    set_active_tab,
+    set_eval_mode,
+    set_loaded_test,
+    set_results_status_msg,
+):
+    # Bring the selected saved test back into the Analysis tab, so it can be
+    # labelled (its saved labels come along), re-evaluated and re-saved.
+    if load_to_analysis_btn.value:
+        _ids = selected_test_ids(history_table.value)
+        if len(_ids) == 1:
+            _loaded = db_mod.load_test_for_analysis(_ids[0])
+            if _loaded is None:
+                set_results_status_msg(mo.callout(mo.md(f"Test #{_ids[0]} not found."), kind="warn"))
+            else:
+                set_loaded_test(_loaded)
+                set_eval_mode("crossings")
+                set_active_tab(ANALYSIS_TAB)
+                _n_labels = len(db_mod.get_labels_for_test(_ids[0]))
+                set_results_status_msg(mo.callout(mo.md(
+                    f"Loaded test **#{_ids[0]}** (**{_loaded['file_name']}**) from History"
+                    f" with {_n_labels} saved labels. Label, then **Save** (overwrite) and **Save labels**."
+                    " Uploading a file and clicking Calculate goes back to the uploaded file."
+                ), kind="info"))
+    return
 
 
 @app.cell
@@ -991,7 +1169,7 @@ def _(cof_eval_crossings, df_display, speed_pulse, step_df):
 
 
 @app.cell
-def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_file_id, pipeline, pulse, step_df):
+def _(active_filter_params, analysis_file_name, charts, cof_eval, db_mod, df_display, df_proc, mo, parsed_file_id, pipeline, pulse, step_df):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -1006,12 +1184,18 @@ def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_fi
         # cell above) - so this name is never stale, unlike just reading
         # file_upload directly here would risk if the two ever raced.
         _fname = parsed_file_id[0] if parsed_file_id else "&mdash;"
+        # Labels already saved for this file (an earlier session, or a test
+        # loaded from History) start out drawn on the chart.
+        _saved_labels = {}
+        if analysis_file_name is not None:
+            _saved_labels = db_mod.get_labels_for_file(analysis_file_name)
+        _initial_labels = charts.initial_labels_for_chart(_saved_labels, df_display["Zeit"], df_display["CoF"])
         cof_chart = mo.vstack([
             mo.Html(f'<p style="font-size:0.72rem;color:#888;margin:0 0 4px 0">'
                      f'Showing: <strong>{_fname}</strong></p>'),
             # Keyed by file, so the remembered x-zoom / y-range of one file
             # is never applied to the next one.
-            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"live-{_fname}")),
+            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"live-{_fname}", initial_labels=_initial_labels)),
         ], gap=0)
     return (cof_chart,)
 
@@ -1190,7 +1374,7 @@ def _(
 
 
 @app.cell
-def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_panel):
+def _(cof_chart, eval_table_panel, labels_field, mo, PANEL_STYLE, pulse_eval_field, results_panel):
     # The chart iframe draws its own cards (pulse-offset strip, plot) so it
     # sits on the page directly, not inside a white card of its own; the
     # tables get their own card below it.
@@ -1198,6 +1382,7 @@ def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_pa
         cof_chart,
         # invisible; only there so the chart's JS can find and write to it
         pulse_eval_field.style({"display": "none"}),
+        labels_field.style({"display": "none"}),
         mo.vstack([
             eval_table_panel,
             results_panel,
@@ -1215,9 +1400,9 @@ def _(actions_row, mo, raw_data_card, upload_card, viz_card):
 
 
 @app.cell
-def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, mo, refresh_btn, show_chart_btn):
+def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, open_labels_excel_btn, refresh_btn, show_chart_btn):
     tests_card = mo.vstack([
-        mo.hstack([refresh_btn, show_chart_btn, delete_btn], gap=2, justify="start"),
+        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn, open_labels_excel_btn], gap=2, justify="start"),
         get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),

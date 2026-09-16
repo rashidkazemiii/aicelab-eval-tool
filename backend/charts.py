@@ -26,6 +26,13 @@ COF_MARKER_STYLES = {
                            line=dict(color="#8e44ad", width=1)),
     "dynamic_end":   dict(symbol="triangle-left", size=8, color="#1abc9c",
                            line=dict(color="#16a085", width=1)),
+    # Hand-made labels on static points (filled in by the chart's JS):
+    "label_correct": dict(symbol="circle-open", size=13, color="#27ae60",
+                           line=dict(color="#27ae60", width=2)),
+    "label_wrong":   dict(symbol="x", size=11, color="#c0392b",
+                           line=dict(color="#c0392b", width=2)),
+    "corrected":     dict(symbol="star", size=11, color="#2980b9",
+                           line=dict(color="#1f5f8b", width=1)),
 }
 
 
@@ -88,6 +95,20 @@ def build_history_figure(raw_df, eval_df):
     add_cof_marker_trace(fig, ds["Dynamic start time [s]"], ds["Dynamic start CoF"], "dynamic_start", "Dynamic start")
     de = eval_df[["Dynamic end time [s]", "Dynamic end CoF"]].dropna()
     add_cof_marker_trace(fig, de["Dynamic end time [s]"], de["Dynamic end CoF"], "dynamic_end", "Dynamic end")
+    # Saved hand-made labels, read-only here. Named "Saved: ..." (not
+    # "Label: ...") on purpose: the iframe's labelling JS only switches on
+    # when it finds a "Label: correct" trace, so the History chart shows the
+    # labels without letting them be edited - editing happens on the
+    # Analysis tab after "Load into Analysis".
+    if "Label" in eval_df.columns:
+        labelled = eval_df[["Static CoF time [s]", "Static CoF", "Label", "Corrected static time [s]"]]
+        ok = labelled[labelled["Label"] == "correct"]
+        bad = labelled[labelled["Label"] == "wrong"]
+        add_cof_marker_trace(fig, ok["Static CoF time [s]"], ok["Static CoF"], "label_correct", "Saved: correct")
+        add_cof_marker_trace(fig, bad["Static CoF time [s]"], bad["Static CoF"], "label_wrong", "Saved: wrong")
+        corrected_times = list(bad["Corrected static time [s]"].dropna())
+        corrected_y = raw_cof_at_times(raw_df["Time [s]"], raw_df["CoF"], corrected_times)
+        add_cof_marker_trace(fig, corrected_times, corrected_y, "corrected", "Saved: corrected")
     fig.update_layout(
         height=420,
         xaxis_title="Time [s]", yaxis_title="CoF [-]",
@@ -102,6 +123,49 @@ def build_history_figure(raw_df, eval_df):
     return fig
 
 
+def raw_cof_at_times(times, values, wanted_times):
+    """The raw CoF value at (the nearest sample to) each of `wanted_times` -
+    used to put a marker on the curve when only a time is stored."""
+    import numpy as np
+    t = np.asarray(times, dtype=float)
+    v = np.asarray(values, dtype=float)
+    out = []
+    for w in wanted_times:
+        i = int(np.searchsorted(t, float(w)))
+        if i >= len(t):
+            i = len(t) - 1
+        if i > 0 and abs(t[i - 1] - w) < abs(t[i] - w):
+            i = i - 1
+        out.append(float(v[i]))
+    return out
+
+
+def initial_labels_for_chart(saved_labels, times, values):
+    """Turn database labels ({static time: {"label", "corrected_t"}}) into the
+    dict the chart's JS seeds its label store from: keyed by the static
+    time as text, with the corrected point's y looked up on the raw curve."""
+    out = {}
+    if not saved_labels:
+        return out
+    for static_time, item in saved_labels.items():
+        corrected_t = item.get("corrected_t")
+        corrected_y = None
+        if corrected_t is not None:
+            corrected_y = raw_cof_at_times(times, values, [corrected_t])[0]
+        # JS keys the store by String(x) of the marker's x value. Python's
+        # repr of the same double gives the same shortest text, except that
+        # JS prints a whole number without ".0".
+        key = repr(float(static_time))
+        if key.endswith(".0"):
+            key = key[:-2]
+        out[key] = {
+            "label": item.get("label"),
+            "corrected_t": corrected_t,
+            "corrected_y": corrected_y,
+        }
+    return out
+
+
 # A long test can be 100,000+ raw samples, and a chart only a few hundred
 # pixels wide can't show more detail than that anyway - plotting every raw
 # point just makes panning/zooming slow with no visual benefit.
@@ -114,6 +178,9 @@ CHART_MAX_POINTS = 12000
 # click nonce). The iframe's JS finds the field by this placeholder, so
 # app.py must create the field with exactly this text.
 PULSE_EVAL_PLACEHOLDER = "__pulse_eval_request__"
+# Same mechanism for the chart's "Save labels" button (JSON: the labels the
+# user clicked plus a nonce).
+LABELS_PLACEHOLDER = "__labels_request__"
 
 # Around each static CoF point the raw curve is kept at full resolution
 # (every sample within +/- this many seconds), so the static peak is shown
@@ -173,11 +240,17 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, spee
     static_times = []
     if cof_eval is not None:
         static_times = list(cof_eval["cof_res"]["staticCoFTime"])
+    # hoverinfo="skip" on the line traces: with 50,000+ curve points the
+    # curve would otherwise always be the closest thing to the mouse, and
+    # the static markers could hardly be clicked for labelling. Only the
+    # marker traces react to the mouse; Shift+click on the curve is handled
+    # from the click's pixel position instead (see setupLabels).
     cof_x, cof_y = decimate_for_chart(df_display["Zeit"], df_display["CoF"], static_times)
     fig.add_trace(go.Scattergl(
         x=cof_x, y=cof_y,
         mode="lines", name="CoF",
         line=dict(color=cof_line_color, width=2),
+        hoverinfo="skip",
     ))
     if filter_active:
         filtered_x, filtered_y = decimate_for_chart(
@@ -187,6 +260,7 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, spee
             x=filtered_x, y=filtered_y,
             mode="lines", name="Filtered CoF",
             line=dict(color="#e67e22", width=1.5),
+            hoverinfo="skip",
         ))
 
     # Evaluation markers - always a small number of points (a few hundred at
@@ -200,6 +274,11 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, spee
         add_cof_marker_trace(fig, cr["dynamicCoFTime"], cr["dynamicCoF"], "dynamic", "Dynamic CoF")
         add_cof_marker_trace(fig, cr["startdynamicTime"], cr["startdynamicCoF"], "dynamic_start", "Dynamic start")
         add_cof_marker_trace(fig, cr["enddynamicTime"], cr["enddynamicCoF"], "dynamic_end", "Dynamic end")
+        # Label traces start empty; the iframe's JS fills them as the user
+        # clicks static points (see setupLabels in figure_to_zoom_iframe_html).
+        add_cof_marker_trace(fig, [], [], "label_correct", "Label: correct")
+        add_cof_marker_trace(fig, [], [], "label_wrong", "Label: wrong")
+        add_cof_marker_trace(fig, [], [], "corrected", "Corrected static")
 
     # Nominal-speed square wave: flips sign every 30/Drehzahl seconds, so
     # each vertical edge is where a zero crossing *should* be according to
@@ -217,7 +296,7 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, spee
             mode="lines", name="Speed pulse",
             line=dict(color="#7f8c8d", width=1, dash="dot"),
             connectgaps=False,
-            hoverinfo="x+y+name",
+            hoverinfo="skip",
         ))
 
     # A y=0 reference line, so it is visible where the curve sits relative
@@ -246,8 +325,12 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, spee
     return fig
 
 
-def figure_to_zoom_iframe_html(fig, zoom_key="default"):
+def figure_to_zoom_iframe_html(fig, zoom_key="default", initial_labels=None):
     """Wrap `fig` in a self-contained <iframe> tag with persistent x-zoom.
+
+    `initial_labels` (see initial_labels_for_chart) seeds the chart's label
+    store when the browser has no labels for this chart yet, so labels saved
+    earlier show up again and can be edited further.
 
     The Y-axis is fixedrange (locked against manual drag/scroll) but is NOT
     left on plain autorange, because autorange fits the whole file at once -
@@ -286,6 +369,10 @@ def figure_to_zoom_iframe_html(fig, zoom_key="default"):
     layout_json = json.dumps(fig_dict["layout"])
     zoom_key_json = json.dumps(str(zoom_key))
     pulse_eval_placeholder_json = json.dumps(PULSE_EVAL_PLACEHOLDER)
+    labels_placeholder_json = json.dumps(LABELS_PLACEHOLDER)
+    if initial_labels is None:
+        initial_labels = {}
+    initial_labels_json = json.dumps(initial_labels)
 
     iframe_html = f"""<!DOCTYPE html>
 <html><head>
@@ -315,6 +402,12 @@ body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif;background:trans
 #pulse-row button{{height:26px;padding:0 12px;font-size:11.5px;font-weight:600;color:#fff;background:#1f2a40;
   border:1px solid #1f2a40;border-radius:5px;cursor:pointer;white-space:nowrap}}
 #pulse-row button:hover{{background:#16202f}}
+#label-bar{{display:none;align-items:center;flex-wrap:wrap;gap:6px 14px;padding:4px 12px 6px 60px;font-size:11.5px;color:#555}}
+#label-bar .hint{{color:#8a939c}}
+#label-bar .count{{font-weight:600;color:#1f2a40;font-variant-numeric:tabular-nums}}
+#label-bar button{{height:24px;padding:0 10px;font-size:11px;font-weight:600;color:#1f2a40;background:#fff;
+  border:1px solid #1f2a40;border-radius:5px;cursor:pointer;white-space:nowrap}}
+#label-bar button:hover{{background:#eef1f4}}
 </style>
 <script src="{cdn}"></script>
 </head><body>
@@ -322,7 +415,14 @@ body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif;background:trans
   <div id="pulse-title">Pulse offset [ms]</div>
   <div id="pulse-row"></div>
 </div>
-<div id="plot-card" class="card"><div id="c" style="width:100%;height:420px"></div></div>
+<div id="plot-card" class="card">
+  <div id="label-bar">
+    <span class="hint">Click a static point: correct / wrong / none. Shift+click the curve: where the peak should be.</span>
+    <span class="count" id="label-count">Labels: 0 ok, 0 wrong</span>
+    <button type="button" id="save-labels">Save labels</button>
+  </div>
+  <div id="c" style="width:100%;height:420px"></div>
+</div>
 <script>
 var d={data_json}, l={layout_json};
 
@@ -468,24 +568,7 @@ function setupPulseOffset() {{
   pulseButton.id = "pulse-eval";
   pulseButton.textContent = "Evaluate with pulse";
   pulseButton.addEventListener("click", function() {{
-    var request = {{ offsets_ms: offsets, nonce: Date.now() }};
-    try {{
-      var doc = window.parent.document;
-      // Attribute values are JSON-encoded by marimo, so compare against the
-      // JSON form; a plain loop avoids any CSS-selector quoting.
-      var wanted = JSON.stringify(PULSE_EVAL_PLACEHOLDER);
-      var field = null;
-      var candidates = doc.querySelectorAll("marimo-text");
-      for (var i = 0; i < candidates.length; i++) {{
-        if (candidates[i].getAttribute("data-placeholder") === wanted) {{ field = candidates[i]; }}
-      }}
-      if (!field) return;
-      var ev = new window.parent.CustomEvent("marimo-value-input", {{
-        bubbles: true, composed: true,
-        detail: {{ value: JSON.stringify(request), element: field }},
-      }});
-      doc.dispatchEvent(ev);
-    }} catch(e) {{}}
+    pushToMarimo(PULSE_EVAL_PLACEHOLDER, {{ offsets_ms: offsets, nonce: Date.now() }});
   }});
   row.appendChild(pulseButton);
   // Apply the saved offsets to the initial data before the first draw.
@@ -493,6 +576,148 @@ function setupPulseOffset() {{
 }}
 
 var PULSE_EVAL_PLACEHOLDER = {pulse_eval_placeholder_json};
+var LABELS_PLACEHOLDER = {labels_placeholder_json};
+var INITIAL_LABELS = {initial_labels_json};
+
+// Hands a JSON value to Python through a hidden marimo text field (found by
+// its placeholder) using marimo's own "marimo-value-input" event - the same
+// one its widgets use. Attribute values are JSON-encoded by marimo, so the
+// placeholder is compared in JSON form; a plain loop avoids CSS-selector
+// quoting. Only the cells that read that field re-run.
+function pushToMarimo(placeholder, value) {{
+  try {{
+    var doc = window.parent.document;
+    var wanted = JSON.stringify(placeholder);
+    var field = null;
+    var candidates = doc.querySelectorAll("marimo-text");
+    for (var i = 0; i < candidates.length; i++) {{
+      if (candidates[i].getAttribute("data-placeholder") === wanted) {{ field = candidates[i]; }}
+    }}
+    if (!field) return;
+    var ev = new window.parent.CustomEvent("marimo-value-input", {{
+      bubbles: true, composed: true,
+      detail: {{ value: JSON.stringify(value), element: field }},
+    }});
+    doc.dispatchEvent(ev);
+  }} catch(e) {{}}
+}}
+
+// Labelling static points by hand: click a "Static CoF" marker to cycle
+// none -> correct -> wrong -> none; Shift+click the CoF curve to say where
+// the peak really is (marks that cycle wrong and stores the point). Labels
+// are parked on window.parent per chart key (which includes the file name),
+// so they survive chart rebuilds and never leak to another file. "Save
+// labels" hands them to Python, which stores them on the saved test.
+function setupLabels(gd, zoomKey) {{
+  var bar = document.getElementById("label-bar");
+  var indexOf = {{}};
+  for (var i = 0; i < d.length; i++) {{ indexOf[d[i].name] = i; }}
+  var staticIndex = indexOf["Static CoF"];
+  if (staticIndex === undefined || indexOf["Label: correct"] === undefined) {{ bar.style.display = "none"; return; }}
+  bar.style.display = "flex";
+
+  var labels;
+  try {{
+    window.parent.__cofLabels = window.parent.__cofLabels || {{}};
+    window.parent.__cofLabels[zoomKey] = window.parent.__cofLabels[zoomKey] || {{}};
+    labels = window.parent.__cofLabels[zoomKey];
+  }} catch(e) {{ labels = {{}}; }}
+  // First time this chart is shown in this browser session: start from the
+  // labels saved in the database (edits made since then win otherwise).
+  if (Object.keys(labels).length === 0) {{
+    for (var key in INITIAL_LABELS) {{
+      if (INITIAL_LABELS[key] && INITIAL_LABELS[key].label) {{ labels[key] = INITIAL_LABELS[key]; }}
+    }}
+  }}
+
+  var staticX = d[staticIndex].x, staticY = d[staticIndex].y;
+  var crossings = [];
+  if (indexOf["Zero crossings"] !== undefined) {{
+    crossings = Array.prototype.slice.call(d[indexOf["Zero crossings"]].x).sort(function(a, b) {{ return a - b; }});
+  }}
+  function keyOf(t) {{ return String(t); }}
+
+  function redraw() {{
+    var okX = [], okY = [], badX = [], badY = [], fixX = [], fixY = [];
+    var nOk = 0, nBad = 0;
+    for (var i = 0; i < staticX.length; i++) {{
+      var entry = labels[keyOf(staticX[i])];
+      if (!entry || !entry.label) continue;
+      if (entry.label === "correct") {{ okX.push(staticX[i]); okY.push(staticY[i]); nOk++; }}
+      else {{
+        badX.push(staticX[i]); badY.push(staticY[i]); nBad++;
+        if (entry.corrected_t !== null && entry.corrected_t !== undefined) {{ fixX.push(entry.corrected_t); fixY.push(entry.corrected_y); }}
+      }}
+    }}
+    Plotly.restyle(gd, {{ x: [okX, badX, fixX], y: [okY, badY, fixY] }},
+                   [indexOf["Label: correct"], indexOf["Label: wrong"], indexOf["Corrected static"]]);
+    document.getElementById("label-count").textContent = "Labels: " + nOk + " ok, " + nBad + " wrong";
+  }}
+
+  // Shift+click: "the peak should be here". The curve itself has no hover
+  // (see build_cof_figure), so the click is translated from its pixel
+  // position to a time with the x-axis' own pixel->data mapping, and the
+  // nearest raw CoF sample gives the y value.
+  var cofTrace = d[indexOf["CoF"]];
+  function nearestCofIndex(t) {{
+    var xs = cofTrace.x, lo = 0, hi = xs.length - 1;
+    while (lo < hi) {{
+      var mid = (lo + hi) >> 1;
+      if (xs[mid] < t) {{ lo = mid + 1; }} else {{ hi = mid; }}
+    }}
+    if (lo > 0 && Math.abs(xs[lo - 1] - t) < Math.abs(xs[lo] - t)) {{ lo = lo - 1; }}
+    return lo;
+  }}
+  gd.addEventListener("click", function(ev) {{
+    if (!ev.shiftKey) return;
+    var xa = gd._fullLayout.xaxis;
+    var box = gd.getBoundingClientRect();
+    var t = xa.p2d(ev.clientX - box.left - xa._offset);
+    var k = nearestCofIndex(t);
+    var px = cofTrace.x[k], py = cofTrace.y[k];
+    // The cycle this point lies in = last crossing at or before it; its
+    // static point is the one between that crossing and the next.
+    var cStart = null, cEnd = null;
+    for (var i = 0; i < crossings.length; i++) {{
+      if (crossings[i] <= px) {{ cStart = crossings[i]; cEnd = (i + 1 < crossings.length) ? crossings[i + 1] : Infinity; }}
+    }}
+    if (cStart === null) return;
+    for (var j = 0; j < staticX.length; j++) {{
+      if (staticX[j] >= cStart && staticX[j] < cEnd) {{
+        labels[keyOf(staticX[j])] = {{ label: "wrong", corrected_t: px, corrected_y: py }};
+        redraw();
+        return;
+      }}
+    }}
+  }});
+
+  gd.on("plotly_click", function(ev) {{
+    if (!ev.points || ev.points.length === 0) return;
+    if (ev.event && ev.event.shiftKey) return;   // handled above
+    var pt = ev.points[0];
+    var name = pt.data.name;
+    if (name === "Static CoF") {{
+      var k = keyOf(pt.x);
+      var current = labels[k] ? labels[k].label : null;
+      if (!current) {{ labels[k] = {{ label: "correct", corrected_t: null, corrected_y: null }}; }}
+      else if (current === "correct") {{ labels[k] = {{ label: "wrong", corrected_t: null, corrected_y: null }}; }}
+      else {{ delete labels[k]; }}
+      redraw();
+    }}
+  }});
+
+  document.getElementById("save-labels").addEventListener("click", function() {{
+    var out = [];
+    for (var i = 0; i < staticX.length; i++) {{
+      var entry = labels[keyOf(staticX[i])];
+      if (!entry || !entry.label) continue;
+      out.push({{ t: staticX[i], label: entry.label, corrected_t: entry.corrected_t }});
+    }}
+    pushToMarimo(LABELS_PLACEHOLDER, {{ labels: out, nonce: Date.now() }});
+  }});
+
+  redraw();
+}}
 
 window.onload = function() {{
   var ZOOM_KEY = {zoom_key_json};
@@ -532,6 +757,7 @@ window.onload = function() {{
   Plotly.react("c", d, l, {{ scrollZoom: true, displayModeBar: true, responsive: true }})
     .then(function() {{
       fitIframeHeight();
+      setupLabels(document.getElementById("c"), ZOOM_KEY);
       document.getElementById("c").on("plotly_relayout", function(e) {{
         var newXMin = null, newXMax = null;
         if ("xaxis.range[0]" in e) {{

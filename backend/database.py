@@ -63,6 +63,8 @@ class Test(Base):
                                 cascade="all, delete-orphan")
     minima      = relationship("Minima",     back_populates="test",
                                 cascade="all, delete-orphan")
+    steps       = relationship("Step",       back_populates="test",
+                                cascade="all, delete-orphan")
 
 
 class Result(Base):
@@ -105,8 +107,33 @@ class PerCycle(Base):
     start_dynamic_cof  = Column(Float)
     end_dynamic_time   = Column(Float)
     end_dynamic_cof    = Column(Float)
+    # Ground truth entered by hand on the chart: was the static point the
+    # tool picked right? "correct" / "wrong" / NULL (not labelled). When it
+    # was wrong, corrected_static_time is where the user said the peak
+    # really is (NULL if they only said "wrong").
+    label                 = Column(String)
+    corrected_static_time = Column(Float)
 
     test = relationship("Test", back_populates="per_cycle")
+
+
+class Step(Base):
+    """One row per test step (the file's step table: time window and speed).
+    Needed to bring a saved test back into the Analysis tab - the speed
+    pulse and the per-step statistics both need the step windows, and the
+    pulse needs the speed. Tests saved before this table existed have no
+    rows here; get_step_df falls back to the Result rows' time ranges."""
+    __tablename__ = "steps"
+
+    id          = Column(Integer, primary_key=True)
+    test_id     = Column(Integer, ForeignKey("tests.id"), nullable=False, index=True)
+    step_index  = Column(Integer)
+    start_time  = Column(Float)
+    end_time    = Column(Float)
+    speed       = Column(Float)      # Drehzahl [U/min], NULL if the file had none
+    inactive    = Column(Integer)    # 0 / 1
+
+    test = relationship("Test", back_populates="steps")
 
 
 class Minima(Base):
@@ -190,6 +217,7 @@ def save_evaluation(
     raw_df: Optional[pd.DataFrame] = None,    # "Zeit", "CoF", optionally "Filtered CoF" — one row per raw sample
     minima_df: Optional[pd.DataFrame] = None, # from cof_eval["minima"] — one row per zero-crossing pair
     static_method: str = "fixed_window",      # see Test.static_method
+    step_df: Optional[pd.DataFrame] = None,   # the file's step table — see Step
 ) -> int:
     """Persist one complete evaluation to the database. Returns the new test.id."""
     db = SessionLocal()
@@ -253,6 +281,23 @@ def save_evaluation(
                     "min_cof": _clean(row.get("Min CoF")),
                 })
             db.bulk_insert_mappings(Minima, _records)
+
+        if step_df is not None and not step_df.empty:
+            for idx, row in step_df.iterrows():
+                if "Drehzahl" in step_df.columns:
+                    _speed = _clean(row.get("Drehzahl"))
+                else:
+                    _speed = None
+                if "inactive" in step_df.columns and bool(row.get("inactive")):
+                    _inactive = 1
+                else:
+                    _inactive = 0
+                db.add(Step(
+                    test_id=test.id, step_index=int(idx),
+                    start_time=_clean(row.get("Startzeit [s]")),
+                    end_time=_clean(row.get("Endzeit [s]")),
+                    speed=_speed, inactive=_inactive,
+                ))
 
         if raw_df is not None and not raw_df.empty:
             _times = raw_df["Zeit"].tolist()
@@ -318,11 +363,27 @@ def list_tests() -> list[dict]:
                 "dynamic_min": t.dynamic_min,
                 "dynamic_max": t.dynamic_max,
                 "steps": len(t.results),
+                "labels": _labels_summary(t.per_cycle),
             }
             out.append(row)
         return out
     finally:
         db.close()
+
+
+def _labels_summary(per_cycle_rows) -> str:
+    """'12 ok, 3 wrong' for the History list; '' when nothing is labelled.
+    Plain ASCII on purpose (no check marks) - see ANALYSIS_TAB in app.py."""
+    n_correct = 0
+    n_wrong = 0
+    for r in per_cycle_rows:
+        if r.label == "correct":
+            n_correct += 1
+        elif r.label == "wrong":
+            n_wrong += 1
+    if n_correct == 0 and n_wrong == 0:
+        return ""
+    return f"{n_correct} ok, {n_wrong} wrong"
 
 
 def list_tests_df() -> pd.DataFrame:
@@ -335,7 +396,7 @@ def list_tests_df() -> pd.DataFrame:
         return pd.DataFrame(tests)
     return pd.DataFrame(columns=[
         "id", "file_name", "data_type", "uploaded_at", "filter_window",
-        "static_range", "dynamic_min", "dynamic_max", "steps",
+        "static_range", "dynamic_min", "dynamic_max", "steps", "labels",
     ])
 
 
@@ -348,6 +409,7 @@ def save_full_evaluation(
     filter_active: bool,
     cof_eval: dict,
     stats_result: pd.DataFrame,
+    step_df: Optional[pd.DataFrame] = None,
 ) -> int:
     """Build the raw-sample dataframe from the current pipeline state and
     persist one full evaluation via save_evaluation(). Returns the new
@@ -374,7 +436,184 @@ def save_full_evaluation(
         raw_df=raw_df,
         minima_df=cof_eval["minima"],
         static_method=cof_eval.get("static_method", "fixed_window"),
+        step_df=step_df,
     )
+
+
+def get_step_df(test_id: int):
+    """The saved test's step table in the shape the pipeline uses
+    ("Startzeit [s]", "Endzeit [s]", "inactive", and "Drehzahl" when any
+    speed is stored), or None when the test has no steps at all.
+
+    Tests saved before the steps table existed have no Step rows; their
+    step windows are recovered from the Result rows' "start-end" time-range
+    text instead (no speed is known for those, so no Drehzahl column).
+    """
+    db = SessionLocal()
+    try:
+        steps = (
+            db.query(Step).filter(Step.test_id == test_id)
+            .order_by(Step.step_index).all()
+        )
+        results = db.query(Result).filter(Result.test_id == test_id).all()
+    finally:
+        db.close()
+
+    starts = []
+    ends = []
+    speeds = []
+    inactive = []
+    if len(steps) > 0:
+        for s in steps:
+            starts.append(s.start_time)
+            ends.append(s.end_time)
+            speeds.append(s.speed)
+            inactive.append(bool(s.inactive))
+    else:
+        for r in results:
+            text_range = r.time_range
+            if not text_range:
+                continue
+            # "60.0-80.0"; older rows used an en dash as the separator
+            parts = str(text_range).replace("\u2013", "-").split("-")
+            if len(parts) != 2:
+                continue
+            try:
+                starts.append(float(parts[0]))
+                ends.append(float(parts[1]))
+            except ValueError:
+                continue
+            speeds.append(None)
+            inactive.append(False)
+
+    if len(starts) == 0:
+        return None
+    step_df = pd.DataFrame({
+        "Startzeit [s]": starts,
+        "Endzeit [s]": ends,
+        "inactive": inactive,
+    })
+    has_speed = False
+    for v in speeds:
+        if v is not None:
+            has_speed = True
+    if has_speed:
+        step_df["Drehzahl"] = speeds
+    return step_df
+
+
+def load_test_for_analysis(test_id: int) -> dict:
+    """Everything the Analysis tab needs to show a saved test as if it had
+    just been evaluated: the raw and filtered signal, the parameters, the
+    evaluation result in Evaluate()'s own column names, and the step table.
+    Returns None if the test does not exist."""
+    from physics import utility_functions
+
+    db = SessionLocal()
+    try:
+        test = db.query(Test).filter(Test.id == test_id).first()
+        if test is None:
+            return None
+        file_name = test.file_name
+        filter_window = test.filter_window
+        eval_params = {
+            "static_range": str(test.static_range),
+            "dyn_min": str(test.dynamic_min),
+            "dyn_max": str(test.dynamic_max),
+        }
+        static_method = test.static_method or "fixed_window"
+        cycles = (
+            db.query(PerCycle).filter(PerCycle.test_id == test_id)
+            .order_by(PerCycle.cycle_index).all()
+        )
+        mins = (
+            db.query(Minima).filter(Minima.test_id == test_id)
+            .order_by(Minima.crossing_index).all()
+        )
+    finally:
+        db.close()
+
+    raw = get_full_raw_table(test_id)
+    step_df = get_step_df(test_id)
+
+    df_display = pd.DataFrame({"Zeit": raw["Time [s]"], "CoF": raw["CoF"]})
+    if step_df is not None and "Drehzahl" in step_df.columns:
+        df_display = utility_functions.assign_step_speed(df_display, step_df)
+    if "Filtered CoF" in raw.columns:
+        df_proc = df_display.copy()
+        df_proc["CoF"] = raw["Filtered CoF"].values
+        filter_params = {"filter_points": str(filter_window)}
+    else:
+        df_proc = df_display.copy()
+        filter_params = None
+
+    def _col(rows, name):
+        values = []
+        for r in rows:
+            values.append(getattr(r, name))
+        return values
+
+    cof_res = pd.DataFrame({
+        "startdynamicTime": _col(cycles, "start_dynamic_time"),
+        "startdynamicCoF": _col(cycles, "start_dynamic_cof"),
+        "enddynamicTime": _col(cycles, "end_dynamic_time"),
+        "enddynamicCoF": _col(cycles, "end_dynamic_cof"),
+        "dynamicCoFTime": _col(cycles, "dynamic_cof_time"),
+        "dynamicCoF": _col(cycles, "dynamic_cof"),
+        "dynamicCoFSD": _col(cycles, "dynamic_sd"),
+        "dynamicCoFn": _col(cycles, "dynamic_n"),
+        "dynamicCoFsigma": _col(cycles, "dynamic_sigma"),
+        "dynamicCoFvariance": _col(cycles, "dynamic_variance"),
+        "staticCoF": _col(cycles, "static_cof"),
+        "staticCoFTime": _col(cycles, "static_cof_time"),
+    })
+    minima = pd.DataFrame({
+        "-Min Zeit": _col(mins, "minus_min_time"),
+        "-Min CoF": _col(mins, "minus_min_cof"),
+        "+Min Zeit": _col(mins, "plus_min_time"),
+        "+Min CoF": _col(mins, "plus_min_cof"),
+        "Min Zeit": _col(mins, "min_time"),
+        "Min CoF": _col(mins, "min_cof"),
+    })
+    return {
+        "test_id": test_id,
+        "file_name": file_name,
+        "df_display": df_display,
+        "df_proc": df_proc,
+        "filter_params": filter_params,
+        "eval_params": eval_params,
+        "static_method": static_method,
+        "cof_eval": {"minima": minima, "cof_res": cof_res, "static_method": static_method},
+        "step_df": step_df,
+    }
+
+
+def get_labels_for_test(test_id: int) -> dict:
+    """{static_cof_time: {"label": ..., "corrected_t": ...}} for every
+    labelled cycle of one saved test - used to draw saved labels again."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(PerCycle)
+            .filter(PerCycle.test_id == test_id, PerCycle.label.isnot(None))
+            .all()
+        )
+        out = {}
+        for r in rows:
+            if r.static_cof_time is None:
+                continue
+            out[r.static_cof_time] = {"label": r.label, "corrected_t": r.corrected_static_time}
+        return out
+    finally:
+        db.close()
+
+
+def get_labels_for_file(file_name: str) -> dict:
+    """Saved labels of the test with this file name, or {} if none."""
+    test = find_existing_test(file_name)
+    if test is None:
+        return {}
+    return get_labels_for_test(test.id)
 
 
 def get_cycles(test_id: int) -> list[dict]:
@@ -451,6 +690,109 @@ def count_cycles(test_id: int) -> int:
     db = SessionLocal()
     try:
         return db.query(func.count(PerCycle.id)).filter(PerCycle.test_id == test_id).scalar()
+    finally:
+        db.close()
+
+
+# A label is matched to its cycle by the static point's time (the chart
+# knows the time, not the row); anything closer than this counts as the
+# same point. Samples are 1 ms apart, so half a millisecond is unambiguous.
+LABEL_MATCH_TOLERANCE_S = 0.0005
+
+
+def save_cycle_labels(test_id: int, labels: list) -> tuple:
+    """Store hand-made labels on a saved test's cycles.
+
+    `labels` is a list of dicts {"t": static point time [s],
+    "label": "correct" | "wrong" | None, "corrected_t": time [s] or None}.
+    Each one is matched to the PerCycle row of `test_id` whose
+    static_cof_time is within LABEL_MATCH_TOLERANCE_S of "t"; a label of None
+    clears that row's label again. Returns (matched, unmatched) counts.
+    """
+    db = SessionLocal()
+    try:
+        rows = db.query(PerCycle).filter(PerCycle.test_id == test_id).all()
+        matched = 0
+        unmatched = 0
+        for item in labels:
+            t = item.get("t")
+            if t is None:
+                unmatched += 1
+                continue
+            hit = None
+            for r in rows:
+                if r.static_cof_time is not None and abs(r.static_cof_time - float(t)) <= LABEL_MATCH_TOLERANCE_S:
+                    hit = r
+                    break
+            if hit is None:
+                unmatched += 1
+                continue
+            label = item.get("label")
+            if label not in ("correct", "wrong"):
+                label = None
+            hit.label = label
+            corrected = item.get("corrected_t")
+            if label == "wrong" and corrected is not None:
+                hit.corrected_static_time = _clean(corrected)
+            else:
+                hit.corrected_static_time = None
+            matched += 1
+        db.commit()
+        return matched, unmatched
+    finally:
+        db.close()
+
+
+def count_labels(test_id: int) -> tuple:
+    """(n_correct, n_wrong) for one saved test."""
+    db = SessionLocal()
+    try:
+        rows = db.query(PerCycle).filter(PerCycle.test_id == test_id).all()
+        n_correct = 0
+        n_wrong = 0
+        for r in rows:
+            if r.label == "correct":
+                n_correct += 1
+            elif r.label == "wrong":
+                n_wrong += 1
+        return n_correct, n_wrong
+    finally:
+        db.close()
+
+
+def export_labels_df() -> pd.DataFrame:
+    """Every labelled cycle across all saved tests, one row each, with the
+    test's file name and static method - the training table for a future
+    peak detector."""
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(PerCycle, Test)
+            .join(Test, PerCycle.test_id == Test.id)
+            .filter(PerCycle.label.isnot(None))
+            .order_by(Test.id, PerCycle.cycle_index)
+            .all()
+        )
+        records = []
+        for cycle, test in rows:
+            records.append({
+                "test_id": test.id,
+                "file_name": test.file_name,
+                "static_method": test.static_method or "fixed_window",
+                "cycle_index": cycle.cycle_index,
+                "static_cof_time": cycle.static_cof_time,
+                "static_cof": cycle.static_cof,
+                "dynamic_cof_time": cycle.dynamic_cof_time,
+                "dynamic_cof": cycle.dynamic_cof,
+                "label": cycle.label,
+                "corrected_static_time": cycle.corrected_static_time,
+            })
+        columns = [
+            "test_id", "file_name", "static_method", "cycle_index",
+            "static_cof_time", "static_cof", "dynamic_cof_time", "dynamic_cof",
+            "label", "corrected_static_time",
+        ]
+        return pd.DataFrame(records, columns=columns)
     finally:
         db.close()
 
@@ -549,6 +891,8 @@ def get_full_eval_table(test_id: int) -> pd.DataFrame:
     cols["Dynamic start CoF"] = _column(cycles, "start_dynamic_cof")
     cols["Dynamic end time [s]"] = _column(cycles, "end_dynamic_time")
     cols["Dynamic end CoF"] = _column(cycles, "end_dynamic_cof")
+    cols["Label"] = _column(cycles, "label")
+    cols["Corrected static time [s]"] = _column(cycles, "corrected_static_time")
 
     return pd.DataFrame(cols)
 
