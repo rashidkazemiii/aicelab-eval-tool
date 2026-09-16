@@ -75,6 +75,9 @@ def build_history_figure(raw_df, eval_df):
             mode="lines", name="Filtered CoF",
             line=dict(color="#e67e22", width=1.5),
         ))
+    # A y=0 reference line, so it is visible where the curve sits relative
+    # to zero (with Offset on, the curve is centred on it).
+    fig.add_hline(y=0, line=dict(color="#999", width=1))
     zc = eval_df["Min time [s]"].dropna()
     add_cof_marker_trace(fig, zc, [0] * len(zc), "zero_crossing", "Zero crossings")
     s = eval_df[["Static CoF time [s]", "Static CoF"]].dropna()
@@ -106,6 +109,12 @@ def build_history_figure(raw_df, eval_df):
 # how many points the browser actually has to draw.
 CHART_MAX_POINTS = 12000
 
+# Placeholder text of the hidden marimo text field the chart's "Evaluate
+# with pulse" button writes into (JSON: the per-step offsets in ms plus a
+# click nonce). The iframe's JS finds the field by this placeholder, so
+# app.py must create the field with exactly this text.
+PULSE_EVAL_PLACEHOLDER = "__pulse_eval_request__"
+
 # Around each static CoF point the raw curve is kept at full resolution
 # (every sample within +/- this many seconds), so the static peak is shown
 # exactly as measured rather than through the decimation buckets. The total
@@ -115,18 +124,40 @@ STATIC_WINDOW_HALF_WIDTH_S = 0.1
 STATIC_WINDOW_MAX_POINTS = 60000
 
 
+# Decimal places kept in the chart's line traces. Filtered / offset CoF
+# values carry 15 decimals (~18 characters each in the chart's JSON), which
+# makes a 70,000-point trace over 1 MB on its own. The raw CoF is already
+# rounded to 5 decimals upstream, and 1 kHz time stamps need 3, so this
+# loses nothing visible. Display only - the evaluation never sees these.
+CHART_TIME_DECIMALS = 4
+CHART_COF_DECIMALS = 5
+
+
 def decimate_for_chart(x, y, static_times):
     """Decimate one raw-sample trace for the chart, keeping full resolution
-    around the static CoF times (an empty list means plain decimation)."""
-    return table_helpers.decimate_keep_windows(
+    around the static CoF times (an empty list means plain decimation), and
+    round the kept values to CHART_TIME_DECIMALS / CHART_COF_DECIMALS."""
+    out_x, out_y = table_helpers.decimate_keep_windows(
         x, y, CHART_MAX_POINTS,
         static_times, STATIC_WINDOW_HALF_WIDTH_S, STATIC_WINDOW_MAX_POINTS,
     )
+    rounded_x = []
+    for v in out_x:
+        rounded_x.append(round(float(v), CHART_TIME_DECIMALS))
+    rounded_y = []
+    for v in out_y:
+        if v is None or v != v:  # keep NaN gaps as they are
+            rounded_y.append(v)
+        else:
+            rounded_y.append(round(float(v), CHART_COF_DECIMALS))
+    return rounded_x, rounded_y
 
 
-def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active):
+def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active, speed_pulse=None):
     """Build the go.Figure for the CoF Analysis tab's chart. `df_display`
     must not be None - the caller shows its own placeholder for that case.
+    `speed_pulse` is speed_pulse.build_speed_pulse's result (or None): the
+    nominal-speed square wave drawn on top of the CoF for comparison.
     """
     fig = go.Figure()
 
@@ -169,6 +200,29 @@ def build_cof_figure(df_display, df_proc, cof_eval, step_df, filter_active):
         add_cof_marker_trace(fig, cr["dynamicCoFTime"], cr["dynamicCoF"], "dynamic", "Dynamic CoF")
         add_cof_marker_trace(fig, cr["startdynamicTime"], cr["startdynamicCoF"], "dynamic_start", "Dynamic start")
         add_cof_marker_trace(fig, cr["enddynamicTime"], cr["enddynamicCoF"], "dynamic_end", "Dynamic end")
+
+    # Nominal-speed square wave: flips sign every 30/Drehzahl seconds, so
+    # each vertical edge is where a zero crossing *should* be according to
+    # the step table. Plain Scatter (SVG), not Scattergl: it has only a few
+    # points per cycle, and the None gaps between steps need SVG's
+    # connectgaps=False handling to render as breaks.
+    # customdata / meta carry which step each point belongs to and the step
+    # list, so the per-step offset boxes in the iframe can shift one step's
+    # pulse on its own.
+    if speed_pulse is not None:
+        fig.add_trace(go.Scatter(
+            x=speed_pulse["x"], y=speed_pulse["y"],
+            customdata=speed_pulse["point_step"],
+            meta=speed_pulse["steps"],
+            mode="lines", name="Speed pulse",
+            line=dict(color="#7f8c8d", width=1, dash="dot"),
+            connectgaps=False,
+            hoverinfo="x+y+name",
+        ))
+
+    # A y=0 reference line, so it is visible where the curve sits relative
+    # to zero (with Offset on, the curve is centred on it).
+    fig.add_hline(y=0, line=dict(color="#999", width=1))
 
     # Step boundary vertical lines
     if step_df is not None:
@@ -231,13 +285,36 @@ def figure_to_zoom_iframe_html(fig, zoom_key="default"):
     data_json = json.dumps(fig_dict["data"])
     layout_json = json.dumps(fig_dict["layout"])
     zoom_key_json = json.dumps(str(zoom_key))
+    pulse_eval_placeholder_json = json.dumps(PULSE_EVAL_PLACEHOLDER)
 
     iframe_html = f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
-<style>body{{margin:0;overflow:hidden}}</style>
+<style>
+body{{margin:0;overflow:hidden;font-family:system-ui,sans-serif}}
+/* One compact strip above the plot, left edge lined up with the y-axis
+   (the figure's left margin is 60px). Every step gets an identical pill:
+   fixed-width label, fixed-width right-aligned number box, so the boxes
+   line up in a row and wrap cleanly when there are many steps. */
+#pulse-title{{display:none;padding:6px 20px 0 60px;font-weight:700;font-size:10.5px;letter-spacing:.8px;
+  text-transform:uppercase;color:#7a8390;white-space:nowrap}}
+#pulse-row{{display:none;align-items:center;flex-wrap:wrap;gap:6px 8px;min-height:34px;
+  padding:4px 20px 6px 60px;font-size:11.5px;color:#555;border-bottom:1px solid #e6e9ed}}
+#pulse-row label{{display:grid;grid-template-columns:118px 62px;align-items:center;gap:6px;
+  padding:2px 6px 2px 8px;background:#fff;border:1px solid #dfe3e8;border-radius:5px;white-space:nowrap}}
+#pulse-row label span{{color:#444;overflow:hidden;text-overflow:ellipsis}}
+#pulse-row label b{{font-weight:600;color:#1f2a40;margin-right:4px}}
+#pulse-row input{{width:62px;box-sizing:border-box;font-size:11.5px;text-align:right;font-variant-numeric:tabular-nums;
+  padding:2px 5px;border:1px solid #cfd5dc;border-radius:3px;color:#1f2a40;background:#fff}}
+#pulse-row input:focus{{outline:none;border-color:#2980b9;box-shadow:0 0 0 2px rgba(41,128,185,.15)}}
+#pulse-row button{{height:26px;padding:0 12px;font-size:11.5px;font-weight:600;color:#fff;background:#1f2a40;
+  border:1px solid #1f2a40;border-radius:5px;cursor:pointer;white-space:nowrap}}
+#pulse-row button:hover{{background:#16202f}}
+</style>
 <script src="{cdn}"></script>
 </head><body>
+<div id="pulse-title">Pulse offset [ms]</div>
+<div id="pulse-row"></div>
 <div id="c" style="width:100vw;height:420px"></div>
 <script>
 var d={data_json}, l={layout_json};
@@ -298,23 +375,138 @@ function fitYRange(xMin, xMax) {{
 // for a short pause after the last event means the extra redraw happens
 // once, right after the user settles on a range, instead of continuously.
 var yRefitTimer = null;
+var storeY = {{}};
+var YKEY = null;
 function scheduleYRefit(xMin, xMax) {{
   if (yRefitTimer) clearTimeout(yRefitTimer);
   yRefitTimer = setTimeout(function() {{
     var newYRange = fitYRange(xMin, xMax);
-    if (newYRange) {{ Plotly.relayout("c", {{"yaxis.range": newYRange}}); }}
+    if (newYRange) {{
+      Plotly.relayout("c", {{"yaxis.range": newYRange}});
+      try {{ storeY[YKEY] = newYRange; }} catch(ex) {{}}
+    }}
   }}, 100);
 }}
+
+// The speed-pulse offsets are handled entirely here in the browser: one
+// box per step, and typing in a box only restyles the "Speed pulse" trace's
+// x values for that step's points (found through customdata), so nothing
+// on the marimo page re-runs. The values are parked on window.parent (like
+// the zoom range) so they survive the chart being rebuilt, e.g. after
+// Evaluate.
+function setupPulseOffset() {{
+  var pulseIndex = -1;
+  for (var i = 0; i < d.length; i++) {{
+    if (d[i].name === "Speed pulse") {{ pulseIndex = i; }}
+  }}
+  var row = document.getElementById("pulse-row");
+  var title = document.getElementById("pulse-title");
+  if (pulseIndex < 0) {{ row.style.display = "none"; title.style.display = "none"; return; }}
+  var trace = d[pulseIndex];
+  var steps = trace.meta || [];
+  var pointStep = decodeTypedArray(trace.customdata || []);
+  if (steps.length === 0) {{ row.style.display = "none"; title.style.display = "none"; return; }}
+  row.style.display = "flex";
+  title.style.display = "block";
+
+  var originalX = Array.prototype.slice.call(trace.x);
+  var offsets; try {{
+    window.parent.__cofPulseOffsetsMs = window.parent.__cofPulseOffsetsMs || {{}};
+    offsets = window.parent.__cofPulseOffsetsMs;
+  }} catch(e) {{ offsets = {{}}; }}
+
+  function offsetFor(stepIndex) {{
+    var ms = Number(offsets[stepIndex]);
+    if (!isFinite(ms)) return 0;
+    return ms;
+  }}
+  function shiftedX() {{
+    var out = new Array(originalX.length);
+    for (var i = 0; i < originalX.length; i++) {{
+      if (originalX[i] === null || originalX[i] === undefined) {{ out[i] = null; }}
+      else {{ out[i] = originalX[i] + offsetFor(pointStep[i]) / 1000; }}
+    }}
+    return out;
+  }}
+
+  for (var s = 0; s < steps.length; s++) {{
+    var label = document.createElement("label");
+    var text = document.createElement("span");
+    var stepName = document.createElement("b");
+    stepName.textContent = "Step " + (steps[s].index + 1);
+    text.appendChild(stepName);
+    text.appendChild(document.createTextNode(steps[s].speed + " U/min"));
+    var box = document.createElement("input");
+    box.type = "number"; box.step = "1";
+    box.value = offsetFor(steps[s].index);
+    box.dataset.stepIndex = steps[s].index;
+    box.addEventListener("input", function(ev) {{
+      var ms = Number(ev.target.value);
+      if (!isFinite(ms)) return;
+      try {{ offsets[ev.target.dataset.stepIndex] = ms; }} catch(e) {{}}
+      Plotly.restyle("c", {{ x: [shiftedX()] }}, [pulseIndex]);
+    }});
+    label.appendChild(text); label.appendChild(box); row.appendChild(label);
+  }}
+  // "Evaluate with pulse": hands the current offsets to Python by writing
+  // them into a hidden marimo text field, using marimo's own
+  // "marimo-value-input" event (the same one its widgets use). Python
+  // then evaluates with the pulse edges as the zero crossings. The nonce
+  // makes every click a new value, so clicking twice with the same
+  // offsets still re-evaluates.
+  var pulseButton = document.createElement("button");
+  pulseButton.type = "button";
+  pulseButton.id = "pulse-eval";
+  pulseButton.textContent = "Evaluate with pulse";
+  pulseButton.addEventListener("click", function() {{
+    var request = {{ offsets_ms: offsets, nonce: Date.now() }};
+    try {{
+      var doc = window.parent.document;
+      // Attribute values are JSON-encoded by marimo, so compare against the
+      // JSON form; a plain loop avoids any CSS-selector quoting.
+      var wanted = JSON.stringify(PULSE_EVAL_PLACEHOLDER);
+      var field = null;
+      var candidates = doc.querySelectorAll("marimo-text");
+      for (var i = 0; i < candidates.length; i++) {{
+        if (candidates[i].getAttribute("data-placeholder") === wanted) {{ field = candidates[i]; }}
+      }}
+      if (!field) return;
+      var ev = new window.parent.CustomEvent("marimo-value-input", {{
+        bubbles: true, composed: true,
+        detail: {{ value: JSON.stringify(request), element: field }},
+      }});
+      doc.dispatchEvent(ev);
+    }} catch(e) {{}}
+  }});
+  row.appendChild(pulseButton);
+  // Apply the saved offsets to the initial data before the first draw.
+  trace.x = shiftedX();
+}}
+
+var PULSE_EVAL_PLACEHOLDER = {pulse_eval_placeholder_json};
 
 window.onload = function() {{
   var ZOOM_KEY = {zoom_key_json};
   var store; try {{ window.parent.__cofXR = window.parent.__cofXR || {{}}; store = window.parent.__cofXR; }} catch(e) {{ store = {{}}; }}
+  // The y-range is remembered the same way (window.parent.__cofYR). On a
+  // rebuild of the same chart it is reused instead of being fitted again,
+  // so a change that moves the whole curve - the Offset toggle - is seen as
+  // the curve moving, not as the axis numbers quietly changing under a
+  // curve that stays put. Zooming/panning still refits y (and updates the
+  // stored range); Autoscale refits to the whole file.
+  try {{ window.parent.__cofYR = window.parent.__cofYR || {{}}; storeY = window.parent.__cofYR; }} catch(e) {{ storeY = {{}}; }}
+  YKEY = ZOOM_KEY;
+  setupPulseOffset();
 
   var xr = store[ZOOM_KEY];
   if (xr) {{ l.xaxis = l.xaxis || {{}}; l.xaxis.range = xr; l.xaxis.autorange = false; }}
 
   var initialXMin = xr ? xr[0] : null, initialXMax = xr ? xr[1] : null;
-  var initialYRange = fitYRange(initialXMin, initialXMax);
+  var initialYRange = storeY[ZOOM_KEY];
+  if (!initialYRange) {{
+    initialYRange = fitYRange(initialXMin, initialXMax);
+    try {{ storeY[ZOOM_KEY] = initialYRange; }} catch(e) {{}}
+  }}
   if (initialYRange) {{ l.yaxis = l.yaxis || {{}}; l.yaxis.range = initialYRange; l.yaxis.autorange = false; }}
 
   Plotly.react("c", d, l, {{ scrollZoom: true, displayModeBar: true, responsive: true }})
@@ -337,4 +529,4 @@ window.onload = function() {{
 </body></html>"""
 
     srcdoc = iframe_html.replace("&", "&amp;").replace("<", "&lt;").replace("'", "&#39;")
-    return f"<iframe srcdoc='{srcdoc}' style='width:100%;height:440px;border:none;display:block'></iframe>"
+    return f"<iframe srcdoc='{srcdoc}' style='width:100%;height:500px;border:none;display:block'></iframe>"

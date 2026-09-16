@@ -18,8 +18,9 @@ def _():
     import results_table
     import table_helpers
     import settings_store
+    import speed_pulse
 
-    return charts, data_loader, mo, pipeline, results_table, settings_store, table_helpers
+    return charts, data_loader, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -104,8 +105,8 @@ def _(mo):
         "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
     }
     # Same card look, but as a fixed-height flex column with the button
-    # pinned to the bottom - so the 4 action cards (Actions/Filter/
-    # Evaluate/Save) line their buttons up on one baseline regardless of
+    # pinned to the bottom - so the 3 action cards (Actions/Filter/
+    # Evaluate) line their buttons up on one baseline regardless of
     # how many fields the middle of each card has.
     ACTION_CARD_STYLE = {
         "background": "#fff",
@@ -168,6 +169,28 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    # Which evaluation the page shows: "crossings" (Evaluate - cycle
+    # boundaries are the zero crossings found in the signal) or "pulse"
+    # (the chart's Evaluate with pulse button - boundaries are the speed
+    # pulse's edges). Whichever button was clicked last wins.
+    get_eval_mode, set_eval_mode = mo.state("crossings")
+    return get_eval_mode, set_eval_mode
+
+
+@app.cell
+def _(mo):
+    # Snapshot taken when "Evaluate with pulse" is clicked: the pulse edges
+    # (offsets applied), the Evaluate fields, and the file it was clicked
+    # for. The pulse evaluation is computed from this snapshot only, so
+    # moving an offset afterwards moves the drawn pulse but not the results
+    # until the button is clicked again. "nonce" is the click id, so the
+    # same click is never handled twice.
+    get_pulse_eval_request, set_pulse_eval_request = mo.state(None)
+    return get_pulse_eval_request, set_pulse_eval_request
+
+
+@app.cell
+def _(mo):
     # One shared status message per tab, each shown in a single place on
     # that tab's page. Whichever action on that tab last had something to
     # say calls its set_..._status_msg() to replace it - so each tab has
@@ -214,7 +237,7 @@ def _(offset_btn, set_offset):
 
 @app.cell
 def _(mo):
-    save_btn = mo.ui.run_button(label="💾 Save")
+    save_btn = mo.ui.run_button(label="&#128190; Save")
     return (save_btn,)
 
 
@@ -236,14 +259,14 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    open_excel_btn = mo.ui.run_button(label="📂 Open in Excel")
+    open_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
     return (open_excel_btn,)
 
 
 
 @app.cell
 def _(mo):
-    open_results_excel_btn = mo.ui.run_button(label="📂 Open Results in Excel")
+    open_results_excel_btn = mo.ui.run_button(label="&#128194; Open Results in Excel")
     return (open_results_excel_btn,)
 
 
@@ -357,16 +380,10 @@ def _(mo):
         '<div style="display:flex;align-items:center;gap:6px">'
         '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'
         '<div style="width:60px">{filter_points}</div></div>'
-        '<div style="display:flex;align-items:center;gap:6px">'
-        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter method</span>{method}</div>'
         '</div>'
     )
     filter_fields = _filter_tpl.batch(
         filter_points=mo.ui.text(value="25"),
-        method=mo.ui.dropdown(
-            options={"VBA-exact (slow)": "vba", "Fast (approximate)": "fast"},
-            value="VBA-exact (slow)",
-        ),
     )
     return (filter_fields,)
 
@@ -448,7 +465,7 @@ def _(
                 _file_id = (file_upload.value[0].name, len(file_upload.value[0].contents))
                 set_parsed_data((_df_raw, _step_df, _p, _file_id))
                 set_results_status_msg(mo.callout(
-                    mo.md(f"**{file_upload.value[0].name}** — {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
+                    mo.md(f"**{file_upload.value[0].name}** &mdash; {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
                     kind="success",
                 ))
             except Exception as _e:
@@ -559,19 +576,107 @@ def _(
     parsed_file_id,
     pipeline,
     set_eval_file_id,
+    set_eval_mode,
     set_eval_params,
     set_results_status_msg,
 ):
     if eval_btn.value:
         set_eval_params(eval_fields.value)
         set_eval_file_id(parsed_file_id)
+        set_eval_mode("crossings")
     active_eval_params = get_eval_params() if get_eval_file_id() == parsed_file_id else None
-    cof_eval = None
+    cof_eval_crossings = None
     try:
-        cof_eval = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
+        cof_eval_crossings = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
     except Exception as _e:
         set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
-    return active_eval_params, cof_eval
+    return active_eval_params, cof_eval_crossings
+
+
+@app.cell
+def _(charts, mo):
+    # Hidden text field the chart's "Evaluate with pulse" button writes into
+    # (see setupPulseOffset() in charts.py). It is found by its placeholder,
+    # so that must stay PULSE_EVAL_PLACEHOLDER. Nothing that renders the
+    # page depends on it - only the handler cell below.
+    pulse_eval_field = mo.ui.text(value="", placeholder=charts.PULSE_EVAL_PLACEHOLDER)
+    return (pulse_eval_field,)
+
+
+@app.cell
+def _(
+    eval_fields,
+    get_pulse_eval_request,
+    parsed_file_id,
+    pulse,
+    pulse_eval_field,
+    set_eval_mode,
+    set_pulse_eval_request,
+    speed_pulse,
+):
+    # Handles a click of the chart's "Evaluate with pulse" button. The field
+    # holds JSON {"offsets_ms": {step index: ms}, "nonce": click id}. Only a
+    # click not seen before is acted on - this cell also re-runs when the
+    # pulse changes, and must not re-snapshot then.
+    import json as _json
+    _request = None
+    if pulse_eval_field.value:
+        try:
+            _request = _json.loads(pulse_eval_field.value)
+        except ValueError:
+            _request = None
+    _previous = get_pulse_eval_request()
+    _is_new_click = (
+        _request is not None
+        and (_previous is None or _previous["nonce"] != _request.get("nonce"))
+    )
+    if _is_new_click and pulse is not None:
+        _offsets_s = {}
+        for _key, _ms in _request.get("offsets_ms", {}).items():
+            try:
+                _offsets_s[int(_key)] = float(_ms) / 1000.0
+            except (ValueError, TypeError):
+                pass
+        set_pulse_eval_request({
+            "edges": speed_pulse.shift_edges(pulse["edges"], _offsets_s),
+            "params": eval_fields.value,
+            "file_id": parsed_file_id,
+            "nonce": _request.get("nonce"),
+        })
+        set_eval_mode("pulse")
+    return
+
+
+@app.cell
+def _(df_display, get_pulse_eval_request, mo, parsed_file_id, pipeline, set_results_status_msg):
+    _request = get_pulse_eval_request()
+    cof_eval_pulse = None
+    if _request is not None and _request["file_id"] == parsed_file_id and df_display is not None:
+        try:
+            cof_eval_pulse = pipeline.compute_pulse_evaluation(
+                df_display, _request["edges"], _request["params"]
+            )
+            if cof_eval_pulse is not None:
+                set_results_status_msg(mo.callout(mo.md(
+                    f"**Evaluated with pulse:** {len(cof_eval_pulse['cof_res']):,} cycles "
+                    "(zero crossings = pulse edges, static = first peak up to Dyn min). "
+                    "Click **Evaluate** to go back to the signal's zero crossings."
+                ), kind="success"))
+        except Exception as _e:
+            set_results_status_msg(mo.callout(mo.md(f"**Evaluate with pulse error:** {_e}"), kind="danger"))
+    return (cof_eval_pulse,)
+
+
+@app.cell
+def _(cof_eval_crossings, cof_eval_pulse, get_eval_mode):
+    # The evaluation everything downstream (chart markers, tables, Excel,
+    # Save) works with: the pulse evaluation while it is the one asked for
+    # last and actually exists, otherwise the normal one.
+    if get_eval_mode() == "pulse" and cof_eval_pulse is not None:
+        cof_eval = cof_eval_pulse
+    else:
+        cof_eval = cof_eval_crossings
+    return (cof_eval,)
 
 
 @app.cell
@@ -642,9 +747,9 @@ def _(
 # ── History panel ──────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
-    refresh_btn = mo.ui.run_button(label="🔄 Refresh")
-    delete_btn = mo.ui.run_button(label="🗑 Delete selected", kind="danger")
-    open_history_excel_btn = mo.ui.run_button(label="📂 Open in Excel")
+    refresh_btn = mo.ui.run_button(label="&#128260; Refresh")
+    delete_btn = mo.ui.run_button(label="&#128465; Delete selected", kind="danger")
+    open_history_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
     return delete_btn, open_history_excel_btn, refresh_btn
 
 
@@ -700,7 +805,7 @@ def _(history_table, mo, selected_test_ids):
     # none, and no single chart to draw for several.
     _n_selected = len(selected_test_ids(history_table.value))
     show_chart_btn = mo.ui.run_button(
-        label="📈 Show chart",
+        label="&#128200; Show chart",
         disabled=_n_selected != 1,
     )
     return (show_chart_btn,)
@@ -872,7 +977,25 @@ def _(get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, show
 
 
 @app.cell
-def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_file_id, pipeline, step_df):
+def _(cof_eval_crossings, df_display, speed_pulse, step_df):
+    # Nominal-speed square wave (30/Drehzahl s per half-stroke), anchored per
+    # step on the first zero crossing Evaluate found there. Before Evaluate
+    # it starts at each step's Startzeit instead, so it is visible as soon as
+    # a file with steps is parsed. The "Pulse offset" boxes live inside the
+    # chart iframe and shift the trace in the browser only. Anchored on the
+    # crossings evaluation, never on the pulse one - that would be circular.
+    _minima = None
+    if cof_eval_crossings is not None:
+        _minima = cof_eval_crossings["minima"]
+    if df_display is None:
+        pulse = None
+    else:
+        pulse = speed_pulse.build_speed_pulse(df_display, step_df, _minima)
+    return (pulse,)
+
+
+@app.cell
+def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_file_id, pipeline, pulse, step_df):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -881,16 +1004,18 @@ def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_fi
         )
     else:
         _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
-        _fig = charts.build_cof_figure(df_display, df_proc, cof_eval, step_df, _filter_active)
+        _fig = charts.build_cof_figure(df_display, df_proc, cof_eval, step_df, _filter_active, speed_pulse=pulse)
         # df_display only ever gets built from data tagged with the file
         # that's actually in the upload box right now (see the df_display
         # cell above) - so this name is never stale, unlike just reading
         # file_upload directly here would risk if the two ever raced.
-        _fname = parsed_file_id[0] if parsed_file_id else "—"
+        _fname = parsed_file_id[0] if parsed_file_id else "&mdash;"
         cof_chart = mo.vstack([
             mo.Html(f'<p style="font-size:0.72rem;color:#888;margin:0 0 4px 0">'
                      f'Showing: <strong>{_fname}</strong></p>'),
-            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key="live")),
+            # Keyed by file, so the remembered x-zoom / y-range of one file
+            # is never applied to the next one.
+            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"live-{_fname}")),
         ], gap=0)
     return (cof_chart,)
 
@@ -982,11 +1107,11 @@ def _(
 # entire tab (chart included) and risking the frontend losing its
 # connection to every other button in the process.
 @app.cell
-def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, parsed_file_id):
+def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PANEL_STYLE, parsed_file_id, save_btn):
     if file_upload.value:
         _rvm_test = file_upload.value[0].name.replace(".txt", "")
     else:
-        _rvm_test = "—"
+        _rvm_test = "&mdash;"
 
     # Raw Data's fields deliberately keep their values across an upload (see
     # raw_data_form's own cell) instead of resetting to defaults - but that
@@ -1001,12 +1126,12 @@ def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PA
         if file_upload.value else None
     )
     if file_upload.value and _current_file_id != parsed_file_id:
-        _status = mo.callout(mo.md("**New file uploaded** — click **Calculate** to parse it."), kind="warn")
+        _status = mo.callout(mo.md("**New file uploaded** &mdash; click **Calculate** to parse it."), kind="warn")
     else:
         _status = get_results_status_msg()
 
     upload_card = mo.vstack([
-        mo.hstack([file_upload, calculate_btn, open_excel_btn], justify="start", align="center"),
+        mo.hstack([file_upload, calculate_btn, open_excel_btn, save_btn], justify="start", align="center"),
         _status,
         mo.Html('<hr class="divider">'),
         mo.Html(f'<div style="display:flex;flex-direction:column;gap:2px">'
@@ -1036,7 +1161,6 @@ def _(
     get_offset,
     mo,
     offset_btn,
-    save_btn,
 ):
     _offset_badge = (
         mo.Html('<span style="font-size:0.7rem;color:#4cceac;font-weight:700">ON</span>')
@@ -1046,16 +1170,17 @@ def _(
         mo.vstack([mo.Html('<p class="section-label" style="margin:0">ACTIONS</p>'), offset_btn, _offset_badge], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
         mo.vstack([mo.Html('<p class="section-label" style="margin:0">FILTER</p>'), filter_fields, filter_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
         mo.vstack([mo.Html('<p class="section-label" style="margin:0">EVALUATE</p>'), eval_fields, eval_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
-        mo.vstack([mo.Html('<p class="section-label" style="margin:0">SAVE</p>'), save_btn], gap=1, justify="space-between").style(ACTION_CARD_STYLE),
     ], gap=2, align="stretch", widths="equal")
     return (actions_row,)
 
 
 @app.cell
-def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, results_panel):
+def _(cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_panel):
     viz_card = mo.vstack([
         mo.Html('<p class="panel-title">Analysis Visualization</p>'),
         cof_chart,
+        # invisible; only there so the chart's JS can find and write to it
+        pulse_eval_field.style({"display": "none"}),
         mo.Html('<hr class="divider">'),
         eval_table_panel,
         results_panel,
@@ -1124,7 +1249,7 @@ def _(mo):
         _webbrowser.open(_help_url)
         return value
 
-    help_button = mo.ui.button(label="❓ Help", on_click=_open_help)
+    help_button = mo.ui.button(label="&#10067; Help", on_click=_open_help)
     return (help_button,)
 
 
@@ -1136,7 +1261,7 @@ def _(mo):
     # a window opened from Python is a static HTML file with no connection
     # back to this session, so its input boxes would be dead and Calculate
     # would have nothing to read.
-    raw_data_toggle_btn = mo.ui.run_button(label="⚙ Raw Data")
+    raw_data_toggle_btn = mo.ui.run_button(label="&#9881; Raw Data")
     return (raw_data_toggle_btn,)
 
 
@@ -1161,21 +1286,51 @@ def _(mo):
     # own label, so the state holds the label itself, and the labels live
     # here (rather than inline below) so the initial value can't drift out of
     # sync with the dict keys.
-    ANALYSIS_TAB = "📊  Analysis"
-    HISTORY_TAB = "🗂  History"
+    # Emoji (and any other character outside Latin-1) are written as HTML
+    # entities everywhere in this app, never as literal characters. marimo
+    # sizes a cell's output with sys.getsizeof() on the Python string, and a
+    # str holding even one such character is stored at 4 bytes per character
+    # for the WHOLE string - the entire page is one output, so a single
+    # literal emoji quadruples its measured size and trips marimo's 5 MB
+    # output limit as soon as a chart is on the page.
+    ANALYSIS_TAB = "&#128202;  Analysis"
+    HISTORY_TAB = "&#128450;  History"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
     return ANALYSIS_TAB, HISTORY_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(ANALYSIS_TAB, HISTORY_TAB, get_active_tab, history_tab, mo, results_tab, set_active_tab):
+def _(ANALYSIS_TAB, HISTORY_TAB, get_active_tab, history_tab, mo, results_tab):
+    # Only the active tab's real content goes into the page. mo.ui.tabs puts
+    # every tab's HTML into the one output marimo sizes against its 5 MB
+    # limit, and each tab can hold a chart of ~2 MB - both at once was what
+    # tipped it over. The hidden tab gets a light placeholder instead.
+    # (mo.ui.tabs(lazy=True) would be the obvious tool, but marimo strips
+    # <iframe> from lazily loaded HTML, and the charts are iframes.)
+    #
+    # This selection lives in its own cell, separate from the one that owns
+    # the tabs' on_change: marimo never re-runs the cell that called a state
+    # setter, and it attributes a setter called from on_change to the cell
+    # that created the element. Reading get_active_tab() here instead makes
+    # this cell re-run on every tab switch, and the tabs cell follows as its
+    # dependent.
+    _placeholder = mo.Html('<div style="min-height:200px"></div>')
+    if get_active_tab() == HISTORY_TAB:
+        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: history_tab}
+    else:
+        tab_contents = {ANALYSIS_TAB: results_tab, HISTORY_TAB: _placeholder}
+    return (tab_contents,)
+
+
+@app.cell
+def _(get_active_tab, mo, set_active_tab, tab_contents):
     # value=/on_change= rather than a bare mo.ui.tabs(...): this cell depends
-    # on results_tab/history_tab, which change identity after nearly every
-    # action in the app, so the tabs element is rebuilt often. Without the
-    # remembered value, each of those rebuilds would silently drop the view
-    # back to the first tab mid-work.
+    # on tab_contents, which changes identity after nearly every action in
+    # the app, so the tabs element is rebuilt often. Without the remembered
+    # value, each of those rebuilds would silently drop the view back to the
+    # first tab mid-work.
     main_tabs = mo.ui.tabs(
-        {ANALYSIS_TAB: results_tab, HISTORY_TAB: history_tab},
+        tab_contents,
         value=get_active_tab(),
         on_change=set_active_tab,
     )

@@ -46,6 +46,7 @@ def get_static_and_dynamic_cof(
     static_cof_range: float,
     beginning_dynamic_range: float,
     ending_dynamic_range: float,
+    static_mode: str = "fixed_window",
 ) -> pd.DataFrame:
     """Per-cycle static/dynamic CoF statistics. See utility_functions.Evaluate."""
     return Evaluate(
@@ -55,4 +56,5 @@ def get_static_and_dynamic_cof(
         static_cof_range,
         beginning_dynamic_range,
         ending_dynamic_range,
+        static_mode=static_mode,
     )

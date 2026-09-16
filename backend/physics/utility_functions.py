@@ -43,51 +43,19 @@ def offset(df):
     return df
 
 
-def filter_vb_style(series, n):
-    """Centered rolling median matching the VB CoFFilter macro exactly.
-    Edge handling: window grows 1,3,5,...,n-2 at start and shrinks symmetrically at end."""
-    N = len(series)
-    half_n = n / 2.0
-    result = series.copy().astype(float)
-
-    for i in range(1, N + 1):  # 1-indexed like VB
-        if i <= half_n:
-            start = 0
-            end = 2 * i - 2
-        elif i > N - half_n:
-            start = 2 * i - N - 1
-            end = N - 1
-        else:
-            start = round(i - half_n) - 1
-            end = round(i + half_n) - 1
-
-        start = max(0, start)
-        end = min(N - 1, end)
-        result.iloc[i - 1] = series.iloc[start:end + 1].median()
-
-    return result
-
-
 def filter_fast(series, n):
-    """Vectorized centered rolling median (pandas C implementation).
-    Not bit-exact with the VBA macro's edge-window growth/shrink, but same
-    result in the interior and orders of magnitude faster on large series."""
+    """Centered rolling median over `n` samples (pandas C implementation).
+    At the two ends of the series the window simply has fewer samples."""
     return series.rolling(window=n, center=True, min_periods=1).median()
 
 
-def filter(df, window, method="vba"):
+def filter(df, window):
     # df is already trimmed to [first step start, last step end] upstream when steps
     # exist, so filtering the whole received range covers both cases.
-    if method == "vba":
-        filter_fn = filter_vb_style
-    elif method == "fast":
-        filter_fn = filter_fast
-    else:
-        raise ValueError(f"Unknown filter method: {method!r}. Expected one of ['vba', 'fast']")
     has_stroke = "stroke" in df.columns
-    df["CoF"] = filter_fn(df["CoF"], window).round(15).values
+    df["CoF"] = filter_fast(df["CoF"], window).round(15).values
     if has_stroke:
-        df["stroke"] = filter_fn(df["stroke"], window).round(15).values
+        df["stroke"] = filter_fast(df["stroke"], window).round(15).values
     return df
 
 
@@ -189,16 +157,126 @@ def Find_minima(df, column):
     return res
 
 
+# --- first-peak static CoF (used by "Evaluate with pulse") -----------------
+# Light smoothing used only to locate the peak (the value is read from raw).
+# 3 samples: enough to ignore a single-sample spike, small enough not to
+# flatten a real breakaway peak, which at high speed is only a few samples
+# wide.
+FIRST_PEAK_SMOOTH_SAMPLES = 3
+# After locating the peak on the smoothed signal, the exact raw maximum is
+# taken within this many samples of it.
+FIRST_PEAK_REFINE_SAMPLES = 3
+# The search starts this many samples before the crossing, as a safety margin.
+FIRST_PEAK_START_MARGIN_SAMPLES = 2
+# A sample only counts as a peak if nothing within this many samples on
+# either side (on the smoothed signal) is bigger. The window is this
+# fraction of the search region, but never fewer than the minimum below -
+# so a small wobble on the rising edge is not mistaken for the breakaway.
+FIRST_PEAK_WIDTH_FRACTION = 0.10
+FIRST_PEAK_MIN_WIDTH_SAMPLES = 3
+
+
+def find_first_peak(Stroke, start_i, dyn_start_i, sign):
+    """Index of the FIRST peak of sign * Stroke after a zero crossing.
+
+    All indices are 0-based positions in `Stroke`. `start_i` is the zero
+    crossing that starts the cycle, `dyn_start_i` is where the dynamic
+    plateau begins (the search stops there), and `sign` is +1 when this
+    half-cycle is positive and -1 when it is negative.
+
+    Walking forward on a lightly smoothed copy, a sample is the peak when it
+    is positive, not flat, and nothing within +/- the peak-width window is
+    bigger. Later, possibly bigger peaks are stick-slip, not the breakaway.
+    A first "peak" inside the last window of the region means the signal is
+    still climbing into the plateau, so it does not count.
+
+    Returns the raw index of the peak, or None when there is no peak.
+    """
+    n = len(Stroke)
+    lo = start_i - FIRST_PEAK_START_MARGIN_SAMPLES
+    if lo < 0:
+        lo = 0
+    hi = dyn_start_i
+    if hi > n:
+        hi = n
+    if hi - lo < FIRST_PEAK_SMOOTH_SAMPLES:
+        return None
+
+    region = np.asarray(Stroke[lo:hi], dtype=float) * sign
+    smoothed = (
+        pd.Series(region)
+        .rolling(window=FIRST_PEAK_SMOOTH_SAMPLES, center=True, min_periods=1)
+        .median()
+        .to_numpy()
+    )
+
+    width = int(round(FIRST_PEAK_WIDTH_FRACTION * len(smoothed)))
+    if width < FIRST_PEAK_MIN_WIDTH_SAMPLES:
+        width = FIRST_PEAK_MIN_WIDTH_SAMPLES
+
+    candidate = -1
+    for m in range(1, len(smoothed) - 1):
+        if smoothed[m] <= 0:
+            continue
+        w_lo = m - width
+        w_hi = m + width
+        if w_lo < 0:
+            w_lo = 0
+        if w_hi > len(smoothed) - 1:
+            w_hi = len(smoothed) - 1
+        is_biggest_nearby = True
+        for w in range(w_lo, w_hi + 1):
+            if smoothed[w] > smoothed[m]:
+                is_biggest_nearby = False
+                break
+        if not is_biggest_nearby:
+            continue
+        is_flat = smoothed[m] == smoothed[m - 1] and smoothed[m] == smoothed[m + 1]
+        if is_flat:
+            continue
+        candidate = m
+        break
+
+    if candidate < 0:
+        return None
+    if candidate >= len(smoothed) - width:
+        return None
+
+    # Read the exact peak from the raw values around the smoothed location.
+    r_lo = candidate - FIRST_PEAK_REFINE_SAMPLES
+    r_hi = candidate + FIRST_PEAK_REFINE_SAMPLES
+    if r_lo < 0:
+        r_lo = 0
+    if r_hi > len(region) - 1:
+        r_hi = len(region) - 1
+    best_m = r_lo
+    best_v = region[r_lo]
+    for m in range(r_lo + 1, r_hi + 1):
+        if region[m] > best_v:
+            best_v = region[m]
+            best_m = m
+    return lo + best_m
+
+
 def Evaluate(
-    df, minima, column, static_cof_range, beginning_dynamic_range, ending_dynamic_range
+    df, minima, column, static_cof_range, beginning_dynamic_range, ending_dynamic_range,
+    static_mode="fixed_window",
 ):
     """Compute per-cycle static/dynamic CoF statistics between zero crossings.
 
     For each pair of consecutive negative-going zero crossings in `minima`
-    (one full stroke cycle), finds the static CoF (the peak/trough of
-    `column` within the first `static_cof_range`% of the cycle) and the
-    dynamic CoF (the mean of `column` over the
-    [beginning_dynamic_range%, ending_dynamic_range%] window of the cycle).
+    (one full stroke cycle), finds the static CoF and the dynamic CoF (the
+    mean of `column` over the [beginning_dynamic_range%,
+    ending_dynamic_range%] window of the cycle).
+
+    static_mode decides how the static CoF is found:
+      "fixed_window" - the peak/trough of `column` within the first
+                       `static_cof_range`% of the cycle (the original rule);
+      "first_peak"   - the first peak after the zero crossing, searched up
+                       to the start of the dynamic window (find_first_peak);
+                       cycles with no such peak fall back to the fixed
+                       window.
+
     Cycles whose start index equals its rounded end index, or that fail for
     any other reason, are skipped (logged as a warning, not raised) — this
     mirrors the reference VBA tool's behavior of silently disregarding
@@ -212,6 +290,28 @@ def Evaluate(
     Stroke = df[column].tolist()
     Speed = df["Drehzahl"].tolist() if "Drehzahl" in df.columns else None
     negMinTime = minima["-Min Zeit"].tolist()
+    # Optional: which way each crossing goes (+1 = the CoF goes positive after
+    # it, -1 = negative). Present when the crossings are the speed pulse's
+    # edges ("Evaluate with pulse"); then the peak is looked for on that
+    # side, instead of reading the sign off the signal itself.
+    if "direction" in minima.columns:
+        crossingDirection = minima["direction"].tolist()
+    else:
+        crossingDirection = None
+
+    def cycle_sign(crossing_j, endIndex):
+        """+1 / -1 for the cycle that starts at crossing crossing_j: the
+        crossing's own direction when known, else the sign of the raw CoF at
+        the end of the static window. 0 when that value is exactly zero."""
+        if crossingDirection is not None:
+            if crossingDirection[crossing_j] >= 0:
+                return 1
+            return -1
+        if Stroke[endIndex - 1] > 0:
+            return 1
+        if Stroke[endIndex - 1] < 0:
+            return -1
+        return 0
 
     startIndex = []
     maxStrokeIndex = []
@@ -234,6 +334,20 @@ def Evaluate(
     # j = crossing index: startIndex[j] is crossing j's row number in the raw table.
     for j in range(len(negMinTime)):
         startIndex.append(Time.index(negMinTime[j]) + 1)
+
+    def replace_with_first_peak(prevIndex, nextIndex, sign):
+        """In "first_peak" mode, swap the static value just appended (found
+        with the fixed window) for the first peak after the crossing, if
+        there is one. prevIndex/nextIndex are 1-based rows like startIndex;
+        find_first_peak wants 0-based ones, hence the -1s. `sign` is the
+        cycle's +1 / -1 from cycle_sign()."""
+        if static_mode != "first_peak":
+            return
+        dynStart = prevIndex + _vba_round(b * (nextIndex - prevIndex))
+        peak_i = find_first_peak(Stroke, prevIndex - 1, dynStart - 1, sign)
+        if peak_i is not None:
+            maxStroke[-1] = Stroke[peak_i]
+            maxStrokeTime[-1] = Time[peak_i]
 
     # k = cycle index: cycle k is the stroke between crossing k-1 and crossing k -
     # it reuses j's own numbering rather than counting separately.
@@ -262,7 +376,8 @@ def Evaluate(
             # to reference. Replicated here for parity with the VBA tool.
             movingTimeRange = Time[startIndex[k - 1] - 3 : endIndex - 2]
             movingRange = Stroke[startIndex[k - 1] - 3 : endIndex - 2]
-            if Stroke[endIndex - 1] > 0:
+            sign = cycle_sign(k - 1, endIndex)
+            if sign > 0:
                 maxStroke.append(max(movingRange))
                 # Find the position of the biggest value in movingRange. If
                 # more than one sample ties for biggest, keep the first one
@@ -273,7 +388,7 @@ def Evaluate(
                     if movingRange[m] > biggest_value:
                         biggest_value = movingRange[m]
                         index = m
-            elif Stroke[endIndex - 1] < 0:
+            elif sign < 0:
                 maxStroke.append(min(movingRange))
                 # Same idea, but looking for the smallest value instead.
                 index = 0
@@ -285,6 +400,7 @@ def Evaluate(
             else:
                 continue
             maxStrokeTime.append(movingTimeRange[index])
+            replace_with_first_peak(startIndex[k - 1], startIndex[k], sign)
             startdynamicIndex.append(
                 startIndex[k - 1] + _vba_round(b * (startIndex[k] - startIndex[k - 1]))
             )
@@ -329,7 +445,8 @@ def Evaluate(
                 )
             movingTimeRange = Time[prevIndex - 3 : endIndex - 2]
             movingRange = Stroke[prevIndex - 3 : endIndex - 2]
-            if Stroke[endIndex - 1] > 0:
+            sign = cycle_sign(len(negMinTime) - 1, endIndex)
+            if sign > 0:
                 maxStroke.append(max(movingRange))
                 index = 0
                 biggest_value = movingRange[0]
@@ -337,7 +454,7 @@ def Evaluate(
                     if movingRange[m] > biggest_value:
                         biggest_value = movingRange[m]
                         index = m
-            elif Stroke[endIndex - 1] < 0:
+            elif sign < 0:
                 maxStroke.append(min(movingRange))
                 index = 0
                 smallest_value = movingRange[0]
@@ -348,6 +465,7 @@ def Evaluate(
             else:
                 raise Exception("Endpoint value is exactly zero.")
             maxStrokeTime.append(movingTimeRange[index])
+            replace_with_first_peak(prevIndex, nextIndex, sign)
             startdynamicIndex.append(prevIndex + _vba_round(b * (nextIndex - prevIndex)))
             enddynamicIndex.append(prevIndex + _vba_round(c * (nextIndex - prevIndex)))
             startdynamicTime.append(Time[startdynamicIndex[-1] - 1])

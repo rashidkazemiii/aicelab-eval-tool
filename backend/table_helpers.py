@@ -130,26 +130,41 @@ def decimate_keep_windows(x, y, max_points, keep_times, half_width_s, window_max
             times.append(float(t))
 
     if len(times) > 0:
-        # Estimate how many raw samples one second holds, so the window can
-        # be narrowed if the total would exceed window_max_points.
-        duration = x_arr[-1] - x_arr[0]
-        if duration > 0:
-            samples_per_second = n / duration
-        else:
-            samples_per_second = 1.0
-        requested_total = len(times) * 2 * half_width_s * samples_per_second
-        if requested_total > window_max_points:
-            half_width_s = half_width_s * (window_max_points / requested_total)
+        def window_bounds(width_s):
+            """Raw index range [start, end) of every window at this width,
+            and how many samples they hold in total."""
+            bounds = []
+            total = 0
+            for t in times:
+                start = int(np.searchsorted(x_arr, t - width_s, side="left"))
+                end = int(np.searchsorted(x_arr, t + width_s, side="right"))
+                if start < 0:
+                    start = 0
+                if end > n:
+                    end = n
+                if start < end:
+                    bounds.append((start, end))
+                    total += end - start
+            return bounds, total
 
-        for t in times:
-            start = int(np.searchsorted(x_arr, t - half_width_s, side="left"))
-            end = int(np.searchsorted(x_arr, t + half_width_s, side="right"))
-            if start < 0:
-                start = 0
-            if end > n:
-                end = n
-            if start < end:
-                keep[start:end] = True
+        # Narrow the window until the windows hold at most window_max_points
+        # samples in total. Counted exactly from the time axis (not estimated
+        # from an average sample rate), so a file with pauses, gaps or an odd
+        # sample spacing can never blow the chart up. A few rounds are enough
+        # because each one scales the width by the measured overshoot.
+        bounds, total = window_bounds(half_width_s)
+        rounds = 0
+        while total > window_max_points and rounds < 5:
+            half_width_s = half_width_s * (window_max_points / total)
+            bounds, total = window_bounds(half_width_s)
+            rounds += 1
+        if total > window_max_points:
+            # Even one sample per window is too many - keep no windows at all
+            # rather than an oversized chart.
+            bounds = []
+
+        for start, end in bounds:
+            keep[start:end] = True
 
     out_x = []
     out_y = []

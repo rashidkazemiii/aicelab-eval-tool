@@ -7,6 +7,7 @@ the pipeline logic can be read and edited in one place, without it being
 mixed into marimo cell bodies.
 """
 
+import numpy as np
 import pandas as pd
 
 from physics import CoF as cof_calc
@@ -71,8 +72,7 @@ def compute_filtered_df(df_display, filter_params):
     window = int(filter_params["filter_points"])
     if window <= 1:
         return df_display.copy()
-    method = filter_params.get("method", "vba")
-    return utility_functions.filter(df_display.copy(), window, method=method)
+    return utility_functions.filter(df_display.copy(), window)
 
 
 def is_filter_active(filter_params, df_proc):
@@ -99,6 +99,87 @@ def compute_evaluation(df_display, df_proc, eval_params):
         float(eval_params["static_range"]),
         float(eval_params["dyn_min"]),
         float(eval_params["dyn_max"]),
+    )
+    return {"minima": minima, "cof_res": cof_res}
+
+
+def pulse_edges_to_minima(df_display, pulse_edges):
+    """Turn the speed pulse's edges into a zero-crossing table shaped like
+    Find_minima's result, so Evaluate can use them as cycle boundaries.
+
+    Each edge time is moved to the nearest raw sample (Evaluate looks the
+    crossing up by its exact sample time). That sample and the next one
+    stand in for the "-Min"/"+Min" pair; "Min Zeit" keeps the exact edge
+    time for the chart marker. Edges outside the recording are dropped.
+
+    The extra "direction" column (+1 rising edge, -1 falling edge) tells
+    Evaluate which side to look for the static peak on: a rising edge
+    starts a positive half-cycle, so only positive peaks count there, and
+    the other way round for a falling edge.
+    """
+    times = df_display["Zeit"].to_numpy()
+    values = df_display["CoF"].to_numpy()
+    n = len(times)
+
+    ordered = pulse_edges.sort_values("time")
+    edge_times = ordered["time"].tolist()
+    edge_levels = ordered["level_after"].tolist()
+
+    neg_time = []
+    neg_cof = []
+    pos_time = []
+    pos_cof = []
+    cross_time = []
+    direction = []
+    for j in range(len(edge_times)):
+        t = edge_times[j]
+        i = int(np.searchsorted(times, t))
+        if i >= n:
+            i = n - 1
+        if i > 0 and abs(times[i - 1] - t) < abs(times[i] - t):
+            i = i - 1
+        if i >= n - 1:
+            continue
+        neg_time.append(times[i])
+        neg_cof.append(values[i])
+        pos_time.append(times[i + 1])
+        pos_cof.append(values[i + 1])
+        cross_time.append(t)
+        if edge_levels[j] >= 0:
+            direction.append(1)
+        else:
+            direction.append(-1)
+
+    return pd.DataFrame({
+        "-Min Zeit": neg_time,
+        "-Min CoF": neg_cof,
+        "+Min Zeit": pos_time,
+        "+Min CoF": pos_cof,
+        "Min Zeit": cross_time,
+        "Min CoF": [0] * len(cross_time),
+        "direction": direction,
+    })
+
+
+def compute_pulse_evaluation(df_display, pulse_edges, eval_params):
+    """"Evaluate with pulse": same as compute_evaluation, but the cycle
+    boundaries are the speed pulse's edges instead of the zero crossings
+    found in the signal, and the static CoF is the first peak after each
+    edge (searched up to Dyn min %) instead of the biggest value in the
+    Static % window. Dyn min/max are used exactly as in compute_evaluation.
+    Returns None if the inputs aren't ready yet.
+    """
+    if df_display is None or pulse_edges is None or eval_params is None:
+        return None
+    minima = pulse_edges_to_minima(df_display, pulse_edges)
+    if len(minima) == 0:
+        return None
+    cof_res = cof_calc.get_static_and_dynamic_cof(
+        df_display, minima,
+        float(eval_params["static_range"]),
+        float(eval_params["dyn_min"]),
+        float(eval_params["dyn_max"]),
+        static_mode="first_peak",
     )
     return {"minima": minima, "cof_res": cof_res}
 
