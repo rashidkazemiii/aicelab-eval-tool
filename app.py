@@ -413,10 +413,13 @@ def _(mo):
 
 
 @app.cell
-def _(file_upload, get_seen_upload_id, set_parsed_data, set_seen_upload_id):
+def _(file_upload, get_seen_upload_id, set_loaded_test, set_parsed_data, set_seen_upload_id):
     # Wipes any previously-calculated result the instant a different file
     # lands in the upload box - before Calculate is even pressed - so the
-    # old file's data/chart never lingers behind a new upload. Guarded by
+    # old file's data/chart never lingers behind a new upload. A test that
+    # was loaded from History is dropped here as well, for the same reason:
+    # once a different file is in the box, its chart and evaluated cycles
+    # are not what the page should be showing. Guarded by
     # get_seen_upload_id so this only fires once per actual file change, not
     # on every rerun this cell happens to be part of.
     _current_file_id = (
@@ -426,6 +429,7 @@ def _(file_upload, get_seen_upload_id, set_parsed_data, set_seen_upload_id):
     if _current_file_id != get_seen_upload_id():
         set_seen_upload_id(_current_file_id)
         set_parsed_data(None)
+        set_loaded_test(None)
     return
 
 
