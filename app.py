@@ -197,6 +197,16 @@ def _(mo):
 
 @app.cell
 def _(mo):
+    # What the Filter / Evaluate boxes should show. Only "Load into
+    # Analysis" writes it, so the toolbar is rebuilt for that one action and
+    # for nothing else - typing, Calculate, Filter, Evaluate and Offset all
+    # leave the boxes (and the page) alone. None means the defaults.
+    get_box_values, set_box_values = mo.state(None)
+    return get_box_values, set_box_values
+
+
+@app.cell
+def _(mo):
     # Nonce of the last "Save labels" click that was handled, so the same
     # click is never stored twice when the handler cell re-runs for another
     # reason.
@@ -842,11 +852,13 @@ def _(history_table, mo, selected_test_ids):
 def _(
     ANALYSIS_TAB,
     db_mod,
+    get_box_values,
     history_table,
     load_to_analysis_btn,
     mo,
     selected_test_ids,
     set_active_tab,
+    set_box_values,
     set_eval_mode,
     set_loaded_test,
     set_results_status_msg,
@@ -861,6 +873,25 @@ def _(
                 set_results_status_msg(mo.callout(mo.md(f"Test #{_ids[0]} not found."), kind="warn"))
             else:
                 set_loaded_test(_loaded)
+                # Show the parameters the saved evaluation was made with, so
+                # the boxes match what is on the chart. A test saved without
+                # a filter shows 1, which is "filter off".
+                if _loaded["filter_params"] is not None:
+                    _filter_points = _loaded["filter_params"]["filter_points"]
+                else:
+                    _filter_points = "1"
+                _previous_boxes = get_box_values()
+                if _previous_boxes is None:
+                    _generation = 1
+                else:
+                    _generation = _previous_boxes["generation"] + 1
+                set_box_values({
+                    "generation": _generation,
+                    "filter_points": _filter_points,
+                    "static_range": _loaded["eval_params"]["static_range"],
+                    "dyn_min": _loaded["eval_params"]["dyn_min"],
+                    "dyn_max": _loaded["eval_params"]["dyn_max"],
+                })
                 set_eval_mode("crossings")
                 set_active_tab(ANALYSIS_TAB)
                 _n_labels = len(db_mod.get_labels_for_test(_ids[0]))
@@ -1264,6 +1295,10 @@ def _(mo):
     # boxes keep what was typed. The Offset button and its badge live in
     # the next cell because the badge has to read the offset state, and
     # reading it here would rebuild these boxes on every Offset click.
+    #
+    # get_box_values is the one thing that may rebuild this cell: it changes
+    # only when a saved test is loaded from History, and then the boxes are
+    # supposed to show that test's parameters.
     filter_btn = mo.ui.run_button(label="Filter")
     eval_btn = mo.ui.run_button(label="Evaluate")
     # Fixed-width wrapper around each placeholder: marimo's text input is a
@@ -1336,6 +1371,65 @@ def _(TOOLBAR_STYLE, controls_row, get_offset, mo, offset_btn):
     return (actions_row,)
 
 
+@app.cell
+def _(get_box_values, mo):
+    # Puts the loaded test's parameters into the Filter / Evaluate boxes.
+    #
+    # Not by re-creating the boxes with new values: the browser keeps the
+    # text of a box it has already drawn, so that shows up a load too late.
+    # Instead a hidden iframe writes the values into them the way the chart
+    # writes the pulse offsets - through marimo's own "marimo-value-input"
+    # event, which updates both what is on screen and the value Python
+    # sees. The script runs again on every load because the values change
+    # with it, and it retries for a moment in case the toolbar is rendered
+    # after it.
+    _values = get_box_values()
+    if _values is None:
+        box_value_pusher = mo.Html("")
+    else:
+        _pairs = [
+            ("Filter pts", _values["filter_points"]),
+            ("Static %", _values["static_range"]),
+            ("Dyn min %", _values["dyn_min"]),
+            ("Dyn max %", _values["dyn_max"]),
+        ]
+        _wanted = ", ".join('["%s", "%s"]' % (_label, _value) for _label, _value in _pairs)
+        _script = (
+            "<html><body><script>"
+            "var WANTED = [" + _wanted + "];"
+            "var GENERATION = " + str(_values["generation"]) + ";"
+            "var tries = 0;"
+            "function push() {"
+            "  var doc; try { doc = window.parent.document; } catch (e) { return; }"
+            "  var done = 0;"
+            "  for (var i = 0; i < WANTED.length; i++) {"
+            "    var label = WANTED[i][0], value = WANTED[i][1];"
+            "    var spans = doc.querySelectorAll('span');"
+            "    for (var j = 0; j < spans.length; j++) {"
+            "      if (spans[j].textContent.trim() !== label) { continue; }"
+            "      var holder = spans[j].nextElementSibling;"
+            "      var el = holder ? holder.querySelector('marimo-text') : null;"
+            "      if (!el) { continue; }"
+            "      doc.dispatchEvent(new window.parent.CustomEvent('marimo-value-input', {"
+            "        bubbles: true, composed: true, detail: { value: value, element: el }"
+            "      }));"
+            "      done++;"
+            "      break;"
+            "    }"
+            "  }"
+            "  tries++;"
+            "  if (done < WANTED.length && tries < 20) { setTimeout(push, 200); }"
+            "}"
+            "setTimeout(push, 100);"
+            "</script></body></html>"
+        )
+        _srcdoc = _script.replace("&", "&amp;").replace("<", "&lt;").replace("'", "&#39;")
+        box_value_pusher = mo.Html(
+            "<iframe srcdoc='" + _srcdoc + "' style='width:0;height:0;border:none;display:block'></iframe>"
+        )
+    return (box_value_pusher,)
+
+
 # ── Final layout ───────────────────────────────────────────────────────────
 # Split into independent cells (rather than one monolithic layout cell) so
 # that a widget somewhere getting rebuilt with a new identity - which
@@ -1380,7 +1474,7 @@ def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PA
 
 
 @app.cell
-def _(cof_chart, eval_table_panel, labels_field, mo, PANEL_STYLE, pulse_eval_field, results_panel):
+def _(box_value_pusher, cof_chart, eval_table_panel, labels_field, mo, PANEL_STYLE, pulse_eval_field, results_panel):
     # The chart iframe draws its own cards (pulse-offset strip, plot) so it
     # sits on the page directly, not inside a white card of its own; the
     # tables get their own card below it.
@@ -1389,6 +1483,7 @@ def _(cof_chart, eval_table_panel, labels_field, mo, PANEL_STYLE, pulse_eval_fie
         # invisible; only there so the chart's JS can find and write to it
         pulse_eval_field.style({"display": "none"}),
         labels_field.style({"display": "none"}),
+        box_value_pusher,
         mo.vstack([
             eval_table_panel,
             results_panel,
