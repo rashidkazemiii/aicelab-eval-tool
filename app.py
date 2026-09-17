@@ -301,80 +301,6 @@ def _(data_loader, file_upload, mo, open_excel_btn, set_results_status_msg):
 
 
 @app.cell
-def _(has_step_checkbox, mo, settings_store):
-    # Deliberately does not depend on file_upload: marimo reconstructs every
-    # mo.ui element in this cell (resetting it to its literal value= here)
-    # whenever the cell re-runs, and it used to depend on file_upload just to
-    # default Stop Main Data to the new file's line count - so every fresh
-    # upload wiped out every field here, not just that one. Not needed:
-    # parse_main_and_step_data already treats stop_main_row <= start_main_row
-    # (0 included) as "read to the end of the file" (data_loader.py:39-42),
-    # so a plain static default gets the same result without the coupling.
-    #
-    # Also deliberately does NOT depend on get_last_raw_params (the reactive
-    # state set right after each Calculate submission): that would make this
-    # cell - and therefore raw_data_form itself - get rebuilt as a brand-new
-    # object right after every single Calculate click, which is exactly the
-    # kind of churn this cell is designed to avoid elsewhere. Reading the
-    # settings file directly is a plain function call, not a tracked
-    # reactive value, so it seeds the fields once (on startup, or whenever
-    # this cell happens to re-run for another reason, like the checkbox
-    # below) without creating that dependency.
-    _saved = settings_store.load_raw_data_settings() or {}
-    _step_fields_disabled = not has_step_checkbox.value
-    # Three compact rows - one per group - laid out on ONE shared grid:
-    # a fixed group-title column followed by six equal cells, each cell a
-    # right-aligned label next to a narrow input. Same grid for every row,
-    # so the inputs line up in straight columns across GENERAL / STEP DATA /
-    # MAIN DATA. All values are small integers, hence the narrow inputs
-    # (fixed-width wrapper div: marimo's text input is a shadow-DOM component
-    # sized to its host, so a page-level CSS width can't reach it).
-    _field = ('<div style="display:flex;align-items:center;gap:6px">'
-              '<span style="font-size:0.78rem;color:#555;white-space:nowrap;width:104px;text-align:right">{label}</span>'
-              '<div style="width:64px">{{{field}}}</div></div>')
-    _group_open = ('<div style="display:grid;grid-template-columns:84px repeat(6, minmax(0, 1fr));align-items:center;gap:8px 4px">'
-                   '<span class="section-label" style="margin:0;font-size:0.62rem;'
-                   'font-weight:700;letter-spacing:1px;color:#999">{title}</span>')
-    _group_close = '</div>'
-
-    _raw_data_tpl = mo.Html(
-        '<div style="display:flex;flex-direction:column;gap:10px">'
-        + _group_open.format(title="GENERAL")
-        + _field.format(label="Load correction", field="nlc")
-        + _group_close
-        + _group_open.format(title="STEP DATA")
-        + _field.format(label="Start row", field="start_step_row")
-        + _field.format(label="End row", field="end_step_row")
-        + _field.format(label="Time col #", field="step_col_time")
-        + _field.format(label="Drehzahl col #", field="step_col_speed")
-        + _group_close
-        + _group_open.format(title="MAIN DATA")
-        + _field.format(label="Start row", field="start_main_row")
-        + _field.format(label="Stop row (0 = end)", field="stop_main_row")
-        + _field.format(label="Time col #", field="col_time")
-        + _field.format(label="Friction L col #", field="col_left")
-        + _field.format(label="Friction R col #", field="col_right")
-        + _field.format(label="Normal load col #", field="col_load")
-        + _group_close
-        + '</div>'
-    )
-    raw_data_form = _raw_data_tpl.batch(
-        nlc=mo.ui.text(value=_saved.get("nlc", "")),
-        start_step_row=mo.ui.text(value=_saved.get("start_step_row", "0"), disabled=_step_fields_disabled),
-        end_step_row=mo.ui.text(value=_saved.get("end_step_row", "0"), disabled=_step_fields_disabled),
-        step_col_time=mo.ui.text(value=_saved.get("step_col_time", "1"), disabled=_step_fields_disabled),
-        step_col_speed=mo.ui.text(value=_saved.get("step_col_speed", "0"), disabled=_step_fields_disabled),
-        start_main_row=mo.ui.text(value=_saved.get("start_main_row", "41")),
-        stop_main_row=mo.ui.text(value=_saved.get("stop_main_row", "0")),
-        col_time=mo.ui.text(value=_saved.get("col_time", "1")),
-        col_left=mo.ui.text(value=_saved.get("col_left", "13")),
-        col_right=mo.ui.text(value=_saved.get("col_right", "14")),
-        col_load=mo.ui.text(value=_saved.get("col_load", "3")),
-    )
-    return (raw_data_form,)
-
-
-@app.cell
 def _(mo):
     # A plain button, not a .form() submit button: no yellow/gray "pending
     # changes" color, always looks the same. Its own cell has zero
@@ -384,60 +310,6 @@ def _(mo):
     # identity tracking.
     calculate_btn = mo.ui.run_button(label="Calculate")
     return (calculate_btn,)
-
-
-@app.cell
-def _(mo):
-    # Fixed-width wrapper around each placeholder: marimo's text input is a
-    # shadow-DOM web component sized at 100% of its host element, so a
-    # page-level <style> width rule can never reach it — this is the only
-    # way to control its rendered width.
-    _filter_tpl = mo.Html(
-        '<div style="display:flex;align-items:center;gap:16px">'
-        '<div style="display:flex;align-items:center;gap:6px">'
-        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'
-        '<div style="width:60px">{filter_points}</div></div>'
-        '</div>'
-    )
-    filter_fields = _filter_tpl.batch(
-        filter_points=mo.ui.text(value="25"),
-    )
-    return (filter_fields,)
-
-
-@app.cell
-def _(mo):
-    filter_btn = mo.ui.run_button(label="Filter")
-    return (filter_btn,)
-
-
-@app.cell
-def _(mo):
-    _eval_tpl = mo.Html(
-        '<div style="display:flex;align-items:center;gap:16px">'
-        '<div style="display:flex;align-items:center;gap:6px">'
-        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Static %</span>'
-        '<div style="width:60px">{static_range}</div></div>'
-        '<div style="display:flex;align-items:center;gap:6px">'
-        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn min %</span>'
-        '<div style="width:60px">{dyn_min}</div></div>'
-        '<div style="display:flex;align-items:center;gap:6px">'
-        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn max %</span>'
-        '<div style="width:60px">{dyn_max}</div></div>'
-        '</div>'
-    )
-    eval_fields = _eval_tpl.batch(
-        static_range=mo.ui.text(value="10.0"),
-        dyn_min=mo.ui.text(value="20.0"),
-        dyn_max=mo.ui.text(value="80.0"),
-    )
-    return (eval_fields,)
-
-
-@app.cell
-def _(mo):
-    eval_btn = mo.ui.run_button(label="Evaluate")
-    return (eval_btn,)
 
 
 # ── Data pipeline ──────────────────────────────────────────────────────────
@@ -454,7 +326,6 @@ def _(
     set_parsed_data,
     set_results_status_msg,
     settings_store,
-    get_loaded_test,
 ):
     # raw_data_form is a plain, live batch now (not a .form()) - its .value
     # updates on every keystroke, but that alone doesn't do anything here:
@@ -492,6 +363,14 @@ def _(
                 set_parsed_data((None, None, None, None))
                 set_results_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
 
+    return
+
+
+@app.cell
+def _(calculate_btn, get_loaded_test, get_parsed_data):
+    # Reads only the snapshots, never the Raw Data boxes - so editing one of
+    # those re-runs the parse cell above (which does nothing without a
+    # Calculate click) and stops there, instead of rebuilding the pipeline.
     _parsed = get_parsed_data()
     # Right after a Calculate click the loaded test is gone no matter what
     # the state still reads in this same run.
@@ -571,23 +450,30 @@ def _(committed_params, df_raw, file_upload, get_loaded_test, get_offset, mo, pa
 
 
 @app.cell
+def _(filter_btn, filter_fields, parsed_file_id, set_filter_file_id, set_filter_params):
+    # Reading a text box's value in a cell makes that cell re-run whenever
+    # the value is committed. So the reading happens here, in a cell that
+    # produces nothing and does nothing unless Filter was actually clicked -
+    # the filtering itself is the next cell, which only sees the snapshot.
+    # Keeping the two together is what used to re-filter, re-evaluate and
+    # redraw the whole page on every edit.
+    if filter_btn.value:
+        set_filter_params(filter_fields.value)
+        set_filter_file_id(parsed_file_id)
+    return
+
+
+@app.cell
 def _(
     df_display,
-    filter_btn,
-    filter_fields,
     get_filter_file_id,
     get_filter_params,
     get_loaded_test,
     mo,
     parsed_file_id,
     pipeline,
-    set_filter_file_id,
-    set_filter_params,
     set_results_status_msg,
 ):
-    if filter_btn.value:
-        set_filter_params(filter_fields.value)
-        set_filter_file_id(parsed_file_id)
     # None (not yet run for the file that's active right now) unless Filter
     # was actually clicked while this same file was the one loaded.
     _filter_clicked_here = get_filter_file_id() == parsed_file_id
@@ -610,26 +496,27 @@ def _(
 
 
 @app.cell
+def _(eval_btn, eval_fields, parsed_file_id, set_eval_file_id, set_eval_mode, set_eval_params):
+    # Same split as the Filter cell above, for the same reason.
+    if eval_btn.value:
+        set_eval_params(eval_fields.value)
+        set_eval_file_id(parsed_file_id)
+        set_eval_mode("crossings")
+    return
+
+
+@app.cell
 def _(
     df_display,
     df_proc,
-    eval_btn,
-    eval_fields,
     get_eval_file_id,
     get_eval_params,
     get_loaded_test,
     mo,
     parsed_file_id,
     pipeline,
-    set_eval_file_id,
-    set_eval_mode,
-    set_eval_params,
     set_results_status_msg,
 ):
-    if eval_btn.value:
-        set_eval_params(eval_fields.value)
-        set_eval_file_id(parsed_file_id)
-        set_eval_mode("crossings")
     _eval_clicked_here = get_eval_file_id() == parsed_file_id
     _loaded = get_loaded_test()
     if _loaded is not None and not _eval_clicked_here:
@@ -1278,6 +1165,177 @@ def _(
     return
 
 
+@app.cell
+def _(has_step_checkbox, mo, PANEL_STYLE, settings_store):
+    # The Raw Data boxes are created in the same cell that lays them out.
+    # marimo never re-runs the cell that created a UI element when that
+    # element's value changes, so editing a box leaves this cell - and with
+    # it the whole page, chart included - untouched. has_step_checkbox stays
+    # a dependency on purpose: toggling it must rebuild the form to enable
+    # or disable the step fields.
+    # Deliberately does not depend on file_upload: marimo reconstructs every
+    # mo.ui element in this cell (resetting it to its literal value= here)
+    # whenever the cell re-runs, and it used to depend on file_upload just to
+    # default Stop Main Data to the new file's line count - so every fresh
+    # upload wiped out every field here, not just that one. Not needed:
+    # parse_main_and_step_data already treats stop_main_row <= start_main_row
+    # (0 included) as "read to the end of the file" (data_loader.py:39-42),
+    # so a plain static default gets the same result without the coupling.
+    #
+    # Also deliberately does NOT depend on get_last_raw_params (the reactive
+    # state set right after each Calculate submission): that would make this
+    # cell - and therefore raw_data_form itself - get rebuilt as a brand-new
+    # object right after every single Calculate click, which is exactly the
+    # kind of churn this cell is designed to avoid elsewhere. Reading the
+    # settings file directly is a plain function call, not a tracked
+    # reactive value, so it seeds the fields once (on startup, or whenever
+    # this cell happens to re-run for another reason, like the checkbox
+    # below) without creating that dependency.
+    _saved = settings_store.load_raw_data_settings() or {}
+    _step_fields_disabled = not has_step_checkbox.value
+    # Three compact rows - one per group - laid out on ONE shared grid:
+    # a fixed group-title column followed by six equal cells, each cell a
+    # right-aligned label next to a narrow input. Same grid for every row,
+    # so the inputs line up in straight columns across GENERAL / STEP DATA /
+    # MAIN DATA. All values are small integers, hence the narrow inputs
+    # (fixed-width wrapper div: marimo's text input is a shadow-DOM component
+    # sized to its host, so a page-level CSS width can't reach it).
+    _field = ('<div style="display:flex;align-items:center;gap:6px">'
+              '<span style="font-size:0.78rem;color:#555;white-space:nowrap;width:104px;text-align:right">{label}</span>'
+              '<div style="width:64px">{{{field}}}</div></div>')
+    _group_open = ('<div style="display:grid;grid-template-columns:84px repeat(6, minmax(0, 1fr));align-items:center;gap:8px 4px">'
+                   '<span class="section-label" style="margin:0;font-size:0.62rem;'
+                   'font-weight:700;letter-spacing:1px;color:#999">{title}</span>')
+    _group_close = '</div>'
+
+    _raw_data_tpl = mo.Html(
+        '<div style="display:flex;flex-direction:column;gap:10px">'
+        + _group_open.format(title="GENERAL")
+        + _field.format(label="Load correction", field="nlc")
+        + _group_close
+        + _group_open.format(title="STEP DATA")
+        + _field.format(label="Start row", field="start_step_row")
+        + _field.format(label="End row", field="end_step_row")
+        + _field.format(label="Time col #", field="step_col_time")
+        + _field.format(label="Drehzahl col #", field="step_col_speed")
+        + _group_close
+        + _group_open.format(title="MAIN DATA")
+        + _field.format(label="Start row", field="start_main_row")
+        + _field.format(label="Stop row (0 = end)", field="stop_main_row")
+        + _field.format(label="Time col #", field="col_time")
+        + _field.format(label="Friction L col #", field="col_left")
+        + _field.format(label="Friction R col #", field="col_right")
+        + _field.format(label="Normal load col #", field="col_load")
+        + _group_close
+        + '</div>'
+    )
+    raw_data_form = _raw_data_tpl.batch(
+        nlc=mo.ui.text(value=_saved.get("nlc", ""), debounce=True),
+        start_step_row=mo.ui.text(value=_saved.get("start_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
+        end_step_row=mo.ui.text(value=_saved.get("end_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
+        step_col_time=mo.ui.text(value=_saved.get("step_col_time", "1"), disabled=_step_fields_disabled, debounce=True),
+        step_col_speed=mo.ui.text(value=_saved.get("step_col_speed", "0"), disabled=_step_fields_disabled, debounce=True),
+        start_main_row=mo.ui.text(value=_saved.get("start_main_row", "41"), debounce=True),
+        stop_main_row=mo.ui.text(value=_saved.get("stop_main_row", "0"), debounce=True),
+        col_time=mo.ui.text(value=_saved.get("col_time", "1"), debounce=True),
+        col_left=mo.ui.text(value=_saved.get("col_left", "13"), debounce=True),
+        col_right=mo.ui.text(value=_saved.get("col_right", "14"), debounce=True),
+        col_load=mo.ui.text(value=_saved.get("col_load", "3"), debounce=True),
+    )
+
+    # Title and the "Has step data" checkbox share one line; the form
+    # itself is three compact rows below.
+    raw_data_card = mo.vstack([
+        mo.hstack([
+            mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
+            has_step_checkbox,
+        ], justify="space-between", align="center"),
+        raw_data_form,
+    ], gap=1).style(PANEL_STYLE)
+    return raw_data_card, raw_data_form
+
+
+@app.cell
+def _(mo):
+    # Everything in this cell is created here AND laid out here: marimo
+    # never re-runs the cell that created a UI element when its value
+    # changes, so neither typing in a box nor clicking Filter/Evaluate
+    # rebuilds this row - the page and the chart are left alone, and the
+    # boxes keep what was typed. The Offset button and its badge live in
+    # the next cell because the badge has to read the offset state, and
+    # reading it here would rebuild these boxes on every Offset click.
+    filter_btn = mo.ui.run_button(label="Filter")
+    eval_btn = mo.ui.run_button(label="Evaluate")
+    # Fixed-width wrapper around each placeholder: marimo's text input is a
+    # shadow-DOM web component sized at 100% of its host element, so a
+    # page-level <style> width rule can never reach it — this is the only
+    # way to control its rendered width.
+    _filter_tpl = mo.Html(
+        '<div style="display:flex;align-items:center;gap:16px">'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Filter pts</span>'
+        '<div style="width:60px">{filter_points}</div></div>'
+        '</div>'
+    )
+    filter_fields = _filter_tpl.batch(
+        filter_points=mo.ui.text(value="25", debounce=True),
+    )
+
+    _eval_tpl = mo.Html(
+        '<div style="display:flex;align-items:center;gap:16px">'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Static %</span>'
+        '<div style="width:60px">{static_range}</div></div>'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn min %</span>'
+        '<div style="width:60px">{dyn_min}</div></div>'
+        '<div style="display:flex;align-items:center;gap:6px">'
+        '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Dyn max %</span>'
+        '<div style="width:60px">{dyn_max}</div></div>'
+        '</div>'
+    )
+    eval_fields = _eval_tpl.batch(
+        static_range=mo.ui.text(value="10.0", debounce=True),
+        dyn_min=mo.ui.text(value="20.0", debounce=True),
+        dyn_max=mo.ui.text(value="80.0", debounce=True),
+    )
+
+    def _rule():
+        return mo.Html('<div style="width:1px;height:28px;background:#e3e6ea;margin:0 6px"></div>')
+
+    controls_row = mo.hstack([
+        filter_fields, filter_btn,
+        _rule(),
+        eval_fields, eval_btn,
+    ], gap=1, align="center", justify="start", wrap=True)
+    return controls_row, eval_btn, eval_fields, filter_btn, filter_fields
+
+
+@app.cell
+def _(TOOLBAR_STYLE, controls_row, get_offset, mo, offset_btn):
+    # One slim toolbar instead of three half-empty cards: the controls read
+    # left to right in the order they are used - Offset, Filter, Evaluate -
+    # with a thin vertical rule between the groups.
+    if get_offset():
+        _offset_badge = mo.Html(
+            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#fff;'
+            'background:#4cceac;border-radius:10px;padding:2px 8px">ON</span>'
+        )
+    else:
+        _offset_badge = mo.Html(
+            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#999;'
+            'background:#eef1f4;border-radius:10px;padding:2px 8px">OFF</span>'
+        )
+    _rule = mo.Html('<div style="width:1px;height:28px;background:#e3e6ea;margin:0 6px"></div>')
+
+    actions_row = mo.hstack([
+        offset_btn, _offset_badge,
+        _rule,
+        controls_row,
+    ], gap=1, align="center", justify="start", wrap=True).style(TOOLBAR_STYLE)
+    return (actions_row,)
+
+
 # ── Final layout ───────────────────────────────────────────────────────────
 # Split into independent cells (rather than one monolithic layout cell) so
 # that a widget somewhere getting rebuilt with a new identity - which
@@ -1319,58 +1377,6 @@ def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PA
                 f'<span style="font-size:0.9rem;font-weight:600;color:#1f2a40">{_rvm_test}</span></div>'),
     ], gap=1).style(PANEL_STYLE)
     return (upload_card,)
-
-
-@app.cell
-def _(has_step_checkbox, mo, PANEL_STYLE, raw_data_form):
-    # Title and the "Has step data" checkbox share one line; the form
-    # itself is three compact rows below.
-    raw_data_card = mo.vstack([
-        mo.hstack([
-            mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
-            has_step_checkbox,
-        ], justify="space-between", align="center"),
-        raw_data_form,
-    ], gap=1).style(PANEL_STYLE)
-    return (raw_data_card,)
-
-
-@app.cell
-def _(
-    TOOLBAR_STYLE,
-    eval_btn,
-    eval_fields,
-    filter_btn,
-    filter_fields,
-    get_offset,
-    mo,
-    offset_btn,
-):
-    # One slim toolbar instead of three half-empty cards: the controls read
-    # left to right in the order they are used - Offset, Filter, Evaluate -
-    # with a thin vertical rule between the groups.
-    if get_offset():
-        _offset_badge = mo.Html(
-            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#fff;'
-            'background:#4cceac;border-radius:10px;padding:2px 8px">ON</span>'
-        )
-    else:
-        _offset_badge = mo.Html(
-            '<span style="font-size:0.68rem;font-weight:700;letter-spacing:.5px;color:#999;'
-            'background:#eef1f4;border-radius:10px;padding:2px 8px">OFF</span>'
-        )
-
-    def _rule():
-        return mo.Html('<div style="width:1px;height:28px;background:#e3e6ea;margin:0 6px"></div>')
-
-    actions_row = mo.hstack([
-        offset_btn, _offset_badge,
-        _rule(),
-        filter_fields, filter_btn,
-        _rule(),
-        eval_fields, eval_btn,
-    ], gap=1, align="center", justify="start", wrap=True).style(TOOLBAR_STYLE)
-    return (actions_row,)
 
 
 @app.cell
