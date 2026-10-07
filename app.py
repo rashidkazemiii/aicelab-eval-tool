@@ -20,8 +20,9 @@ def _():
     import settings_store
     import speed_pulse
     import batch
+    import ai_model
 
-    return batch, charts, data_loader, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
+    return ai_model, batch, charts, data_loader, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -672,9 +673,12 @@ def _(
     active_filter_params,
     analysis_file_name,
     cof_eval,
+    data_loader,
     db_mod,
     df_display,
     df_proc,
+    file_upload,
+    get_loaded_test,
     mo,
     overwrite_btn,
     pipeline,
@@ -707,13 +711,28 @@ def _(
             ], gap=1))
         else:
             try:
+                # The hand-typed conditions of the old copy move to the new one.
+                _old_details = None
                 if _existing is not None:
+                    _old_details = db_mod.get_test_details(_existing.id)
                     db_mod.delete_test(_existing.id)
                 _filter_active = pipeline.is_filter_active(_fparams, df_proc)
                 _test_id = db_mod.save_full_evaluation(
                     _fname, _fparams, _eparams, df_display, df_proc, _filter_active, cof_eval, stats_result,
                     step_df=step_df,
                 )
+                _details = _old_details
+                if _details is None:
+                    _details = db_mod.get_test_details(_test_id)
+                # The stroke comes from the uploaded file's header, so the
+                # file's value wins. (A test loaded from History has no file;
+                # it keeps the stroke of the old copy.)
+                if get_loaded_test() is None and file_upload.value:
+                    _raw = file_upload.value[0].contents.decode("latin-1")
+                    _stroke = data_loader.read_stroke_mm(_raw)
+                    if _stroke is not None:
+                        _details["stroke_mm"] = _stroke
+                db_mod.save_test_details(_test_id, _details)
                 set_results_status_msg(mo.callout(mo.md(
                     f"Saved as test **#{_test_id}**."
                 ), kind="success"))
@@ -964,6 +983,46 @@ def _(charts, db_mod, get_shown_test_id, mo):
 
 
 @app.cell
+def _(charts, db_mod, get_shown_test_id, mo):
+    # Static and sliding friction against mean velocity, one point per step
+    # (see charts.build_friction_velocity_figures). Built when Show chart is
+    # clicked for a test, like the main chart above.
+    _shown = get_shown_test_id()
+    shown_velocity_charts = None
+    if _shown is not None:
+        _details = db_mod.get_test_details(_shown)
+        _stroke = None
+        if _details is not None:
+            _stroke = _details["stroke_mm"]
+        _title = ""
+        for _t in db_mod.list_tests():
+            if _t["id"] == _shown:
+                _title = _t["file_name"].replace(".txt", "")
+        _figures = charts.build_friction_velocity_figures(
+            db_mod.get_step_results(_shown), _stroke, _title,
+            all_steps=db_mod.get_step_df(_shown),
+        )
+        if _figures is None:
+            shown_velocity_charts = mo.callout(mo.md(
+                "No friction-velocity plots: this test has no step speeds (Drehzahl) saved."
+            ), kind="info")
+        else:
+            _parts = [
+                mo.Html('<p class="section-label" style="margin:0">FRICTION VS. VELOCITY (PER STEP, &plusmn; STD DEV)</p>'),
+            ]
+            if _stroke is None:
+                _parts.append(mo.md(
+                    "_The stroke of this test is not known, so the x axis is the speed in U/min. "
+                    "Type the stroke (Hub Exzenter, e.g. 24) into **Stroke [mm]** above and click "
+                    "**Save details**, then **Show chart** again._"
+                ))
+            _parts.append(mo.ui.plotly(_figures[0]))
+            _parts.append(mo.ui.plotly(_figures[1]))
+            shown_velocity_charts = mo.vstack(_parts, gap=1)
+    return (shown_velocity_charts,)
+
+
+@app.cell
 def _(db_mod, get_shown_test_id, mo, results_table):
     # The per-step summary of a saved test: one row per step rather than one
     # per raw sample, so a test whose raw signal is hundreds of thousands of
@@ -987,7 +1046,105 @@ def _(db_mod, get_shown_test_id, mo, results_table):
 
 
 @app.cell
-def _(get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, shown_eval_table):
+def _(db_mod, get_shown_test_id, mo):
+    # The typed-in test conditions of the test shown in the chart. Rebuilt
+    # (and filled from the database) only when a different test is shown.
+    # The same values can also be typed into the AI tab's table.
+    #
+    # The boxes and the Save button are created AND laid out here, in one
+    # cell: marimo re-runs every cell that uses a box when its value
+    # changes, but never the cell that created it. If another cell placed
+    # the form on the page, each keystroke would re-run that cell, rebuild
+    # the History tab and throw away what was just typed. Other cells only
+    # get details_panel, which is plain layout, not a box.
+    _shown = get_shown_test_id()
+    _details = None
+    if _shown is not None:
+        _details = db_mod.get_test_details(_shown)
+    if _details is None:
+        _details = {"temperature": None, "humidity": None, "material": None, "note": None, "stroke_mm": None}
+
+    def _as_text(value):
+        if value is None:
+            return ""
+        return str(value)
+
+    # Fixed-width wrapper divs: marimo's text box is sized to its host
+    # element, so this is the only way to set each box's width.
+    _field = ('<div style="display:flex;align-items:center;gap:6px">'
+              '<span style="font-size:0.82rem;color:#444;white-space:nowrap">{label}</span>'
+              '<div style="width:{width}px">{{{name}}}</div></div>')
+    _details_tpl = mo.Html(
+        '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px 20px">'
+        + _field.format(label="Temperature [&deg;C]", width=70, name="temperature")
+        + _field.format(label="Humidity [%]", width=70, name="humidity")
+        + _field.format(label="Material", width=160, name="material")
+        + _field.format(label="Stroke [mm]", width=70, name="stroke_mm")
+        + _field.format(label="Note", width=320, name="note")
+        + '</div>'
+    )
+    details_form = _details_tpl.batch(
+        temperature=mo.ui.text(value=_as_text(_details["temperature"])),
+        humidity=mo.ui.text(value=_as_text(_details["humidity"])),
+        material=mo.ui.text(value=_as_text(_details["material"])),
+        stroke_mm=mo.ui.text(value=_as_text(_details["stroke_mm"])),
+        note=mo.ui.text(value=_as_text(_details["note"])),
+    )
+    details_save_btn = mo.ui.run_button(label="&#128190; Save details")
+    details_panel = mo.vstack([
+        mo.Html('<p class="section-label" style="margin:0">TEST CONDITIONS</p>'),
+        mo.hstack([details_form, details_save_btn], justify="start", align="center", gap=2, wrap=True),
+    ], gap=1)
+    return details_form, details_panel, details_save_btn
+
+
+@app.cell
+def _(ai_model, db_mod, details_form, details_save_btn, get_shown_test_id, mo, set_history_status_msg):
+    # "Save details": store the typed conditions on the shown test.
+    # Temperature and humidity must be numbers (a decimal comma is fine);
+    # an empty box means "not known".
+    if details_save_btn.value:
+        _shown = get_shown_test_id()
+        if _shown is None:
+            set_history_status_msg(mo.callout(mo.md("Show a test's chart first, then fill in its conditions."), kind="warn"))
+        else:
+            _values = details_form.value
+            _problems = []
+            _temperature = ai_model.to_number(_values["temperature"])
+            if _temperature is None and _values["temperature"].strip() != "":
+                _problems.append("Temperature")
+            _humidity = ai_model.to_number(_values["humidity"])
+            if _humidity is None and _values["humidity"].strip() != "":
+                _problems.append("Humidity")
+            _stroke = ai_model.to_number(_values["stroke_mm"])
+            if _stroke is None and _values["stroke_mm"].strip() != "":
+                _problems.append("Stroke")
+            if len(_problems) > 0:
+                set_history_status_msg(mo.callout(mo.md(
+                    f"**Not saved:** {' and '.join(_problems)} must be a number."
+                ), kind="warn"))
+            else:
+                _material = _values["material"].strip()
+                if _material == "":
+                    _material = None
+                _note = _values["note"].strip()
+                if _note == "":
+                    _note = None
+                db_mod.save_test_details(_shown, {
+                    "temperature": _temperature,
+                    "humidity": _humidity,
+                    "material": _material,
+                    "note": _note,
+                    "stroke_mm": _stroke,
+                })
+                set_history_status_msg(mo.callout(mo.md(
+                    f"Saved the conditions of test **#{_shown}**. Click **Refresh** to see them in the list."
+                ), kind="success"))
+    return
+
+
+@app.cell
+def _(details_panel, get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, shown_eval_table, shown_velocity_charts):
     # Cheap: only picks between the already-built chart/table and a
     # placeholder, so changing the table's selection costs nothing. They show
     # while their own test is the one selected, and hide (without being
@@ -1011,7 +1168,15 @@ def _(get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, show
         ], gap=1)
     else:
         history_eval_panel = mo.Html("")
-    return history_chart, history_eval_panel
+    if _is_shown_selected and _shown is not None:
+        history_details_panel = details_panel
+    else:
+        history_details_panel = mo.md("_Select one test and click **Show chart** to type in its temperature, humidity and material._")
+    if shown_velocity_charts is not None and _is_shown_selected:
+        history_velocity_panel = shown_velocity_charts
+    else:
+        history_velocity_panel = mo.Html("")
+    return history_chart, history_details_panel, history_eval_panel, history_velocity_panel
 
 
 @app.cell
@@ -1528,6 +1693,393 @@ def _(
     return (batch_tab,)
 
 
+# ── AI (train a model, predict) ────────────────────────────────────────────
+@app.cell
+def _(ai_model, mo):
+    # The trained model (a plain dict, see ai_model.py), starting with the
+    # one saved last time; the latest AI message; and the latest prediction.
+    get_ai_model, set_ai_model = mo.state(ai_model.load_model())
+    get_ai_msg, set_ai_msg = mo.state(None)
+    get_ai_prediction, set_ai_prediction = mo.state(None)
+    return get_ai_model, get_ai_msg, get_ai_prediction, set_ai_model, set_ai_msg, set_ai_prediction
+
+
+@app.cell
+def _(mo):
+    # Own cell with no dependencies, so this button is never rebuilt.
+    ai_reload_btn = mo.ui.run_button(label="&#128260; Reload tests")
+    return (ai_reload_btn,)
+
+
+@app.cell
+def _(ai_model, ai_reload_btn, db_mod, get_batch_log, mo):
+    # The data table: one row per saved test. Tick "use" for the tests the
+    # model should learn from, and type in their temperature, humidity and
+    # material. Re-read from the database on Reload and after a batch run.
+    #
+    # The table, the parameter choice and the buttons are created AND laid
+    # out in this cell: marimo re-runs every cell that uses an element when
+    # its value changes, except the cell that created it. So typing in the
+    # table never rebuilds the table and throws the typing away.
+    ai_reload_btn.value
+    get_batch_log()
+
+    import pandas as _pd
+
+    _tests = db_mod.list_tests_df()
+    _rows = []
+    for _i in range(len(_tests)):
+        _t = _tests.iloc[_i]
+        _material = _t["material"]
+        if _material is None or str(_material).lower() == "nan":
+            _material = ""
+        _rows.append({
+            "use": True,
+            "id": int(_t["id"]),
+            "file_name": _t["file_name"],
+            "temperature": ai_model.to_number(_t["temperature"]),
+            "humidity": ai_model.to_number(_t["humidity"]),
+            "material": _material,
+            "stroke_mm": ai_model.to_number(_t["stroke_mm"]),
+        })
+    _table = _pd.DataFrame(_rows, columns=["use", "id", "file_name", "temperature", "humidity", "material", "stroke_mm"])
+
+    ai_data_editor = mo.ui.data_editor(
+        _table,
+        editable_columns=["use", "temperature", "humidity", "material", "stroke_mm"],
+        pagination=False,
+    )
+    # marimo shows the dict's keys and gives back its values: so the keys
+    # are the readable labels and the values the names ai_model uses.
+    _feature_choices = {}
+    for _name in ai_model.ALL_FEATURES:
+        _feature_choices[ai_model.FEATURE_LABELS[_name]] = _name
+    ai_features = mo.ui.multiselect(
+        options=_feature_choices,
+        value=list(_feature_choices.keys()),
+        label="Input parameters for the model",
+    )
+    ai_save_btn = mo.ui.run_button(label="&#128190; Save parameters")
+    ai_train_btn = mo.ui.run_button(label="&#129504; Train model")
+
+    ai_data_panel = mo.vstack([
+        mo.Html('<p class="panel-title">1. Data: choose the tests and type in their parameters</p>'),
+        mo.md(
+            "Tick **use** for the tests the model should learn from, and fill in "
+            "**temperature [&deg;C]**, **humidity [%]** and **material** "
+            "(**stroke_mm** is filled in from the file when a test is saved). Each evaluated "
+            "step of a test is one example: its speed and whether the speed is going up or "
+            "down come from the file, and a step counts more the more cycles it has. "
+            "Skipped steps, and tests with an empty parameter, are left out."
+        ),
+        ai_data_editor,
+        mo.hstack([ai_reload_btn, ai_save_btn], justify="start", gap=2),
+        mo.Html('<hr class="divider">'),
+        mo.Html('<p class="panel-title">2. Train</p>'),
+        mo.hstack([ai_features, ai_train_btn], justify="start", align="end", gap=2, wrap=True),
+    ], gap=2)
+    return ai_data_editor, ai_data_panel, ai_features, ai_save_btn, ai_train_btn
+
+
+@app.cell
+def _(ai_model, db_mod):
+    def save_ai_parameters(edited_table):
+        """Store the typed-in temperature / humidity / material / stroke of
+        every row of the data table on its saved test. The test's note is kept.
+        Returns how many tests were updated."""
+        import pandas as _pd
+        _table = _pd.DataFrame(edited_table)
+        _count = 0
+        for _i in range(len(_table)):
+            _row = _table.iloc[_i]
+            _test_id = int(_row["id"])
+            _details = db_mod.get_test_details(_test_id)
+            if _details is None:
+                continue
+            _material = _row["material"]
+            if _material is None or str(_material).strip() == "" or str(_material).lower() == "nan":
+                _material = None
+            else:
+                _material = str(_material).strip()
+            _details["temperature"] = ai_model.to_number(_row["temperature"])
+            _details["humidity"] = ai_model.to_number(_row["humidity"])
+            _details["material"] = _material
+            if "stroke_mm" in _table.columns:
+                _details["stroke_mm"] = ai_model.to_number(_row["stroke_mm"])
+            db_mod.save_test_details(_test_id, _details)
+            _count = _count + 1
+        return _count
+    return (save_ai_parameters,)
+
+
+@app.cell
+def _(ai_data_editor, ai_save_btn, mo, save_ai_parameters, set_ai_msg):
+    if ai_save_btn.value:
+        try:
+            _n = save_ai_parameters(ai_data_editor.value)
+            set_ai_msg(mo.callout(mo.md(f"Saved the parameters of **{_n}** tests."), kind="success"))
+        except Exception as _e:
+            set_ai_msg(mo.callout(mo.md(f"**Could not save the parameters:** {_e}"), kind="danger"))
+    return
+
+
+@app.cell
+def _(
+    ai_data_editor,
+    ai_features,
+    ai_model,
+    ai_train_btn,
+    mo,
+    save_ai_parameters,
+    set_ai_model,
+    set_ai_msg,
+    set_ai_prediction,
+):
+    # "Train model": save the typed-in parameters first (so the model and
+    # the database agree), then learn from the ticked tests.
+    if ai_train_btn.value:
+        try:
+            save_ai_parameters(ai_data_editor.value)
+            import pandas as _pd
+            _table = _pd.DataFrame(ai_data_editor.value)
+            _ids = []
+            for _i in range(len(_table)):
+                if bool(_table.iloc[_i]["use"]):
+                    _ids.append(int(_table.iloc[_i]["id"]))
+            if len(_ids) == 0:
+                raise ValueError("tick **use** for at least one test")
+            # Keep the parameters in the fixed order of ai_model.ALL_FEATURES.
+            _features = []
+            for _name in ai_model.ALL_FEATURES:
+                if _name in ai_features.value:
+                    _features.append(_name)
+            _training = ai_model.build_training_table(_ids)
+            _model = ai_model.train(_training, _features)
+            ai_model.save_model(_model)
+            set_ai_model(_model)
+            set_ai_prediction(None)
+            set_ai_msg(mo.callout(mo.md(
+                f"Trained on **{_model['n_rows']}** steps from **{_model['n_tests']}** tests "
+                f"({_model['n_rows_left_out']} steps left out because a parameter was missing)."
+            ), kind="success"))
+        except ValueError as _e:
+            set_ai_msg(mo.callout(mo.md(f"**Not trained:** {_e}"), kind="warn"))
+        except Exception as _e:
+            set_ai_msg(mo.callout(mo.md(f"**Training failed:** {_e}"), kind="danger"))
+    return
+
+
+@app.cell
+def _(ai_model, get_ai_model, mo):
+    # What the trained model looks like: how good it is and what it learned.
+    _model = get_ai_model()
+    if _model is None:
+        ai_model_panel = mo.md("_No model trained yet._")
+    else:
+        _names = []
+        for _f in _model["features"]:
+            _names.append(ai_model.FEATURE_LABELS[_f])
+        _parts = [
+            mo.md(
+                f"**Model inputs:** {', '.join(_names)}  \n"
+                f"**Trained on:** {_model['n_rows']} steps from {_model['n_tests']} tests"
+            ),
+        ]
+        _error = _model["error"]
+        if _error is None:
+            _parts.append(mo.md("_Accuracy needs at least 2 tests._"))
+        else:
+            _parts.append(mo.md(
+                "**Accuracy on a test the model has not seen** (average error, "
+                "each test predicted by a model trained on the others):\n\n"
+                "| | Model | Just guessing the average |\n|---|---|---|\n"
+                f"| Static CoF | {_error['static_cof']['model']:.4f} | {_error['static_cof']['average_guess']:.4f} |\n"
+                f"| Dynamic CoF | {_error['dynamic_cof']['model']:.4f} | {_error['dynamic_cof']['average_guess']:.4f} |\n\n"
+                "The model is only useful when its error is clearly smaller than the guess."
+            ))
+        _parts.append(mo.md("**What the model learned** (change of the CoF per unit of each input):"))
+        _parts.append(mo.ui.table(
+            ai_model.coefficients_table(_model), selection=None,
+            pagination=False, show_column_summaries=False, show_data_types=False,
+        ))
+        ai_model_panel = mo.vstack(_parts, gap=1)
+    return (ai_model_panel,)
+
+
+@app.cell
+def _(ai_model, get_ai_model, mo):
+    # The prediction inputs: the test conditions (every model input except
+    # the speed), the speed program (the steps to predict, in U/min, in test
+    # order) and the stroke (to turn U/min into m/s for the plots). Rebuilt
+    # only when a new model is trained; created and laid out here for the
+    # same reason as the data table above.
+    _model = get_ai_model()
+    ai_predict_inputs = None
+    ai_predict_btn = mo.ui.run_button(label="&#128302; Predict")
+    if _model is None:
+        ai_predict_panel = mo.md("_Train a model first._")
+    else:
+        _boxes = {}
+        for _name in _model["features"]:
+            # speed and going up/down come from the speed program below,
+            # the stroke from its own box (it is also needed for m/s).
+            if _name == "speed" or _name == "going_down" or _name == "stroke_mm":
+                continue
+            if _name == "material":
+                _boxes[_name] = mo.ui.dropdown(
+                    options=_model["materials"], value=_model["materials"][0],
+                    label=ai_model.FEATURE_LABELS[_name],
+                )
+            else:
+                # Start in the middle of what the model was trained on.
+                _low = _model["ranges"][_name][0]
+                _high = _model["ranges"][_name][1]
+                _boxes[_name] = mo.ui.number(
+                    value=round((_low + _high) / 2, 2),
+                    label=ai_model.FEATURE_LABELS[_name],
+                )
+        _stroke_default = 24
+        if "stroke_mm" in _model["ranges"]:
+            _stroke_default = _model["ranges"]["stroke_mm"][1]
+        _boxes["stroke_mm"] = mo.ui.number(value=_stroke_default, start=0.1, label="Stroke [mm]")
+        # Fixed-width wrapper: marimo's text box is sized to its host element.
+        _program_tpl = mo.Html(
+            '<div style="display:flex;align-items:center;gap:6px">'
+            '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Speed program [U/min]</span>'
+            '<div style="width:440px">{speeds}</div></div>'
+        )
+        _boxes["speeds"] = _program_tpl.batch(speeds=mo.ui.text(
+            value="30, 60, 120, 180, 240, 360, 480, 360, 240, 180, 120, 60, 30",
+        ))
+        ai_predict_inputs = mo.ui.dictionary(_boxes)
+
+        _condition_boxes = []
+        for _name in _boxes:
+            if _name != "speeds":
+                _condition_boxes.append(ai_predict_inputs[_name])
+        ai_predict_panel = mo.vstack([
+            mo.hstack(_condition_boxes, justify="start", align="end", gap=2, wrap=True),
+            mo.hstack([ai_predict_inputs["speeds"], ai_predict_btn], justify="start", align="center", gap=2, wrap=True),
+        ], gap=2)
+    return ai_predict_btn, ai_predict_inputs, ai_predict_panel
+
+
+@app.cell
+def _(ai_model, ai_predict_btn, ai_predict_inputs, charts, get_ai_model, mo, set_ai_prediction):
+    # "Predict": one prediction per step of the speed program, shown the same
+    # way as a saved test in History - static and sliding friction against
+    # mean velocity - plus the numbers as a table.
+    if ai_predict_btn.value and ai_predict_inputs is not None:
+        import pandas as _pd
+        _model = get_ai_model()
+        _values = ai_predict_inputs.value
+        try:
+            # The speed program: numbers separated by commas or spaces.
+            _speeds = []
+            for _part in _values["speeds"]["speeds"].replace(";", ",").replace(" ", ",").split(","):
+                if _part.strip() == "":
+                    continue
+                _speed = ai_model.to_number(_part)
+                if _speed is None or _speed <= 0:
+                    raise ValueError(f"'{_part}' in the speed program is not a speed above 0")
+                _speeds.append(_speed)
+            if len(_speeds) == 0:
+                raise ValueError("type at least one speed into the speed program")
+            _stroke = _values["stroke_mm"]
+            # 0 up to the fastest step of the program, 1 after it.
+            _going_down = ai_model.going_down_flags(_speeds)
+
+            _rows = []
+            _outside = []
+            for _k in range(len(_speeds)):
+                _inputs = {}
+                for _name in _model["features"]:
+                    if _name == "speed":
+                        _inputs[_name] = _speeds[_k]
+                    elif _name == "going_down":
+                        _inputs[_name] = _going_down[_k]
+                    else:
+                        _inputs[_name] = _values[_name]
+                _predicted = ai_model.predict(_model, _inputs)
+                for _name in ai_model.outside_training_range(_model, _inputs):
+                    if _name not in _outside:
+                        _outside.append(_name)
+                _velocity = None
+                if _stroke is not None and _stroke > 0:
+                    _velocity = 2 * (_stroke / 1000.0) * _speeds[_k] / 60.0
+                if _going_down[_k] == 1:
+                    _direction = "down"
+                else:
+                    _direction = "up"
+                _rows.append({
+                    "Step": _k + 1,
+                    "Speed [U/min]": _speeds[_k],
+                    "Up / down": _direction,
+                    "Mean velocity [m/s]": _velocity,
+                    "Predicted static CoF": round(_predicted["static_cof"], 5),
+                    "Static std dev": round(_predicted["static_sd"], 5),
+                    "Predicted sliding CoF": round(_predicted["dynamic_cof"], 5),
+                    "Sliding std dev": round(_predicted["dynamic_sd"], 5),
+                })
+            _table = _pd.DataFrame(_rows)
+
+            # Same shape as database.get_step_results, so the History plot
+            # function draws it, with the predicted std dev as error bars.
+            _for_plot = _pd.DataFrame({
+                "start": list(range(len(_speeds))),
+                "end": list(range(1, len(_speeds) + 1)),
+                "speed": _speeds,
+                "static_mean": _table["Predicted static CoF"],
+                "static_sd": _table["Static std dev"],
+                "dynamic_mean": _table["Predicted sliding CoF"],
+                "dynamic_sd": _table["Sliding std dev"],
+            })
+            _stroke_for_plot = None
+            if _stroke is not None and _stroke > 0:
+                _stroke_for_plot = float(_stroke)
+            _figures = charts.build_friction_velocity_figures(_for_plot, _stroke_for_plot, "Prediction")
+
+            _parts = []
+            if len(_outside) > 0:
+                _parts.append(mo.callout(mo.md(
+                    "Careful: " + ", ".join(_outside)
+                    + " goes outside the data the model learned from, so those values are a rough guess."
+                ), kind="warn"))
+            _parts.append(mo.ui.plotly(_figures[0]))
+            _parts.append(mo.ui.plotly(_figures[1]))
+            _parts.append(mo.ui.table(
+                _table, selection=None,
+                pagination=False, show_column_summaries=False, show_data_types=False,
+            ))
+            set_ai_prediction(mo.vstack(_parts, gap=1))
+        except ValueError as _e:
+            set_ai_prediction(mo.callout(mo.md(f"**Cannot predict:** {_e}"), kind="warn"))
+    return
+
+
+@app.cell
+def _(PANEL_STYLE, ai_data_panel, ai_model_panel, ai_predict_panel, get_ai_msg, get_ai_prediction, mo):
+    _msg = get_ai_msg()
+    if _msg is None:
+        _msg = mo.Html("")
+    _prediction = get_ai_prediction()
+    if _prediction is None:
+        _prediction = mo.Html("")
+    ai_tab = mo.vstack([
+        mo.vstack([ai_data_panel, _msg], gap=2).style(PANEL_STYLE),
+        mo.vstack([
+            mo.Html('<p class="panel-title">3. Model</p>'),
+            ai_model_panel,
+        ], gap=1).style(PANEL_STYLE),
+        mo.vstack([
+            mo.Html('<p class="panel-title">4. Predict</p>'),
+            ai_predict_panel,
+            _prediction,
+        ], gap=2).style(PANEL_STYLE),
+    ], gap=2).style({"padding": "20px 0"})
+    return (ai_tab,)
+
+
 # ── Final layout ───────────────────────────────────────────────────────────
 # Split into independent cells (rather than one monolithic layout cell) so
 # that a widget somewhere getting rebuilt with a new identity - which
@@ -1610,13 +2162,15 @@ def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_an
 
 
 @app.cell
-def _(PANEL_STYLE, cycles_panel, history_chart, history_eval_panel, mo):
+def _(PANEL_STYLE, cycles_panel, history_chart, history_details_panel, history_eval_panel, history_velocity_panel, mo):
     chart_card = mo.vstack([
         mo.Html('<p class="panel-title">Chart</p>'),
+        history_details_panel,
         history_chart,
         mo.Html('<hr class="divider">'),
         history_eval_panel,
         cycles_panel,
+        history_velocity_panel,
     ], gap=1).style(PANEL_STYLE)
     return (chart_card,)
 
@@ -1667,12 +2221,13 @@ def _(mo):
     ANALYSIS_TAB = "&#128202;  Analysis"
     HISTORY_TAB = "&#128450;  History"
     BATCH_TAB = "&#128193;  Batch"
+    AI_TAB = "&#129504;  AI"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, get_active_tab, set_active_tab
+    return AI_TAB, ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, batch_tab, get_active_tab, history_tab, mo, results_tab):
+def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, ai_tab, batch_tab, get_active_tab, history_tab, mo, results_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -1687,12 +2242,21 @@ def _(ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, batch_tab, get_active_tab, history_t
     # this cell re-run on every tab switch, and the tabs cell follows as its
     # dependent.
     _placeholder = mo.Html('<div style="min-height:200px"></div>')
+    # Every tab starts as the placeholder; only the active one gets its content.
+    tab_contents = {
+        ANALYSIS_TAB: _placeholder,
+        HISTORY_TAB: _placeholder,
+        BATCH_TAB: _placeholder,
+        AI_TAB: _placeholder,
+    }
     if get_active_tab() == HISTORY_TAB:
-        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: history_tab, BATCH_TAB: _placeholder}
+        tab_contents[HISTORY_TAB] = history_tab
     elif get_active_tab() == BATCH_TAB:
-        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: _placeholder, BATCH_TAB: batch_tab}
+        tab_contents[BATCH_TAB] = batch_tab
+    elif get_active_tab() == AI_TAB:
+        tab_contents[AI_TAB] = ai_tab
     else:
-        tab_contents = {ANALYSIS_TAB: results_tab, HISTORY_TAB: _placeholder, BATCH_TAB: _placeholder}
+        tab_contents[ANALYSIS_TAB] = results_tab
     return (tab_contents,)
 
 

@@ -102,6 +102,164 @@ def build_history_figure(raw_df, eval_df):
     return fig
 
 
+def _nice_tick_step(largest):
+    """A round tick spacing (0.05, 0.1, 0.2, 0.5, 1, 2, 5, ...) that gives
+    about 2-5 ticks from 0 up to `largest`."""
+    for step in [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]:
+        if largest / step <= 5:
+            return step
+    return 1000
+
+
+def build_friction_velocity_figures(step_results, stroke_mm, title, all_steps=None):
+    """The two per-step plots shown at the bottom of a saved test in
+    History: static friction and sliding (dynamic) friction against the
+    mean sliding velocity, one point per evaluated step, with +/- one
+    standard deviation as error bars.
+
+    Mean sliding velocity of the eccentric: one revolution moves the sample
+    out and back, i.e. 2 x stroke, so
+        v [m/s] = 2 * stroke [m] * Drehzahl [U/min] / 60.
+    Without a stroke the x axis falls back to the speed in U/min.
+
+    The x axis is "mirrored", like the lab's report charts: the steps up to
+    the fastest one are drawn left to right at their velocity; the steps
+    after it continue to the right, back down to 0. So the left half is the
+    speed going up and the right half the speed coming back down.
+
+    `step_results` is database.get_step_results(test_id). `all_steps` is the
+    test's full step table (database.get_step_df), skipped steps included:
+    it decides where the fastest step is, so the axis turns at the test's
+    real top speed even when that step was skipped as noisy (it then just
+    has no point). Without it, the fastest evaluated step is used.
+    Returns (static figure, sliding figure), or None when no step has a
+    speed.
+    """
+    rows = step_results[step_results["speed"].notna()].reset_index(drop=True)
+    if len(rows) == 0:
+        return None
+
+    x_values = []
+    for i in range(len(rows)):
+        speed = float(rows.loc[i, "speed"])
+        if stroke_mm is not None:
+            x_values.append(2 * (stroke_mm / 1000.0) * speed / 60.0)
+        else:
+            x_values.append(speed)
+    if stroke_mm is not None:
+        x_title = "Mean velocity (m/s)"
+    else:
+        x_title = "Speed (U/min) - type in the stroke to get m/s"
+
+    # The fastest step of the test, and when it starts.
+    fastest_speed = None
+    fastest_start = None
+    if all_steps is not None and "Drehzahl" in all_steps.columns:
+        for k in range(len(all_steps)):
+            speed = all_steps["Drehzahl"].iloc[k]
+            if speed is None or speed != speed:
+                continue
+            if fastest_speed is None or float(speed) > fastest_speed:
+                fastest_speed = float(speed)
+                fastest_start = float(all_steps["Startzeit [s]"].iloc[k])
+    if fastest_speed is None:
+        biggest = 0
+        for i in range(len(rows)):
+            if float(rows.loc[i, "speed"]) > float(rows.loc[biggest, "speed"]):
+                biggest = i
+        fastest_speed = float(rows.loc[biggest, "speed"])
+        fastest_start = float(rows.loc[biggest, "start"])
+    if stroke_mm is not None:
+        fastest = 2 * (stroke_mm / 1000.0) * fastest_speed / 60.0
+    else:
+        fastest = fastest_speed
+
+    # Steps starting up to the fastest one = going up; later steps =
+    # coming down, drawn at (2 * fastest - value).
+    positions = []
+    for i in range(len(x_values)):
+        if float(rows.loc[i, "start"]) <= fastest_start + 1e-6:
+            positions.append(x_values[i])
+        else:
+            positions.append(2 * fastest - x_values[i])
+
+    # Draw the points in position order, so the line goes left to right.
+    order = sorted(range(len(positions)), key=positions.__getitem__)
+
+    # Tick marks: 0, step, 2*step, ... up to the fastest velocity on the way
+    # up, and the same values again on the way down.
+    tick_step = _nice_tick_step(fastest)
+    tick_positions = []
+    tick_labels = []
+    value = 0.0
+    while value <= fastest + 1e-9:
+        tick_positions.append(value)
+        tick_labels.append(f"{value:g}")
+        value = round(value + tick_step, 6)
+    for k in range(len(tick_positions) - 1, -1, -1):
+        mirrored = 2 * fastest - tick_positions[k]
+        if mirrored > fastest + 1e-9:
+            tick_positions.append(mirrored)
+            tick_labels.append(tick_labels[k])
+
+    figures = []
+    for mean_column, sd_column, y_title, color in [
+        ("static_mean", "static_sd", "Static friction", "#0b5d8c"),
+        ("dynamic_mean", "dynamic_sd", "Sliding friction", "#c2185b"),
+    ]:
+        x = []
+        y = []
+        error = []
+        for i in order:
+            x.append(positions[i])
+            y.append(float(rows.loc[i, mean_column]))
+            sd = rows.loc[i, sd_column]
+            if sd is None or sd != sd:
+                error.append(0.0)
+            else:
+                error.append(float(sd))
+        # No error bars at all when there is no spread (e.g. a prediction).
+        has_spread = False
+        for e in error:
+            if e > 0:
+                has_spread = True
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="lines+markers", name=y_title,
+            line=dict(color=color, width=2),
+            marker=dict(color=color, size=8),
+            error_y=dict(type="data", array=error, visible=has_spread, thickness=1, width=4),
+            hovertemplate="%{y:.4f} &plusmn; %{error_y.array:.4f}<extra></extra>",
+        ))
+        # Same fixed 0 - 0.35 range as the report charts, so tests can be
+        # compared by eye; taller only when a point needs it.
+        top = 0.35
+        for k in range(len(y)):
+            if y[k] + error[k] > top:
+                top = y[k] + error[k]
+        fig.update_layout(
+            height=340,
+            margin=dict(l=60, r=20, t=40, b=50),
+            title=dict(text=title, x=0.98, xanchor="right", font=dict(size=13)),
+            plot_bgcolor="#fff", paper_bgcolor="#fff",
+            font=dict(color="#1f2a40", size=12),
+            showlegend=False,
+            xaxis=dict(
+                title=x_title, tickmode="array",
+                tickvals=tick_positions, ticktext=tick_labels,
+                range=[0, 2 * fastest], gridcolor="#e3e6ea", linecolor="#999", zeroline=False,
+            ),
+            yaxis=dict(
+                title=y_title, range=[0, top * 1.05], tickformat=".2f",
+                gridcolor="#e3e6ea", linecolor="#999", zeroline=False,
+            ),
+        )
+        # A dotted line where the speed turns from going up to coming down.
+        fig.add_vline(x=fastest, line=dict(color="#bbb", width=1, dash="dot"))
+        figures.append(fig)
+    return figures[0], figures[1]
+
+
 # A long test can be 100,000+ raw samples, and a chart only a few hundred
 # pixels wide can't show more detail than that anyway - plotting every raw
 # point just makes panning/zooming slow with no visual benefit.

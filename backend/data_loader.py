@@ -94,6 +94,19 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     return df_raw, step_df
 
 
+def read_stroke_mm(raw_text: str):
+    """The stroke [mm] from the file header line "Hub Exzenter<TAB>24,0<TAB>mm",
+    or None when the file has no such line (or its value is not a number)."""
+    for line in raw_text.splitlines():
+        parts = line.split("\t")
+        if parts[0].strip() == "Hub Exzenter" and len(parts) >= 2:
+            try:
+                return float(parts[1].strip().replace(",", "."))
+            except ValueError:
+                return None
+    return None
+
+
 def _unique_temp_csv_path(base_name: str) -> str:
     # A unique name per call, not a fixed one: once Excel has opened a file,
     # Windows keeps it locked for as long as Excel has it open, so writing

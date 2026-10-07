@@ -84,6 +84,7 @@ def evaluate_file(path, raw_params, filter_params, eval_params):
         "cof_eval": cof_eval,
         "stats_result": stats_result,
         "step_df": step_df,
+        "stroke_mm": data_loader.read_stroke_mm(raw_text),
     }
 
 
@@ -112,7 +113,10 @@ def run_one(plan, name, overwrite):
             os.path.join(plan["folder"], name),
             plan["raw_params"], plan["filter_params"], plan["eval_params"],
         )
+        # The hand-typed conditions of the old copy move to the new one.
+        old_details = None
         if existing is not None:
+            old_details = database.get_test_details(existing.id)
             database.delete_test(existing.id)
         test_id = database.save_full_evaluation(
             name, plan["filter_params"], plan["eval_params"],
@@ -120,6 +124,13 @@ def run_one(plan, name, overwrite):
             result["cof_eval"], result["stats_result"],
             step_df=result["step_df"],
         )
+        details = old_details
+        if details is None:
+            details = database.get_test_details(test_id)
+        # The stroke comes from the file, so the file's value wins.
+        if result["stroke_mm"] is not None:
+            details["stroke_mm"] = result["stroke_mm"]
+        database.save_test_details(test_id, details)
         if existing is not None:
             row["Status"] = "Overwritten"
         else:

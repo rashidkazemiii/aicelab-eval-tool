@@ -55,6 +55,18 @@ class Test(Base):
     # before this column existed = fixed_window.
     static_method = Column(String)
 
+    # Test conditions, typed in by hand on the History / AI tab. Kept with
+    # the test so a model can later learn how they affect the CoF.
+    # NULL = not filled in yet.
+    temperature   = Column(Float)    # [deg C]
+    humidity      = Column(Float)    # [%]
+    material      = Column(String)
+    note          = Column(Text)
+    # Stroke of the eccentric ("Hub Exzenter" in the file header), read from
+    # the file when the test is saved; can also be typed in on History. Needed
+    # to turn a step's speed (U/min) into a sliding velocity (m/s).
+    stroke_mm     = Column(Float)
+
     results     = relationship("Result",     back_populates="test",
                                 cascade="all, delete-orphan")
     per_cycle   = relationship("PerCycle",   back_populates="test",
@@ -361,6 +373,11 @@ def list_tests() -> list[dict]:
                 "dynamic_min": t.dynamic_min,
                 "dynamic_max": t.dynamic_max,
                 "steps": len(t.results),
+                "temperature": t.temperature,
+                "humidity": t.humidity,
+                "material": t.material,
+                "note": t.note,
+                "stroke_mm": t.stroke_mm,
             }
             out.append(row)
         return out
@@ -379,7 +396,98 @@ def list_tests_df() -> pd.DataFrame:
     return pd.DataFrame(columns=[
         "id", "file_name", "data_type", "uploaded_at", "filter_window",
         "static_range", "dynamic_min", "dynamic_max", "steps",
+        "temperature", "humidity", "material", "note", "stroke_mm",
     ])
+
+
+DETAIL_FIELDS = ["temperature", "humidity", "material", "note", "stroke_mm"]
+
+
+def get_step_results(test_id: int) -> pd.DataFrame:
+    """One row per evaluated step of a saved test, in time order: start and
+    end time [s], speed [U/min] (None when unknown), and the step's static
+    and dynamic mean CoF with their standard deviations. Steps without
+    numbers (skipped as noisy, or no cycles) are left out.
+
+    A result row only knows its time range as text ("60.0-80.0"), so it is
+    matched to its step by start and end time."""
+    db = SessionLocal()
+    try:
+        steps = (
+            db.query(Step).filter(Step.test_id == test_id)
+            .order_by(Step.step_index).all()
+        )
+        results = db.query(Result).filter(Result.test_id == test_id).all()
+    finally:
+        db.close()
+
+    rows = []
+    for r in results:
+        if r.static_mean_cof is None or r.dynamic_mean_cof is None:
+            continue
+        if not r.time_range:
+            continue
+        # "60.0-80.0"; older rows used an en dash as the separator
+        parts = str(r.time_range).replace("–", "-").split("-")
+        if len(parts) != 2:
+            continue
+        try:
+            start = float(parts[0])
+            end = float(parts[1])
+        except ValueError:
+            continue
+        speed = None
+        for s in steps:
+            if abs(s.start_time - start) <= 0.05 and abs(s.end_time - end) <= 0.05:
+                speed = s.speed
+                break
+        rows.append({
+            "start": start,
+            "end": end,
+            "speed": speed,
+            "static_mean": r.static_mean_cof,
+            "static_sd": r.static_sd,
+            "dynamic_mean": r.dynamic_mean_cof,
+            "dynamic_sd": r.dynamic_sd,
+        })
+    table = pd.DataFrame(rows, columns=[
+        "start", "end", "speed", "static_mean", "static_sd", "dynamic_mean", "dynamic_sd",
+    ])
+    return table.sort_values("start").reset_index(drop=True)
+
+
+def get_test_details(test_id: int) -> dict:
+    """The hand-typed conditions of one saved test: {"temperature",
+    "humidity", "material", "note"}, each None when not filled in.
+    Returns None if the test does not exist."""
+    db = SessionLocal()
+    try:
+        test = db.query(Test).filter(Test.id == test_id).first()
+        if test is None:
+            return None
+        details = {}
+        for name in DETAIL_FIELDS:
+            details[name] = getattr(test, name)
+        return details
+    finally:
+        db.close()
+
+
+def save_test_details(test_id: int, details: dict) -> bool:
+    """Store the hand-typed conditions on a saved test. `details` has the
+    same keys as get_test_details; temperature and humidity must already be
+    numbers (or None). Returns whether the test was found."""
+    db = SessionLocal()
+    try:
+        test = db.query(Test).filter(Test.id == test_id).first()
+        if test is None:
+            return False
+        for name in DETAIL_FIELDS:
+            setattr(test, name, details.get(name))
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def save_full_evaluation(
