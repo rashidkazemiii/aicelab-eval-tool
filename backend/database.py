@@ -84,6 +84,9 @@ class Result(Base):
     dynamic_n        = Column(Integer)
     dynamic_sum      = Column(Float)
     dynamic_variance = Column(Float)
+    # Why a step has no numbers (e.g. skipped as too noisy); empty when it
+    # was evaluated normally.
+    note             = Column(String)
 
     test = relationship("Test", back_populates="results")
 
@@ -107,12 +110,6 @@ class PerCycle(Base):
     start_dynamic_cof  = Column(Float)
     end_dynamic_time   = Column(Float)
     end_dynamic_cof    = Column(Float)
-    # Ground truth entered by hand on the chart: was the static point the
-    # tool picked right? "correct" / "wrong" / NULL (not labelled). When it
-    # was wrong, corrected_static_time is where the user said the peak
-    # really is (NULL if they only said "wrong").
-    label                 = Column(String)
-    corrected_static_time = Column(Float)
 
     test = relationship("Test", back_populates="per_cycle")
 
@@ -249,6 +246,7 @@ def save_evaluation(
                 dynamic_n=_clean(row.get("Dynamic N")),
                 dynamic_sum=_clean(row.get("Dynamic Avg x N")),
                 dynamic_variance=_clean(row.get("Dynamic Var")),
+                note=row.get("Note"),
             ))
 
         for idx, row in per_cycle_df.iterrows():
@@ -363,27 +361,11 @@ def list_tests() -> list[dict]:
                 "dynamic_min": t.dynamic_min,
                 "dynamic_max": t.dynamic_max,
                 "steps": len(t.results),
-                "labels": _labels_summary(t.per_cycle),
             }
             out.append(row)
         return out
     finally:
         db.close()
-
-
-def _labels_summary(per_cycle_rows) -> str:
-    """'12 ok, 3 wrong' for the History list; '' when nothing is labelled.
-    Plain ASCII on purpose (no check marks) - see ANALYSIS_TAB in app.py."""
-    n_correct = 0
-    n_wrong = 0
-    for r in per_cycle_rows:
-        if r.label == "correct":
-            n_correct += 1
-        elif r.label == "wrong":
-            n_wrong += 1
-    if n_correct == 0 and n_wrong == 0:
-        return ""
-    return f"{n_correct} ok, {n_wrong} wrong"
 
 
 def list_tests_df() -> pd.DataFrame:
@@ -396,7 +378,7 @@ def list_tests_df() -> pd.DataFrame:
         return pd.DataFrame(tests)
     return pd.DataFrame(columns=[
         "id", "file_name", "data_type", "uploaded_at", "filter_window",
-        "static_range", "dynamic_min", "dynamic_max", "steps", "labels",
+        "static_range", "dynamic_min", "dynamic_max", "steps",
     ])
 
 
@@ -588,34 +570,6 @@ def load_test_for_analysis(test_id: int) -> dict:
     }
 
 
-def get_labels_for_test(test_id: int) -> dict:
-    """{static_cof_time: {"label": ..., "corrected_t": ...}} for every
-    labelled cycle of one saved test - used to draw saved labels again."""
-    db = SessionLocal()
-    try:
-        rows = (
-            db.query(PerCycle)
-            .filter(PerCycle.test_id == test_id, PerCycle.label.isnot(None))
-            .all()
-        )
-        out = {}
-        for r in rows:
-            if r.static_cof_time is None:
-                continue
-            out[r.static_cof_time] = {"label": r.label, "corrected_t": r.corrected_static_time}
-        return out
-    finally:
-        db.close()
-
-
-def get_labels_for_file(file_name: str) -> dict:
-    """Saved labels of the test with this file name, or {} if none."""
-    test = find_existing_test(file_name)
-    if test is None:
-        return {}
-    return get_labels_for_test(test.id)
-
-
 def get_cycles(test_id: int) -> list[dict]:
     """Per-cycle rows for one test, ordered by cycle_index."""
     db = SessionLocal()
@@ -690,109 +644,6 @@ def count_cycles(test_id: int) -> int:
     db = SessionLocal()
     try:
         return db.query(func.count(PerCycle.id)).filter(PerCycle.test_id == test_id).scalar()
-    finally:
-        db.close()
-
-
-# A label is matched to its cycle by the static point's time (the chart
-# knows the time, not the row); anything closer than this counts as the
-# same point. Samples are 1 ms apart, so half a millisecond is unambiguous.
-LABEL_MATCH_TOLERANCE_S = 0.0005
-
-
-def save_cycle_labels(test_id: int, labels: list) -> tuple:
-    """Store hand-made labels on a saved test's cycles.
-
-    `labels` is a list of dicts {"t": static point time [s],
-    "label": "correct" | "wrong" | None, "corrected_t": time [s] or None}.
-    Each one is matched to the PerCycle row of `test_id` whose
-    static_cof_time is within LABEL_MATCH_TOLERANCE_S of "t"; a label of None
-    clears that row's label again. Returns (matched, unmatched) counts.
-    """
-    db = SessionLocal()
-    try:
-        rows = db.query(PerCycle).filter(PerCycle.test_id == test_id).all()
-        matched = 0
-        unmatched = 0
-        for item in labels:
-            t = item.get("t")
-            if t is None:
-                unmatched += 1
-                continue
-            hit = None
-            for r in rows:
-                if r.static_cof_time is not None and abs(r.static_cof_time - float(t)) <= LABEL_MATCH_TOLERANCE_S:
-                    hit = r
-                    break
-            if hit is None:
-                unmatched += 1
-                continue
-            label = item.get("label")
-            if label not in ("correct", "wrong"):
-                label = None
-            hit.label = label
-            corrected = item.get("corrected_t")
-            if label == "wrong" and corrected is not None:
-                hit.corrected_static_time = _clean(corrected)
-            else:
-                hit.corrected_static_time = None
-            matched += 1
-        db.commit()
-        return matched, unmatched
-    finally:
-        db.close()
-
-
-def count_labels(test_id: int) -> tuple:
-    """(n_correct, n_wrong) for one saved test."""
-    db = SessionLocal()
-    try:
-        rows = db.query(PerCycle).filter(PerCycle.test_id == test_id).all()
-        n_correct = 0
-        n_wrong = 0
-        for r in rows:
-            if r.label == "correct":
-                n_correct += 1
-            elif r.label == "wrong":
-                n_wrong += 1
-        return n_correct, n_wrong
-    finally:
-        db.close()
-
-
-def export_labels_df() -> pd.DataFrame:
-    """Every labelled cycle across all saved tests, one row each, with the
-    test's file name and static method - the training table for a future
-    peak detector."""
-    db = SessionLocal()
-    try:
-        rows = (
-            db.query(PerCycle, Test)
-            .join(Test, PerCycle.test_id == Test.id)
-            .filter(PerCycle.label.isnot(None))
-            .order_by(Test.id, PerCycle.cycle_index)
-            .all()
-        )
-        records = []
-        for cycle, test in rows:
-            records.append({
-                "test_id": test.id,
-                "file_name": test.file_name,
-                "static_method": test.static_method or "fixed_window",
-                "cycle_index": cycle.cycle_index,
-                "static_cof_time": cycle.static_cof_time,
-                "static_cof": cycle.static_cof,
-                "dynamic_cof_time": cycle.dynamic_cof_time,
-                "dynamic_cof": cycle.dynamic_cof,
-                "label": cycle.label,
-                "corrected_static_time": cycle.corrected_static_time,
-            })
-        columns = [
-            "test_id", "file_name", "static_method", "cycle_index",
-            "static_cof_time", "static_cof", "dynamic_cof_time", "dynamic_cof",
-            "label", "corrected_static_time",
-        ]
-        return pd.DataFrame(records, columns=columns)
     finally:
         db.close()
 
@@ -881,6 +732,7 @@ def get_full_eval_table(test_id: int) -> pd.DataFrame:
     cols["Dynamic mean N"] = _column(results, "dynamic_n")
     cols["Dynamic CoF avg×N"] = _column(results, "dynamic_sum")
     cols["Dynamic CoF var (step)"] = _column(results, "dynamic_variance")
+    cols["Note"] = _column(results, "note")
     cols["-Min time [s]"] = _column(mins, "minus_min_time")
     cols["-Min CoF"] = _column(mins, "minus_min_cof")
     cols["+Min time [s]"] = _column(mins, "plus_min_time")
@@ -891,8 +743,6 @@ def get_full_eval_table(test_id: int) -> pd.DataFrame:
     cols["Dynamic start CoF"] = _column(cycles, "start_dynamic_cof")
     cols["Dynamic end time [s]"] = _column(cycles, "end_dynamic_time")
     cols["Dynamic end CoF"] = _column(cycles, "end_dynamic_cof")
-    cols["Label"] = _column(cycles, "label")
-    cols["Corrected static time [s]"] = _column(cycles, "corrected_static_time")
 
     return pd.DataFrame(cols)
 

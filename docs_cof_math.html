@@ -190,6 +190,15 @@
   table.ledger tr:last-child td{ border-bottom:none; }
   table.ledger td.precision{ white-space:nowrap; font-variant-numeric:tabular-nums; }
 
+  figure.diagram{
+    margin:1.2rem 0; padding:1rem 1.2rem .7rem; background:#ffffff;
+    border:1px solid var(--line); border-radius:6px;
+  }
+  figure.diagram img{ display:block; max-width:100%; height:auto; margin:0 auto; }
+  figure.diagram figcaption{
+    margin-top:.6rem; font-size:.85rem; color:#55666d; text-align:center;
+  }
+
   .foot{
     margin-top:3rem; padding-top:1.5rem; border-top:1px solid var(--line);
     color:var(--ink-soft); font-size:.85rem;
@@ -211,6 +220,10 @@
       <span class="src">pipeline.py</span>
       <span class="src">results_table.py</span>
     </div>
+    <figure class="diagram">
+      <img src="docs_cof_math_assets/diagram-overview.png" alt="CoF over time, split into test steps by dashed lines">
+      <figcaption>A test is a sequence of steps; within each step the CoF swings back and forth once per stroke.</figcaption>
+    </figure>
   </header>
 
   <div class="layout">
@@ -250,6 +263,10 @@
       <section class="stage" id="stage-1">
         <div class="stage-head"><span class="stage-num">01</span><h2>CoF per sample</h2></div>
         <p><span class="src">physics/CoF.py:9</span> turns the three raw force channels into one CoF value per sample. Which formula runs depends on the Normal Load Correction, λ:</p>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-device.png" alt="Tribometer: the upper part slides back and forth under a load on top of a fixed lower part, which is held between a left and a right force sensor">
+          <figcaption>The upper part slides back and forth under the load; the lower part stays fixed. Friction drags the lower part along (<span class="v">F</span><sub>f</sub>), and the left and right sensors hold it still — together they measure <span class="v">F</span><sub>f</sub> = <span class="v">F</span><sub>f,L</sub> + <span class="v">F</span><sub>f,R</sub>. Dividing by the normal force <span class="v">F</span><sub>N</sub> gives μ.</figcaption>
+        </figure>
         <div class="math-block">
           <div class="case"><span class="cond">λ not given</span><span class="op">→</span> μ<sub>i</sub> = <span class="frac"><span class="num"><span class="v fsym">F</span><sub>f,Li</sub> + <span class="v fsym">F</span><sub>f,Ri</sub></span><span class="den"><span class="v fsym">F</span><sub>Ni</sub></span></span></div>
           <div class="case"><span class="cond">λ = 0</span><span class="op">→</span> μ<sub>i</sub> = <span class="v fsym">F</span><sub>f,Li</sub> + <span class="v fsym">F</span><sub>f,Ri</sub> <span class="op">(flagged: not a true CoF, unitless force sum)</span></div>
@@ -272,11 +289,19 @@
           <div class="case">Filter (form) <span class="op">→</span> μ′<sub>i</sub> ← <span class="rnd">round(median<sub>window w</sub>(μ), 15)</span></div>
           <div class="cond" style="margin-top:.3rem"><span class="src">utility_functions.py:88</span> — a centered rolling median, window <span class="v">w</span> samples wide. μ′ is used <strong>only</strong> to find zero-crossings (Stage 03) and decide stroke timing. Stage 05's static/dynamic CoF values are still read from μ, not μ′.</div>
         </div>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-offset-filter.png" alt="Left: Offset shifts the signal down by its mean. Right: Filter smooths a noisy signal.">
+          <figcaption>Left: Offset subtracts mean(μ) so the noisy signal centres on zero — the noise stays. Right: Filter removes the noise, turning μ into μ′, used only for finding crossings.</figcaption>
+        </figure>
       </section>
 
       <section class="stage" id="stage-3">
         <div class="stage-head"><span class="stage-num">03</span><h2>Zero crossings</h2></div>
         <p><span class="src">utility_functions.py:98 Find_minima()</span> walks μ′ (the filtered signal, or μ itself if Filter wasn't used) sample by sample and records every sign change — each one is a stroke reversal.</p>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-crossings-peaks.png" alt="Square-wave CoF with zero crossings j=0 to 4 marked; each stroke between two crossings has its peak found in a shaded window just after the crossing">
+          <figcaption>Why crossings come first: the peaks can only be found once the signal is cut into strokes. Each zero crossing (<span class="v">j</span>) marks where a stroke starts, and the peak μ* is searched for in a short window (shaded) right after it.</figcaption>
+        </figure>
         <div class="math-block">
           A crossing is recorded between samples <span class="v">i</span>−1, <span class="v">i</span> when both hold:
           <div class="case" style="margin-top:.4rem"><span class="v">t</span><sub>i</sub> − <span class="v">t</span><sub>i−1</sub> &lt; 0.002 s <span class="op">(else the samples are too far apart to trust as one crossing)</span></div>
@@ -286,6 +311,10 @@
         <div class="math-block">
           <span class="v">t</span><sub>j</sub> = <span class="frac"><span class="num"><span class="v">t</span><sup>+</sup>μ<sup>−</sup> − <span class="v">t</span><sup>−</sup>μ<sup>+</sup></span><span class="den">μ<sup>−</sup> − μ<sup>+</sup></span></span>
         </div>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-zero-crossing.png" alt="Two samples either side of zero joined by a line; the crossing time t_j is where that line meets zero" style="max-width:600px">
+          <figcaption>The crossing time <span class="v">t</span><sub>j</sub> is where the straight line between (<span class="v">t</span><sup>−</sup>, μ<sup>−</sup>) and (<span class="v">t</span><sup>+</sup>, μ<sup>+</sup>) meets zero.</figcaption>
+        </figure>
         <p class="note"><span class="v">j</span> just counts crossings in the order they're found — 0, 1, 2, … Crossing <span class="v">j</span>'s row number in the raw sample table — the sample nearest <span class="v">t</span><sub>j</sub> — becomes <span class="v">startIndex[j]</span>, used from Stage 04 on. A separate diagnostic (not shown here) flags any crossing spaced under 50% of the file's average crossing spacing as “noisy data” — it's a warning only, it doesn't exclude anything from the stages below.</p>
       </section>
 
@@ -297,6 +326,10 @@
           <div class="cond" style="margin-top:.4rem">30 / <span class="v">n</span><sub>s</sub> is step <span class="v">s</span>'s own expected half-stroke period, in seconds, from <span class="v">n</span><sub>s</sub> in rev/min. Falls back to the fixed 1.0 s alone when no Drehzahl is known for that step. <span class="src">utility_functions.py:228</span></div>
         </div>
         <p>Cycle <span class="v">k</span>, spanning crossings <span class="v">t</span><sub>k−1</sub> and <span class="v">t</span><sub>k</sub>, is kept only if <span class="v">t</span><sub>k</sub> − <span class="v">t</span><sub>k−1</sub> ≤ <span class="v">τ</span><sub>pause</sub>(<span class="v">s</span>) — otherwise it's disregarded, no value produced.</p>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-pause-cycle.png" alt="Crossings j=0 to j=5; cycles k=1,2,3,5 are kept, the long gap between j=3 and j=4 is a pause so cycle k=4 is dropped">
+          <figcaption>Each pair of neighbouring crossings is one cycle <span class="v">k</span>. The long gap between <span class="v">j</span>=3 and <span class="v">j</span>=4 exceeds <span class="v">τ</span><sub>pause</sub>, so there is no cycle <span class="v">k</span>=4.</figcaption>
+        </figure>
         <div class="example">
           <span class="eg-label">Worked example</span>
           <table>
@@ -329,6 +362,10 @@
           <div class="case">σ<sub>k</sub> = |μ̄<sub>k</sub>| · <span class="v">n</span> &nbsp;<span class="op">— a pool-ready “Σ|μ|”, carried forward to Stage 07</span></div>
           <div class="case">v<sub>k</sub> = SD<sub>k</sub><sup>2</sup>(<span class="v">n</span>−1) + σ<sub>k</sub><sup>2</sup>/<span class="v">n</span> &nbsp;<span class="op">— a pool-ready “Σμ²”, also carried forward</span></div>
         </div>
+        <figure class="diagram">
+          <img src="docs_cof_math_assets/diagram-static-dynamic.png" alt="One stroke: the static window at the start holds the peak mu-star; the dynamic window in the middle is averaged to give mu-bar">
+          <figcaption>One cycle: μ*<sub>k</sub> is the peak inside the static window (shaded); μ̄<sub>k</sub> is the mean over the dynamic window (dashed box).</figcaption>
+        </figure>
         <div class="example">
           <span class="eg-label">Worked example — defaults (Static 10%, Dyn 20–80%), startIndex[k−1]=1000, startIndex[k]=1200 (N = 200)</span>
           <table>

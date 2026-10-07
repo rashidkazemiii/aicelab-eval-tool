@@ -76,6 +76,7 @@ def build_eval_table(cof_eval, stats_result, stats_error):
             "Dynamic mean N": pad_column(stats["Dynamic N"]),
             "Dynamic CoF avg×N": round_and_pad_column(stats["Dynamic Avg x N"]),
             "Dynamic CoF var (step)": round_and_pad_column(stats["Dynamic Var"]),
+            "Note": pad_column(stats["Note"]),
             "-Min time [s]": pad_column(mn["-Min Zeit"]),
             "-Min CoF": round_and_pad_column(mn["-Min CoF"], MINUS_MIN_COF_DECIMALS),
             "+Min time [s]": pad_column(mn["+Min Zeit"]),
@@ -98,6 +99,7 @@ def build_eval_table(cof_eval, stats_result, stats_error):
 # still exported to Excel, just not displayed in the page.
 SHOWN_COLUMNS = [
     "Time range [s]",
+    "Note",
     "Static mean CoF",
     "Static std dev",
     "Static N",

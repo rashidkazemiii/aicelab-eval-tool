@@ -19,8 +19,9 @@ def _():
     import table_helpers
     import settings_store
     import speed_pulse
+    import batch
 
-    return charts, data_loader, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
+    return batch, charts, data_loader, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -151,23 +152,20 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    get_eval_params, set_eval_params = mo.state(None)
-    return get_eval_params, set_eval_params
+    # The file "Find zeros" was last clicked for, so a click for an earlier
+    # file never carries over to the next one.
+    get_zeros_file_id, set_zeros_file_id = mo.state(None)
+    return get_zeros_file_id, set_zeros_file_id
 
 
 @app.cell
 def _(mo):
-    get_eval_file_id, set_eval_file_id = mo.state(None)
-    return get_eval_file_id, set_eval_file_id
-
-
-@app.cell
-def _(mo):
-    # Which evaluation the page shows: "crossings" (Evaluate - cycle
-    # boundaries are the zero crossings found in the signal) or "pulse"
-    # (the chart's Evaluate with pulse button - boundaries are the speed
-    # pulse's edges). Whichever button was clicked last wins.
-    get_eval_mode, set_eval_mode = mo.state("crossings")
+    # Which evaluation the page shows:
+    #   "zeros" - none, only the zero crossings (after Find zeros);
+    #   "pulse" - the chart's Evaluate with pulse result;
+    #   "saved" - the evaluation stored with a test loaded from History.
+    # Whichever action happened last wins.
+    get_eval_mode, set_eval_mode = mo.state("zeros")
     return get_eval_mode, set_eval_mode
 
 
@@ -189,7 +187,7 @@ def _(mo):
     # None, or the dict database.load_test_for_analysis returns. While set,
     # the Analysis pipeline shows that test instead of an uploaded file -
     # the signal, filter, evaluation and steps come from the database, and
-    # Filter / Evaluate / Save / Save labels then work on it exactly as on
+    # Filter / Find zeros / Evaluate with pulse / Save then work on it as on
     # an uploaded file. Cleared by the next Calculate click.
     get_loaded_test, set_loaded_test = mo.state(None)
     return get_loaded_test, set_loaded_test
@@ -203,15 +201,6 @@ def _(mo):
     # leave the boxes (and the page) alone. None means the defaults.
     get_box_values, set_box_values = mo.state(None)
     return get_box_values, set_box_values
-
-
-@app.cell
-def _(mo):
-    # Nonce of the last "Save labels" click that was handled, so the same
-    # click is never stored twice when the handler cell re-runs for another
-    # reason.
-    get_labels_nonce, set_labels_nonce = mo.state(None)
-    return get_labels_nonce, set_labels_nonce
 
 
 @app.cell
@@ -510,42 +499,40 @@ def _(
 
 
 @app.cell
-def _(eval_btn, eval_fields, parsed_file_id, set_eval_file_id, set_eval_mode, set_eval_params):
-    # Same split as the Filter cell above, for the same reason.
-    if eval_btn.value:
-        set_eval_params(eval_fields.value)
-        set_eval_file_id(parsed_file_id)
-        set_eval_mode("crossings")
+def _(find_zeros_btn, parsed_file_id, set_eval_mode, set_zeros_file_id):
+    # "Find zeros" only finds the zero crossings; the cycles are evaluated
+    # with the chart's "Evaluate with pulse" button. A new Find zeros click
+    # hides the previous pulse evaluation, because that one was made with
+    # the old crossings.
+    if find_zeros_btn.value:
+        set_zeros_file_id(parsed_file_id)
+        set_eval_mode("zeros")
     return
 
 
 @app.cell
 def _(
-    df_display,
     df_proc,
-    get_eval_file_id,
-    get_eval_params,
     get_loaded_test,
+    get_zeros_file_id,
     mo,
     parsed_file_id,
     pipeline,
     set_results_status_msg,
 ):
-    _eval_clicked_here = get_eval_file_id() == parsed_file_id
+    _zeros_clicked_here = get_zeros_file_id() == parsed_file_id
     _loaded = get_loaded_test()
-    if _loaded is not None and not _eval_clicked_here:
-        # Test from History, Evaluate not clicked since: its saved
-        # evaluation stands in for a fresh one.
-        active_eval_params = _loaded["eval_params"]
-        cof_eval_crossings = _loaded["cof_eval"]
-    else:
-        active_eval_params = get_eval_params() if _eval_clicked_here else None
-        cof_eval_crossings = None
+    zero_crossings = None
+    if _loaded is not None and not _zeros_clicked_here:
+        # Test from History, Find zeros not clicked since: use the
+        # crossings stored with its evaluation.
+        zero_crossings = _loaded["cof_eval"]["minima"]
+    elif _zeros_clicked_here:
         try:
-            cof_eval_crossings = pipeline.compute_evaluation(df_display, df_proc, active_eval_params)
+            zero_crossings = pipeline.compute_zero_crossings(df_proc)
         except Exception as _e:
-            set_results_status_msg(mo.callout(mo.md(f"**Evaluate error:** {_e}"), kind="danger"))
-    return active_eval_params, cof_eval_crossings
+            set_results_status_msg(mo.callout(mo.md(f"**Find zeros error:** {_e}"), kind="danger"))
+    return (zero_crossings,)
 
 
 @app.cell
@@ -570,51 +557,6 @@ def _(file_upload, get_loaded_test):
     else:
         analysis_file_name = None
     return (analysis_file_name,)
-
-
-@app.cell
-def _(charts, mo):
-    # Hidden text field the chart's "Save labels" button writes into (see
-    # setupLabels() in charts.py); found by its placeholder, so that must
-    # stay LABELS_PLACEHOLDER.
-    labels_field = mo.ui.text(value="", placeholder=charts.LABELS_PLACEHOLDER)
-    return (labels_field,)
-
-
-@app.cell
-def _(analysis_file_name, db_mod, get_labels_nonce, labels_field, mo, set_labels_nonce, set_results_status_msg):
-    # Handles a click of the chart's "Save labels" button. The field holds
-    # JSON {"labels": [{"t", "label", "corrected_t"}], "nonce": click id}.
-    # Labels belong to the SAVED test with this file name - the user has to
-    # Save first, otherwise there is no row to attach them to.
-    import json as _json
-    _request = None
-    if labels_field.value:
-        try:
-            _request = _json.loads(labels_field.value)
-        except ValueError:
-            _request = None
-    if _request is not None and _request.get("nonce") != get_labels_nonce():
-        set_labels_nonce(_request.get("nonce"))
-        if analysis_file_name is None:
-            set_results_status_msg(mo.callout(mo.md("Upload and **Save** the test first, then save labels."), kind="warn"))
-        else:
-            _fname = analysis_file_name
-            _test = db_mod.find_existing_test(_fname)
-            if _test is None:
-                set_results_status_msg(mo.callout(
-                    mo.md(f"**{_fname}** is not saved yet. Click **Save** first, then **Save labels**."), kind="warn",
-                ))
-            else:
-                try:
-                    _matched, _unmatched = db_mod.save_cycle_labels(_test.id, _request.get("labels", []))
-                    _msg = f"Saved **{_matched}** labels to test **#{_test.id}**."
-                    if _unmatched > 0:
-                        _msg += f" {_unmatched} point(s) did not match a saved cycle (re-save the test after re-evaluating)."
-                    set_results_status_msg(mo.callout(mo.md(_msg), kind="success"))
-                except Exception as _e:
-                    set_results_status_msg(mo.callout(mo.md(f"**Save labels failed:** {_e}"), kind="danger"))
-    return
 
 
 @app.cell
@@ -662,7 +604,7 @@ def _(
 
 
 @app.cell
-def _(df_display, get_pulse_eval_request, mo, parsed_file_id, pipeline, set_results_status_msg):
+def _(df_display, get_pulse_eval_request, mo, parsed_file_id, pipeline, set_results_status_msg, step_df):
     _request = get_pulse_eval_request()
     cof_eval_pulse = None
     if _request is not None and _request["file_id"] == parsed_file_id and df_display is not None:
@@ -671,26 +613,44 @@ def _(df_display, get_pulse_eval_request, mo, parsed_file_id, pipeline, set_resu
                 df_display, _request["edges"], _request["params"]
             )
             if cof_eval_pulse is not None:
-                set_results_status_msg(mo.callout(mo.md(
+                _msg = (
                     f"**Evaluated with pulse:** {len(cof_eval_pulse['cof_res']):,} cycles "
-                    "(zero crossings = pulse edges, static = first peak up to Dyn min). "
-                    "Click **Evaluate** to go back to the signal's zero crossings."
-                ), kind="success"))
+                    "(cycle boundaries = pulse edges, static = first peak up to Dyn min)."
+                )
+                _skipped_names = []
+                for _step_index in cof_eval_pulse["skipped_steps"]:
+                    _row = step_df.iloc[_step_index]
+                    _skipped_names.append(
+                        f"{round(_row['Startzeit [s]'])}-{round(_row['Endzeit [s]'])} s"
+                    )
+                if len(_skipped_names) > 0:
+                    _msg += (
+                        " Skipped (too many zero crossings in one stroke): "
+                        + ", ".join(_skipped_names) + "."
+                    )
+                set_results_status_msg(mo.callout(mo.md(_msg), kind="success"))
         except Exception as _e:
             set_results_status_msg(mo.callout(mo.md(f"**Evaluate with pulse error:** {_e}"), kind="danger"))
     return (cof_eval_pulse,)
 
 
 @app.cell
-def _(cof_eval_crossings, cof_eval_pulse, get_eval_mode):
+def _(cof_eval_pulse, get_eval_mode, get_loaded_test, get_pulse_eval_request):
     # The evaluation everything downstream (chart markers, tables, Excel,
-    # Save) works with: the pulse evaluation while it is the one asked for
-    # last and actually exists, otherwise the normal one.
-    if get_eval_mode() == "pulse" and cof_eval_pulse is not None:
+    # Save) works with, and the Static/Dyn % values it was made with: the
+    # pulse evaluation after Evaluate with pulse, the stored one for a test
+    # loaded from History, otherwise none.
+    cof_eval = None
+    active_eval_params = None
+    _mode = get_eval_mode()
+    _loaded = get_loaded_test()
+    if _mode == "pulse" and cof_eval_pulse is not None:
         cof_eval = cof_eval_pulse
-    else:
-        cof_eval = cof_eval_crossings
-    return (cof_eval,)
+        active_eval_params = get_pulse_eval_request()["params"]
+    elif _mode == "saved" and _loaded is not None:
+        cof_eval = _loaded["cof_eval"]
+        active_eval_params = _loaded["eval_params"]
+    return active_eval_params, cof_eval
 
 
 @app.cell
@@ -755,8 +715,7 @@ def _(
                     step_df=step_df,
                 )
                 set_results_status_msg(mo.callout(mo.md(
-                    f"Saved as test **#{_test_id}**. "
-                    "If you have labels on the chart, click **Save labels** to store them on this copy."
+                    f"Saved as test **#{_test_id}**."
                 ), kind="success"))
             except Exception as _e:
                 set_results_status_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
@@ -769,29 +728,11 @@ def _(mo):
     refresh_btn = mo.ui.run_button(label="&#128260; Refresh")
     delete_btn = mo.ui.run_button(label="&#128465; Delete selected", kind="danger")
     open_history_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
-    open_labels_excel_btn = mo.ui.run_button(label="&#128194; Open labels in Excel")
-    return delete_btn, open_history_excel_btn, open_labels_excel_btn, refresh_btn
+    return delete_btn, open_history_excel_btn, refresh_btn
 
 
 @app.cell
-def _(data_loader, db_mod, mo, open_labels_excel_btn, set_history_status_msg):
-    # Every hand-made label across all saved tests, one row per labelled
-    # cycle - the training table for a future peak detector.
-    if open_labels_excel_btn.value:
-        try:
-            _labels_df = db_mod.export_labels_df()
-            if len(_labels_df) == 0:
-                set_history_status_msg(mo.callout(mo.md("No labels saved yet."), kind="info"))
-            else:
-                data_loader.open_dataframe_in_excel(_labels_df, "labels")
-                set_history_status_msg(mo.callout(mo.md(f"Opened {len(_labels_df):,} labels in Excel."), kind="success"))
-        except Exception as _e:
-            set_history_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
-    return
-
-
-@app.cell
-def _(db_mod, mo, refresh_btn):
+def _(db_mod, get_batch_log, mo, refresh_btn):
     # Reference this so marimo tracks it as a real dependency (reactivity is
     # derived from names actually used in the body, not the signature) - this
     # is what makes Refresh actually re-query the database. Delete is
@@ -801,6 +742,9 @@ def _(db_mod, mo, refresh_btn):
     # since this cell (which produces history_table) runs before the delete
     # cell (which reads history_table.value) in the same pass.
     refresh_btn.value
+    # A finished batch run also re-reads the list, so the tests it saved
+    # show up without clicking Refresh.
+    get_batch_log()
 
     history_df = db_mod.list_tests_df()
     history_table = mo.ui.table(
@@ -868,7 +812,7 @@ def _(
     set_results_status_msg,
 ):
     # Bring the selected saved test back into the Analysis tab, so it can be
-    # labelled (its saved labels come along), re-evaluated and re-saved.
+    # re-evaluated and re-saved.
     if load_to_analysis_btn.value:
         _ids = selected_test_ids(history_table.value)
         if len(_ids) == 1:
@@ -896,12 +840,10 @@ def _(
                     "dyn_min": _loaded["eval_params"]["dyn_min"],
                     "dyn_max": _loaded["eval_params"]["dyn_max"],
                 })
-                set_eval_mode("crossings")
+                set_eval_mode("saved")
                 set_active_tab(ANALYSIS_TAB)
-                _n_labels = len(db_mod.get_labels_for_test(_ids[0]))
                 set_results_status_msg(mo.callout(mo.md(
-                    f"Loaded test **#{_ids[0]}** (**{_loaded['file_name']}**) from History"
-                    f" with {_n_labels} saved labels. Label, then **Save** (overwrite) and **Save labels**."
+                    f"Loaded test **#{_ids[0]}** (**{_loaded['file_name']}**) from History."
                     " Uploading a file and clicking Calculate goes back to the uploaded file."
                 ), kind="info"))
     return
@@ -1039,7 +981,7 @@ def _(db_mod, get_shown_test_id, mo, results_table):
         else:
             shown_eval_table = mo.ui.table(
                 _eval_df, selection=None,
-                pagination=True, show_column_summaries=False, show_data_types=False,
+                pagination=False, show_column_summaries=False, show_data_types=False,
             )
     return (shown_eval_table,)
 
@@ -1073,25 +1015,23 @@ def _(get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, show
 
 
 @app.cell
-def _(cof_eval_crossings, df_display, speed_pulse, step_df):
+def _(df_display, speed_pulse, step_df, zero_crossings):
     # Nominal-speed square wave (30/Drehzahl s per half-stroke), anchored per
-    # step on the first zero crossing Evaluate found there. Before Evaluate
-    # it starts at each step's Startzeit instead, so it is visible as soon as
-    # a file with steps is parsed. The "Pulse offset" boxes live inside the
-    # chart iframe and shift the trace in the browser only. Anchored on the
-    # crossings evaluation, never on the pulse one - that would be circular.
-    _minima = None
-    if cof_eval_crossings is not None:
-        _minima = cof_eval_crossings["minima"]
+    # step on the first zero crossing Find zeros found there. Before Find
+    # zeros it starts at each step's Startzeit instead, so it is visible as
+    # soon as a file with steps is parsed. The found crossings also mark the
+    # noisy steps (too many zeros in one stroke) that Evaluate with pulse
+    # leaves out. The "Pulse offset" boxes live inside the chart iframe and
+    # shift the trace in the browser only.
     if df_display is None:
         pulse = None
     else:
-        pulse = speed_pulse.build_speed_pulse(df_display, step_df, _minima)
+        pulse = speed_pulse.build_speed_pulse(df_display, step_df, zero_crossings)
     return (pulse,)
 
 
 @app.cell
-def _(active_filter_params, analysis_file_name, charts, cof_eval, db_mod, df_display, df_proc, mo, parsed_file_id, pipeline, pulse, step_df):
+def _(active_filter_params, charts, cof_eval, df_display, df_proc, mo, parsed_file_id, pipeline, pulse, step_df, zero_crossings):
     if df_display is None:
         cof_chart = mo.Html(
             '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
@@ -1100,24 +1040,21 @@ def _(active_filter_params, analysis_file_name, charts, cof_eval, db_mod, df_dis
         )
     else:
         _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
-        _fig = charts.build_cof_figure(df_display, df_proc, cof_eval, step_df, _filter_active, speed_pulse=pulse)
+        _fig = charts.build_cof_figure(
+            df_display, df_proc, cof_eval, step_df, _filter_active,
+            speed_pulse=pulse, zero_crossings=zero_crossings,
+        )
         # df_display only ever gets built from data tagged with the file
         # that's actually in the upload box right now (see the df_display
         # cell above) - so this name is never stale, unlike just reading
         # file_upload directly here would risk if the two ever raced.
         _fname = parsed_file_id[0] if parsed_file_id else "&mdash;"
-        # Labels already saved for this file (an earlier session, or a test
-        # loaded from History) start out drawn on the chart.
-        _saved_labels = {}
-        if analysis_file_name is not None:
-            _saved_labels = db_mod.get_labels_for_file(analysis_file_name)
-        _initial_labels = charts.initial_labels_for_chart(_saved_labels, df_display["Zeit"], df_display["CoF"])
         cof_chart = mo.vstack([
             mo.Html(f'<p style="font-size:0.72rem;color:#888;margin:0 0 4px 0">'
                      f'Showing: <strong>{_fname}</strong></p>'),
             # Keyed by file, so the remembered x-zoom / y-range of one file
             # is never applied to the next one.
-            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"live-{_fname}", initial_labels=_initial_labels)),
+            mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"live-{_fname}")),
         ], gap=0)
     return (cof_chart,)
 
@@ -1162,7 +1099,7 @@ def _(cof_eval, mo, results_table, stats_error, stats_result):
             mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
             mo.ui.table(
                 _eval_df, selection=None,
-                pagination=True, show_column_summaries=False, show_data_types=False,
+                pagination=False, show_column_summaries=False, show_data_types=False,
             ),
         ], gap=1)
     return (eval_table_panel,)
@@ -1304,7 +1241,7 @@ def _(mo):
     # only when a saved test is loaded from History, and then the boxes are
     # supposed to show that test's parameters.
     filter_btn = mo.ui.run_button(label="Filter")
-    eval_btn = mo.ui.run_button(label="Evaluate")
+    find_zeros_btn = mo.ui.run_button(label="Find zeros")
     # Fixed-width wrapper around each placeholder: marimo's text input is a
     # shadow-DOM web component sized at 100% of its host element, so a
     # page-level <style> width rule can never reach it — this is the only
@@ -1345,9 +1282,9 @@ def _(mo):
     controls_row = mo.hstack([
         filter_fields, filter_btn,
         _rule(),
-        eval_fields, eval_btn,
+        eval_fields, find_zeros_btn,
     ], gap=1, align="center", justify="start", wrap=True)
-    return controls_row, eval_btn, eval_fields, filter_btn, filter_fields
+    return controls_row, eval_fields, filter_btn, filter_fields, find_zeros_btn
 
 
 @app.cell
@@ -1434,6 +1371,163 @@ def _(get_box_values, mo):
     return (box_value_pusher,)
 
 
+# ── Batch (whole folder) ───────────────────────────────────────────────────
+@app.cell
+def _(mo):
+    import os as _os
+
+    # Created and never rebuilt (no dependencies), so a picked folder stays
+    # picked. Starts in the app's data folder.
+    _start_folder = _os.path.join(_os.path.dirname(__file__), "backend", "data")
+    if not _os.path.isdir(_start_folder):
+        _start_folder = _os.path.dirname(__file__)
+    batch_folder = mo.ui.file_browser(
+        initial_path=_start_folder,
+        selection_mode="directory",
+        multiple=False,
+        label="Pick the folder with the test files (.txt)",
+    )
+    batch_run_btn = mo.ui.run_button(label="&#9654; Run folder")
+    batch_overwrite_btn = mo.ui.run_button(label="Overwrite them", kind="danger")
+    batch_skip_btn = mo.ui.run_button(label="Skip them")
+    return batch_folder, batch_overwrite_btn, batch_run_btn, batch_skip_btn
+
+
+@app.cell
+def _(mo):
+    # The batch waiting for the overwrite question to be answered (None when
+    # nothing is waiting), and the result rows of the last batch run.
+    get_batch_plan, set_batch_plan = mo.state(None)
+    get_batch_log, set_batch_log = mo.state(None)
+    get_batch_msg, set_batch_msg = mo.state(None)
+    return get_batch_log, get_batch_msg, get_batch_plan, set_batch_log, set_batch_msg, set_batch_plan
+
+
+@app.cell
+def _(batch, mo, set_batch_log):
+    def run_batch(plan, overwrite):
+        """Evaluate and save every file of `plan`, one after another, with a
+        progress bar. Files already saved are overwritten when `overwrite`
+        is True, otherwise skipped."""
+        _rows = []
+        _files = plan["files"]
+        with mo.status.progress_bar(total=len(_files), title="Evaluating folder", remove_on_exit=True) as _bar:
+            for _name in _files:
+                _bar.update(increment=0, subtitle=_name)
+                _rows.append(batch.run_one(plan, _name, overwrite))
+                _bar.update()
+        set_batch_log(_rows)
+    return (run_batch,)
+
+
+@app.cell
+def _(
+    batch,
+    batch_folder,
+    batch_run_btn,
+    eval_fields,
+    filter_fields,
+    has_step_checkbox,
+    mo,
+    raw_data_form,
+    run_batch,
+    set_batch_log,
+    set_batch_msg,
+    set_batch_plan,
+):
+    # "Run folder": take the settings as they are right now, look at the
+    # folder, and either ask about files that are already saved or start.
+    if batch_run_btn.value:
+        set_batch_plan(None)
+        if not batch_folder.value:
+            set_batch_msg(mo.callout(mo.md("Pick a folder first."), kind="warn"))
+        else:
+            _folder = str(batch_folder.value[0].path)
+            _raw_params = dict(raw_data_form.value)
+            _raw_params["has_step"] = has_step_checkbox.value
+            _plan = batch.make_plan(
+                _folder, _raw_params,
+                dict(filter_fields.value), dict(eval_fields.value),
+            )
+            if len(_plan["files"]) == 0:
+                set_batch_msg(mo.callout(mo.md(f"No .txt files in **{_folder}**."), kind="warn"))
+            elif len(_plan["existing"]) > 0:
+                set_batch_plan(_plan)
+                set_batch_msg(None)
+            else:
+                set_batch_log(None)
+                set_batch_msg(None)
+                run_batch(_plan, overwrite=False)
+                set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files from **{_folder}**."), kind="success"))
+    return
+
+
+@app.cell
+def _(batch_overwrite_btn, batch_skip_btn, get_batch_plan, mo, run_batch, set_batch_log, set_batch_msg, set_batch_plan):
+    # The answer to "these files are already saved - overwrite them?".
+    if batch_overwrite_btn.value or batch_skip_btn.value:
+        _plan = get_batch_plan()
+        if _plan is not None:
+            set_batch_plan(None)
+            set_batch_log(None)
+            run_batch(_plan, overwrite=batch_overwrite_btn.value)
+            set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files from **{_plan['folder']}**."), kind="success"))
+    return
+
+
+@app.cell
+def _(
+    PANEL_STYLE,
+    batch_folder,
+    batch_overwrite_btn,
+    batch_run_btn,
+    batch_skip_btn,
+    get_batch_log,
+    get_batch_msg,
+    get_batch_plan,
+    mo,
+):
+    import pandas as _pd
+
+    _parts = [
+        mo.Html('<p class="panel-title">Evaluate a whole folder</p>'),
+        mo.md(
+            "Every `.txt` file in the folder goes through **Offset &rarr; Filter &rarr; "
+            "Find zeros &rarr; Evaluate with pulse &rarr; Save**, one after another. "
+            "Uses the **Raw Data** settings and the **Filter pts / Static % / Dyn min % / "
+            "Dyn max %** boxes from the Analysis tab, with pulse offset 0 ms."
+        ),
+        batch_folder,
+        batch_run_btn,
+    ]
+
+    _plan = get_batch_plan()
+    if _plan is not None:
+        _parts.append(mo.callout(mo.vstack([
+            mo.md(
+                f"**{len(_plan['existing'])}** of the {len(_plan['files'])} files are already saved: "
+                + ", ".join(_plan["existing"])
+                + ". Do you want to overwrite them?"
+            ),
+            mo.hstack([batch_overwrite_btn, batch_skip_btn], justify="start", gap=1),
+        ], gap=1), kind="warn"))
+
+    if get_batch_msg() is not None:
+        _parts.append(get_batch_msg())
+
+    _log = get_batch_log()
+    if _log is not None:
+        _parts.append(mo.ui.table(
+            _pd.DataFrame(_log), selection=None,
+            pagination=False, show_column_summaries=False, show_data_types=False,
+        ))
+
+    batch_tab = mo.vstack([
+        mo.vstack(_parts, gap=2).style(PANEL_STYLE),
+    ]).style({"padding": "20px 0"})
+    return (batch_tab,)
+
+
 # ── Final layout ───────────────────────────────────────────────────────────
 # Split into independent cells (rather than one monolithic layout cell) so
 # that a widget somewhere getting rebuilt with a new identity - which
@@ -1478,7 +1572,7 @@ def _(calculate_btn, file_upload, get_results_status_msg, mo, open_excel_btn, PA
 
 
 @app.cell
-def _(box_value_pusher, cof_chart, eval_table_panel, labels_field, mo, PANEL_STYLE, pulse_eval_field, results_panel):
+def _(box_value_pusher, cof_chart, eval_table_panel, mo, PANEL_STYLE, pulse_eval_field, results_panel):
     # The chart iframe draws its own cards (pulse-offset strip, plot) so it
     # sits on the page directly, not inside a white card of its own; the
     # tables get their own card below it.
@@ -1486,7 +1580,6 @@ def _(box_value_pusher, cof_chart, eval_table_panel, labels_field, mo, PANEL_STY
         cof_chart,
         # invisible; only there so the chart's JS can find and write to it
         pulse_eval_field.style({"display": "none"}),
-        labels_field.style({"display": "none"}),
         box_value_pusher,
         mo.vstack([
             eval_table_panel,
@@ -1505,9 +1598,9 @@ def _(actions_row, mo, raw_data_card, upload_card, viz_card):
 
 
 @app.cell
-def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, open_labels_excel_btn, refresh_btn, show_chart_btn):
+def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, refresh_btn, show_chart_btn):
     tests_card = mo.vstack([
-        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn, open_labels_excel_btn], gap=2, justify="start"),
+        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn], gap=2, justify="start"),
         get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),
@@ -1573,12 +1666,13 @@ def _(mo):
     # output limit as soon as a chart is on the page.
     ANALYSIS_TAB = "&#128202;  Analysis"
     HISTORY_TAB = "&#128450;  History"
+    BATCH_TAB = "&#128193;  Batch"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return ANALYSIS_TAB, HISTORY_TAB, get_active_tab, set_active_tab
+    return ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(ANALYSIS_TAB, HISTORY_TAB, get_active_tab, history_tab, mo, results_tab):
+def _(ANALYSIS_TAB, BATCH_TAB, HISTORY_TAB, batch_tab, get_active_tab, history_tab, mo, results_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -1594,9 +1688,11 @@ def _(ANALYSIS_TAB, HISTORY_TAB, get_active_tab, history_tab, mo, results_tab):
     # dependent.
     _placeholder = mo.Html('<div style="min-height:200px"></div>')
     if get_active_tab() == HISTORY_TAB:
-        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: history_tab}
+        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: history_tab, BATCH_TAB: _placeholder}
+    elif get_active_tab() == BATCH_TAB:
+        tab_contents = {ANALYSIS_TAB: _placeholder, HISTORY_TAB: _placeholder, BATCH_TAB: batch_tab}
     else:
-        tab_contents = {ANALYSIS_TAB: results_tab, HISTORY_TAB: _placeholder}
+        tab_contents = {ANALYSIS_TAB: results_tab, HISTORY_TAB: _placeholder, BATCH_TAB: _placeholder}
     return (tab_contents,)
 
 

@@ -16,13 +16,18 @@ crossings exist the pulse simply starts at the step's Startzeit. A manual
 offset box in the chart can shift the whole pulse on top of that - that is
 done in the browser, not here.
 
-Used for display and comparison only - nothing here feeds the CoF numbers.
+The pulse edges are also the cycle boundaries for "Evaluate with pulse". A
+step where the found zero crossings come closer together than one stroke
+(too many zeros in one stroke - noise) is marked "noisy", and Evaluate with
+pulse leaves that whole step out.
 """
 
 import logging
 
 import numpy as np
 import pandas as pd
+
+from physics.utility_functions import SHORT_CYCLE_FACTOR
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,19 @@ PULSE_AMPLITUDE_FRACTION = 0.5
 # happen with a mis-read speed or step length, and the points would make the
 # chart too big for the page.
 PULSE_MAX_EDGES_PER_STEP = 20000
+
+
+def step_has_extra_crossings(crossing_times, step_start, step_end, half_period):
+    """True when two zero crossings inside the step are closer together than
+    SHORT_CYCLE_FACTOR of one half-stroke (30 / Drehzahl seconds) - i.e. there
+    are more zeros in a stroke than the one there should be.
+    `crossing_times` must be sorted."""
+    in_step = crossing_times[(crossing_times >= step_start) & (crossing_times <= step_end)]
+    for j in range(len(in_step) - 1):
+        gap = in_step[j + 1] - in_step[j]
+        if gap < SHORT_CYCLE_FACTOR * half_period:
+            return True
+    return False
 
 
 def build_speed_pulse(df_display, step_df, minima=None):
@@ -52,10 +70,12 @@ def build_speed_pulse(df_display, step_df, minima=None):
                       belongs to (None on the gap entries) - lets the chart
                       shift one step's pulse without touching the others,
       "steps"       - list of {"index": 0-based step_df row, "speed": U/min,
-                      "start": Startzeit [s], "end": Endzeit [s]} for every
+                      "start": Startzeit [s], "end": Endzeit [s],
+                      "noisy": True if step_has_extra_crossings} for every
                       step that got a pulse, in order,
       "edges"       - DataFrame, one row per pulse edge: step (0-based row
-                      in step_df), speed, time [s], and the level after it.
+                      in step_df), speed, time [s], the level after it, and
+                      noisy (the step's flag, repeated on each of its edges).
     """
     if step_df is None:
         return None
@@ -71,6 +91,7 @@ def build_speed_pulse(df_display, step_df, minima=None):
         crossing_times = np.asarray(minima["Min Zeit"], dtype=float)
         neg_times = np.asarray(minima["-Min Zeit"], dtype=float)
         pos_times = np.asarray(minima["+Min Zeit"], dtype=float)
+        sorted_crossing_times = np.sort(crossing_times)
 
     pulse_x = []
     pulse_y = []
@@ -80,6 +101,7 @@ def build_speed_pulse(df_display, step_df, minima=None):
     edge_speed = []
     edge_time = []
     edge_level = []
+    edge_noisy = []
 
     for step_index in range(len(step_df)):
         row = step_df.iloc[step_index]
@@ -91,6 +113,10 @@ def build_speed_pulse(df_display, step_df, minima=None):
         step_start = float(row["Startzeit [s]"])
         step_end = float(row["Endzeit [s]"])
         half_period = 30.0 / float(speed)
+
+        noisy = False
+        if have_crossings:
+            noisy = step_has_extra_crossings(sorted_crossing_times, step_start, step_end, half_period)
 
         # Anchor: the first detected crossing inside this step, and which
         # way the CoF went there (negative sample before the positive one =
@@ -123,33 +149,44 @@ def build_speed_pulse(df_display, step_df, minima=None):
                 return level_after_anchor
             return -level_after_anchor
 
+        # A noisy step's pulse is not drawn (its edges are still listed,
+        # marked noisy, so Evaluate with pulse can name the skipped step).
+        draw = not noisy
+
         # Level from Startzeit up to the first edge inside the step.
         current_level = level_after_edge(first_k - 1)
-        if len(pulse_x) > 0:
-            pulse_x.append(None)
-            pulse_y.append(None)
-            point_step.append(None)
-        pulse_x.append(step_start)
-        pulse_y.append(current_level)
-        point_step.append(step_index)
+        if draw:
+            if len(pulse_x) > 0:
+                pulse_x.append(None)
+                pulse_y.append(None)
+                point_step.append(None)
+            pulse_x.append(step_start)
+            pulse_y.append(current_level)
+            point_step.append(step_index)
         for k in range(first_k, last_k + 1):
             t = anchor_time + k * half_period
             new_level = level_after_edge(k)
-            pulse_x.append(t)
-            pulse_y.append(current_level)
-            point_step.append(step_index)
-            pulse_x.append(t)
-            pulse_y.append(new_level)
-            point_step.append(step_index)
+            if draw:
+                pulse_x.append(t)
+                pulse_y.append(current_level)
+                point_step.append(step_index)
+                pulse_x.append(t)
+                pulse_y.append(new_level)
+                point_step.append(step_index)
             current_level = new_level
             edge_step.append(step_index)
             edge_speed.append(float(speed))
             edge_time.append(t)
             edge_level.append(new_level)
-        pulse_x.append(step_end)
-        pulse_y.append(current_level)
-        point_step.append(step_index)
-        steps.append({"index": step_index, "speed": float(speed), "start": step_start, "end": step_end})
+            edge_noisy.append(noisy)
+        if draw:
+            pulse_x.append(step_end)
+            pulse_y.append(current_level)
+            point_step.append(step_index)
+        steps.append({
+            "index": step_index, "speed": float(speed),
+            "start": step_start, "end": step_end, "noisy": noisy,
+        })
 
     if len(edge_time) == 0:
         return None
@@ -159,6 +196,7 @@ def build_speed_pulse(df_display, step_df, minima=None):
         "speed": edge_speed,
         "time": edge_time,
         "level_after": edge_level,
+        "noisy": edge_noisy,
     })
     return {"x": pulse_x, "y": pulse_y, "point_step": point_step, "steps": steps, "edges": edges}
 

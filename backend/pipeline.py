@@ -86,21 +86,14 @@ def is_filter_active(filter_params, df_proc):
     return df_proc is not None
 
 
-def compute_evaluation(df_display, df_proc, eval_params):
-    """Run Find_minima + Evaluate for the Evaluate form. Returns a dict with
-    "minima" and "cof_res", or None if the inputs aren't ready yet. Raises on
-    conversion/computation error.
+def compute_zero_crossings(df_proc):
+    """"Find zeros": the zero crossings of the (filtered) CoF, as
+    Find_minima's table. They anchor the speed pulse and decide which steps
+    are too noisy for Evaluate with pulse. None if there is no data yet.
     """
-    if df_proc is None or df_display is None or eval_params is None:
+    if df_proc is None:
         return None
-    minima = cof_calc.find_minima(df_proc)
-    cof_res = cof_calc.get_static_and_dynamic_cof(
-        df_display, minima,
-        float(eval_params["static_range"]),
-        float(eval_params["dyn_min"]),
-        float(eval_params["dyn_max"]),
-    )
-    return {"minima": minima, "cof_res": cof_res, "static_method": "fixed_window"}
+    return cof_calc.find_minima(df_proc)
 
 
 def pulse_edges_to_minima(df_display, pulse_edges):
@@ -162,15 +155,22 @@ def pulse_edges_to_minima(df_display, pulse_edges):
 
 
 def compute_pulse_evaluation(df_display, pulse_edges, eval_params):
-    """"Evaluate with pulse": same as compute_evaluation, but the cycle
-    boundaries are the speed pulse's edges instead of the zero crossings
-    found in the signal, and the static CoF is the first peak after each
-    edge (searched up to Dyn min %) instead of the biggest value in the
-    Static % window. Dyn min/max are used exactly as in compute_evaluation.
+    """"Evaluate with pulse": the cycle boundaries are the speed pulse's
+    edges, the static CoF is the first peak after each edge (searched up to
+    Dyn min %), and the dynamic CoF is the mean over Dyn min..Dyn max %.
+    Steps marked noisy (too many zero crossings in one stroke, see
+    speed_pulse.step_has_extra_crossings) are left out completely - their
+    step_df row numbers are returned in "skipped_steps".
     Returns None if the inputs aren't ready yet.
     """
     if df_display is None or pulse_edges is None or eval_params is None:
         return None
+    skipped_steps = []
+    if "noisy" in pulse_edges.columns:
+        noisy_edges = pulse_edges[pulse_edges["noisy"]]
+        for step_index in noisy_edges["step"].unique():
+            skipped_steps.append(int(step_index))
+        pulse_edges = pulse_edges[~pulse_edges["noisy"]]
     minima = pulse_edges_to_minima(df_display, pulse_edges)
     if len(minima) == 0:
         return None
@@ -181,13 +181,22 @@ def compute_pulse_evaluation(df_display, pulse_edges, eval_params):
         float(eval_params["dyn_max"]),
         static_mode="first_peak",
     )
-    return {"minima": minima, "cof_res": cof_res, "static_method": "pulse"}
+    return {
+        "minima": minima, "cof_res": cof_res, "static_method": "pulse",
+        "skipped_steps": skipped_steps,
+    }
+
+
+NOTE_SKIPPED_NOISY = "Skipped: noisy"
+NOTE_NO_CYCLES = "Skipped: no cycles"
 
 
 def compute_stats(cof_eval, df_display, step_df):
     """Per-step CoF statistics for the current evaluation. Falls back to a
     single synthetic step spanning the whole file when there's no step data.
-    Raises on conversion/computation error.
+    Every active step gets a row, in time order: a step that produced no
+    cycles keeps its time range with empty numbers, and its "Note" says why
+    it was not used. Raises on conversion/computation error.
     """
     if step_df is not None:
         steps = step_df
@@ -197,4 +206,33 @@ def compute_stats(cof_eval, df_display, step_df):
             "Endzeit [s]":   [df_display["Zeit"].max()],
             "inactive":      [False],
         })
-    return stat_funcs.CoF_Stat(cof_eval["cof_res"], steps)
+    stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], steps)
+
+    skipped_steps = cof_eval.get("skipped_steps", [])
+
+    # CoF_Stat's rows, looked up by their "Time Range" text.
+    stats_rows_by_range = {}
+    for _, stats_row in stats.iterrows():
+        stats_rows_by_range[stats_row["Time Range"]] = stats_row.to_dict()
+
+    rows = []
+    for position in range(len(steps)):
+        step = steps.iloc[position]
+        if step["inactive"]:
+            continue
+        lower = step["Startzeit [s]"]
+        upper = step["Endzeit [s]"]
+        # Same text CoF_Stat writes, so the two can be matched.
+        time_range = f"{round(lower, 1)}-{round(upper, 1)}"
+        if time_range in stats_rows_by_range:
+            row = stats_rows_by_range[time_range]
+            row["Note"] = ""
+        else:
+            row = {"Time Range": time_range}
+            if position in skipped_steps:
+                row["Note"] = NOTE_SKIPPED_NOISY
+            else:
+                row["Note"] = NOTE_NO_CYCLES
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=list(stats.columns) + ["Note"])

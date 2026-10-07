@@ -11,6 +11,24 @@ ZERO_CROSSING_TIME_GAP_THRESHOLD = 0.002  # seconds; samples farther apart than 
 # before treating a gap between crossings as a pause, for a step slow enough that
 # SRV_TIME_GAP_THRESHOLD alone would mistake every real stroke for one.
 PAUSE_SAFETY_FACTOR = 1.5
+# A gap between two crossings shorter than this fraction of the step's
+# expected half-stroke time is noise (a fake extra crossing), not a real
+# stroke - that cycle is skipped. Kept a bit below 1.0 because real strokes
+# jitter by a few samples around the expected time.
+SHORT_CYCLE_FACTOR = 0.8
+
+
+def expected_half_stroke_time(drehzahl):
+    """Time (s) between two zero crossings for a step running at `drehzahl`
+    (U/min): one revolution is one full stroke, and there are two crossings
+    per stroke, so (60 / Drehzahl) / 2. None if the speed is unknown."""
+    if drehzahl is None:
+        return None
+    if np.isnan(drehzahl):
+        return None
+    if drehzahl <= 0:
+        return None
+    return 30.0 / drehzahl
 
 
 def _vba_round(x):
@@ -131,18 +149,31 @@ def Find_minima(df, column):
 
     # pauseTime = pauseTime
 
+    # A gap shorter than the expected half-stroke time (from the step's
+    # Drehzahl) means a fake crossing caused by noise. Evaluate skips those
+    # cycles; here we only count them and warn once.
     timetocheck = negativeTime
-    timeSpan = []
-    for j in range(len(timetocheck) - 1):
-        timeSpan.append(timetocheck[j + 1] - timetocheck[j])
-    if not len(timeSpan) == 0:
-        averagetimeSpan = sum(timeSpan) / len(timeSpan)
-    else:
-        averagetimeSpan = 1
+    if len(timetocheck) < 2:
         logger.warning("No time spans found in zero-crossing detection — check data continuity")
-    for j in range(len(timeSpan)):
-        if timeSpan[j] < 0.5 * averagetimeSpan and timeSpan[j] != 0:
-            logger.warning("Noisy data detected: cycle spacing < 50%% of average. Apply filter before evaluating.")
+    has_speed = "Drehzahl" in df.columns
+    if has_speed:
+        speed_by_time = dict(zip(times, df["Drehzahl"].to_numpy()))
+    too_short_count = 0
+    for j in range(len(timetocheck) - 1):
+        timeSpan = timetocheck[j + 1] - timetocheck[j]
+        if not has_speed:
+            continue
+        half_stroke = expected_half_stroke_time(speed_by_time.get(timetocheck[j]))
+        if half_stroke is None:
+            continue
+        if timeSpan < SHORT_CYCLE_FACTOR * half_stroke:
+            too_short_count = too_short_count + 1
+    if too_short_count > 0:
+        logger.warning(
+            "Noisy data detected: %d crossing gap(s) shorter than the stroke time. "
+            "These cycles are skipped; apply a filter to keep them.",
+            too_short_count,
+        )
 
     res = pd.DataFrame(
         {
@@ -327,15 +358,21 @@ def Evaluate(
 
     # k = cycle index: cycle k is the stroke between crossing k-1 and crossing k -
     # it reuses j's own numbering rather than counting separately.
+    skipped_short_cycles = 0
     for k in range(1, len(negMinTime)):
+        gap = negMinTime[k] - negMinTime[k - 1]
         gap_threshold = SRV_TIME_GAP_THRESHOLD
+        half_period = None
         if Speed is not None:
-            drehzahl = Speed[startIndex[k - 1] - 1]
-            if drehzahl and drehzahl > 0:
-                half_period = 30.0 / drehzahl  # (60 / Drehzahl) / 2
+            half_period = expected_half_stroke_time(Speed[startIndex[k - 1] - 1])
+            if half_period is not None:
                 gap_threshold = max(SRV_TIME_GAP_THRESHOLD, PAUSE_SAFETY_FACTOR * half_period)
-        if negMinTime[k] - negMinTime[k - 1] > gap_threshold:
+        if gap > gap_threshold:
             # gap spans a pause between test steps — disregard this cycle
+            continue
+        if half_period is not None and gap < SHORT_CYCLE_FACTOR * half_period:
+            # shorter than one stroke: a fake crossing from noise — disregard this cycle
+            skipped_short_cycles = skipped_short_cycles + 1
             continue
         try:
             endIndex = startIndex[k - 1] + _vba_round(
@@ -401,6 +438,12 @@ def Evaluate(
         except Exception as e:
             logger.warning("Skipping cycle %d: %s", k, e)
             continue
+
+    if skipped_short_cycles > 0:
+        logger.warning(
+            "Skipped %d cycle(s) shorter than the stroke time (noise).",
+            skipped_short_cycles,
+        )
 
     # The recording almost always stops mid-stroke, so the last detected
     # crossing has no following crossing to pair with - the loop above can
