@@ -2150,9 +2150,39 @@ def _(actions_row, mo, raw_data_card, upload_card, viz_card):
 
 
 @app.cell
-def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, refresh_btn, show_chart_btn):
+def _(history_table, mo, selected_test_ids):
+    # "Export summary": the selected tests side by side in one Excel sheet,
+    # laid out like the lab's report sheet (see summary_export.py). The file
+    # is only built when the button is clicked, and goes straight to the
+    # browser's downloads - it is not stored anywhere.
+    import datetime as _datetime
+    import summary_export as _summary_export
+
+    _ids = selected_test_ids(history_table.value)
+
+    def _build_file():
+        return _summary_export.build_summary_excel(_ids)
+
+    if len(_ids) == 0:
+        summary_download = mo.download(
+            data=b"", filename="summary.xlsx", disabled=True,
+            label="&#128202; Export summary (select tests first)",
+        )
+    else:
+        _stamp = _datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        summary_download = mo.download(
+            data=_build_file,
+            filename=f"Friction_summary_{_stamp}.xlsx",
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            label=f"&#128202; Export summary ({len(_ids)} tests)",
+        )
+    return (summary_download,)
+
+
+@app.cell
+def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, refresh_btn, show_chart_btn, summary_download):
     tests_card = mo.vstack([
-        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn], gap=2, justify="start"),
+        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn, summary_download], gap=2, justify="start"),
         get_history_status_msg(),
         mo.Html('<hr class="divider">'),
         mo.Html('<p class="panel-title">Saved Tests</p>'),
