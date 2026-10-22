@@ -27,3 +27,5 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+# Server password (start_server.bat)
+server_password.txt

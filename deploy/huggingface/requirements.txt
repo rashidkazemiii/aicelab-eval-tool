@@ -1,0 +1,7 @@
+# Exact versions that work on the lab PC, so the server behaves the same.
+marimo==0.23.14
+pandas==2.3.2
+numpy==2.3.2
+plotly==6.9.0
+sqlalchemy==2.0.51
+openpyxl==3.1.5
