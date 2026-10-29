@@ -1,7 +1,4 @@
 import io
-import os
-import tempfile
-import time
 
 import pandas as pd
 
@@ -107,54 +104,36 @@ def read_stroke_mm(raw_text: str):
     return None
 
 
-def _unique_temp_csv_path(base_name: str) -> str:
-    # A unique name per call, not a fixed one: once Excel has opened a file,
-    # Windows keeps it locked for as long as Excel has it open, so writing
-    # the same path again on a second click fails with PermissionError.
-    unique_suffix = str(int(time.time() * 1000))
-    return os.path.join(tempfile.gettempdir(), f"{base_name}_{unique_suffix}.csv")
+def raw_text_to_csv_bytes(raw_text: str) -> bytes:
+    """The raw upload as a semicolon-separated .csv file (as bytes), for
+    the browser to download and open in Excel. Semicolon, not comma,
+    because the data itself uses a comma as its decimal point (German
+    locale) - a comma-separated .csv would split every number's decimal
+    point into its own column. Semicolon is also the default CSV list
+    separator on a comma-decimal Windows system, so Excel opens the file
+    with columns already split, no import wizard needed.
 
-
-def open_in_excel(raw_text: str, file_name: str) -> str:
-    """Write the raw upload out as a semicolon-separated .csv and open it in
-    Excel. Semicolon, not comma, because the data itself uses a comma as its
-    decimal point (German locale) - a comma-separated .csv would split every
-    number's decimal point into its own column. Semicolon is also the
-    default CSV list separator on a comma-decimal Windows system, so Excel
-    opens the file with columns already split, no import wizard needed.
-
-    Returns the temp file path that was written and opened.
+    A download, not "open Excel here": when the app runs as a server, the
+    file has to end up on the user's own computer, not on the server.
     """
     csv_lines = []
     for line in raw_text.splitlines():
         csv_lines.append(line.replace("\t", ";"))
     csv_text = "\n".join(csv_lines)
-
-    if file_name:
-        base_name = os.path.splitext(file_name)[0]
-    else:
-        base_name = "raw_data"
-    path = _unique_temp_csv_path(base_name)
-    with open(path, "w", encoding="latin-1") as f:
-        f.write(csv_text)
-
-    os.startfile(path)
-    return path
+    return csv_text.encode("latin-1")
 
 
-def open_dataframe_in_excel(df: pd.DataFrame, base_name: str) -> str:
-    """Write a DataFrame out as a semicolon-separated .csv (same reasoning
-    as open_in_excel - the numbers themselves use '.' as their decimal
-    point, but the surrounding raw files are German-locale, so semicolon
-    keeps this consistent with the rest of the app's Excel exports) and open
-    it in Excel. Returns the temp file path that was written and opened.
+def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    """A DataFrame as a semicolon-separated .csv file (as bytes), for the
+    browser to download and open in Excel (semicolon for the same reason
+    as raw_text_to_csv_bytes - it keeps this consistent with the rest of
+    the app's Excel exports).
 
     Meant for a table that's too large to send to the browser and show
     inline (mo.ui.table) without tripping marimo's output-size limit - the
     combined per-sample + per-cycle results table, say - where Excel is the
     only practical way left to look at it as one table.
     """
-    path = _unique_temp_csv_path(base_name)
-    df.to_csv(path, index=False, sep=";")
-    os.startfile(path)
-    return path
+    csv_text = df.to_csv(index=False, sep=";")
+    # utf-8-sig (with a BOM) so Excel reads special characters (°, µ) right
+    return csv_text.encode("utf-8-sig")

@@ -1,4 +1,4 @@
-"""Batch evaluation: run every .txt file in a folder through the same steps
+"""Batch evaluation: run many uploaded .txt files through the same steps
 a user would click through on the Analysis tab, and save each result.
 
 For one file the steps are:
@@ -8,11 +8,14 @@ For one file the steps are:
 
 The settings (Raw Data rows/columns, Filter pts, Static %, Dyn min/max %)
 are taken once, when the batch is started, and used for every file.
+
+The files are uploaded through the browser (not read from a folder on
+disk), so this works the same when the app runs as a server and the files
+are on the user's own computer.
 """
 
 import contextlib
 import io
-import os
 
 import data_loader
 import database
@@ -20,30 +23,25 @@ import pipeline
 import speed_pulse
 
 
-def list_txt_files(folder):
-    """Names (not full paths) of the .txt files directly inside `folder`,
-    sorted by name."""
-    names = []
-    for name in os.listdir(folder):
-        full_path = os.path.join(folder, name)
-        if os.path.isfile(full_path) and name.lower().endswith(".txt"):
-            names.append(name)
-    names.sort()
-    return names
-
-
-def make_plan(folder, raw_params, filter_params, eval_params):
+def make_plan(uploaded_files, raw_params, filter_params, eval_params):
     """Everything a batch run needs, captured at the moment Run is clicked:
-    the folder, its .txt files, which of them are already saved in the
-    database (by file name), and the settings to use."""
-    files = list_txt_files(folder)
+    the uploaded .txt files (name -> file contents), which of them are
+    already saved in the database (by file name), and the settings to use.
+
+    `uploaded_files` is the upload widget's .value - a list of uploads,
+    each with a .name and its .contents (bytes)."""
+    contents = {}
+    for upload in uploaded_files:
+        if upload.name.lower().endswith(".txt"):
+            contents[upload.name] = upload.contents
+    files = sorted(contents.keys())
     existing = []
     for name in files:
         if database.find_existing_test(name) is not None:
             existing.append(name)
     return {
-        "folder": folder,
         "files": files,
+        "contents": contents,
         "existing": existing,
         "raw_params": raw_params,
         "filter_params": filter_params,
@@ -51,11 +49,10 @@ def make_plan(folder, raw_params, filter_params, eval_params):
     }
 
 
-def evaluate_file(path, raw_params, filter_params, eval_params):
-    """Run one file through the whole pipeline. Returns a dict with the
-    pieces database.save_full_evaluation needs. Raises on any error."""
-    with open(path, "rb") as f:
-        raw_text = f.read().decode("latin-1")
+def evaluate_file(raw_text, raw_params, filter_params, eval_params):
+    """Run one file (its text) through the whole pipeline. Returns a dict
+    with the pieces database.save_full_evaluation needs. Raises on any
+    error."""
 
     # parse_main_and_step_data prints the step lines it reads - useful for
     # one file, just noise for a whole folder.
@@ -109,8 +106,9 @@ def run_one(plan, name, overwrite):
         return row
 
     try:
+        raw_text = plan["contents"][name].decode("latin-1")
         result = evaluate_file(
-            os.path.join(plan["folder"], name),
+            raw_text,
             plan["raw_params"], plan["filter_params"], plan["eval_params"],
         )
         # The hand-typed conditions of the old copy move to the new one.

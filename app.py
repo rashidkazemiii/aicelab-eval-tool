@@ -226,6 +226,15 @@ def _(mo):
     return get_history_status_msg, set_history_status_msg
 
 
+@app.cell
+def _(mo):
+    # A counter that goes up by one every time the Analysis tab saves a
+    # test. The History list reads it, so it re-reads the database after
+    # every save and the new test shows up without clicking Refresh.
+    get_history_version, set_history_version = mo.state(0)
+    return get_history_version, set_history_version
+
+
 # ── Widgets / forms ────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
@@ -273,31 +282,29 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    open_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
+def _(data_loader, file_upload, mo):
+    # A download, not "open Excel here": when the app runs as a server, the
+    # file has to land on the user's own computer, where they open it in
+    # Excel. The .csv is only built when the button is clicked.
+    if file_upload.value:
+        _upload = file_upload.value[0]
+        _base_name = _upload.name.replace(".txt", "")
+
+        def _build_raw_csv():
+            return data_loader.raw_text_to_csv_bytes(_upload.contents.decode("latin-1"))
+
+        open_excel_btn = mo.download(
+            data=_build_raw_csv,
+            filename=f"{_base_name}.csv",
+            mimetype="text/csv",
+            label="&#128194; Open in Excel",
+        )
+    else:
+        open_excel_btn = mo.download(
+            data=b"", filename="raw_data.csv", disabled=True,
+            label="&#128194; Open in Excel",
+        )
     return (open_excel_btn,)
-
-
-
-@app.cell
-def _(mo):
-    open_results_excel_btn = mo.ui.run_button(label="&#128194; Open Results in Excel")
-    return (open_results_excel_btn,)
-
-
-@app.cell
-def _(data_loader, file_upload, mo, open_excel_btn, set_results_status_msg):
-    if open_excel_btn.value:
-        if file_upload.value:
-            _raw = file_upload.value[0].contents.decode("latin-1")
-            try:
-                data_loader.open_in_excel(_raw, file_upload.value[0].name)
-                set_results_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
-            except Exception as _e:
-                set_results_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
-        else:
-            set_results_status_msg(mo.callout(mo.md("Upload a file first."), kind="warn"))
-    return
 
 
 @app.cell
@@ -683,6 +690,7 @@ def _(
     overwrite_btn,
     pipeline,
     save_btn,
+    set_history_version,
     set_results_status_msg,
     stats_result,
     step_df,
@@ -736,6 +744,8 @@ def _(
                 set_results_status_msg(mo.callout(mo.md(
                     f"Saved as test **#{_test_id}**."
                 ), kind="success"))
+                # Makes the History list re-read the database.
+                set_history_version(_test_id)
             except Exception as _e:
                 set_results_status_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
     return
@@ -746,12 +756,11 @@ def _(
 def _(mo):
     refresh_btn = mo.ui.run_button(label="&#128260; Refresh")
     delete_btn = mo.ui.run_button(label="&#128465; Delete selected", kind="danger")
-    open_history_excel_btn = mo.ui.run_button(label="&#128194; Open in Excel")
-    return delete_btn, open_history_excel_btn, refresh_btn
+    return delete_btn, refresh_btn
 
 
 @app.cell
-def _(db_mod, get_batch_log, mo, refresh_btn):
+def _(db_mod, get_batch_log, get_history_version, mo, refresh_btn):
     # Reference this so marimo tracks it as a real dependency (reactivity is
     # derived from names actually used in the body, not the signature) - this
     # is what makes Refresh actually re-query the database. Delete is
@@ -764,6 +773,8 @@ def _(db_mod, get_batch_log, mo, refresh_btn):
     # A finished batch run also re-reads the list, so the tests it saved
     # show up without clicking Refresh.
     get_batch_log()
+    # So does a test saved on the Analysis tab.
+    get_history_version()
 
     history_df = db_mod.list_tests_df()
     history_table = mo.ui.table(
@@ -912,7 +923,7 @@ def _(delete_btn, db_mod, history_table, mo, selected_test_ids, set_history_stat
 
 
 @app.cell
-def _(db_mod, history_table, mo, open_history_excel_btn, selected_test_ids):
+def _(data_loader, db_mod, history_table, mo, selected_test_ids, table_helpers):
     _ids = selected_test_ids(history_table.value)
     if len(_ids) == 1:
         _test_id = _ids[0]
@@ -921,9 +932,22 @@ def _(db_mod, history_table, mo, open_history_excel_btn, selected_test_ids):
         if _n_raw == 0 and _n_eval == 0:
             cycles_panel = mo.callout(mo.md("No saved data for this test."), kind="info")
         else:
+            # A download (see open_excel_btn), only built when clicked.
+            def _build_test_csv():
+                _raw_table = db_mod.get_full_raw_table(_test_id)
+                _eval_table = db_mod.get_full_eval_table(_test_id)
+                _combined = table_helpers.combine_padded(_raw_table, _eval_table)
+                return data_loader.dataframe_to_csv_bytes(_combined)
+
+            _history_excel_download = mo.download(
+                data=_build_test_csv,
+                filename=f"test_{_test_id}_results.csv",
+                mimetype="text/csv",
+                label="&#128194; Open in Excel",
+            )
             cycles_panel = mo.vstack([
                 mo.Html(f'<p style="font-size:0.85rem;color:#444;margin:0 0 4px 0">{_n_raw:,} raw samples, {_n_eval:,} evaluated cycles.</p>'),
-                open_history_excel_btn,
+                _history_excel_download,
             ], gap=1)
     elif len(_ids) > 1:
         cycles_panel = mo.callout(
@@ -933,25 +957,6 @@ def _(db_mod, history_table, mo, open_history_excel_btn, selected_test_ids):
     else:
         cycles_panel = mo.callout(mo.md("Select a row above to see the full CoF Analysis table for that test."), kind="info")
     return (cycles_panel,)
-
-
-@app.cell
-def _(data_loader, db_mod, history_table, mo, open_history_excel_btn, selected_test_ids, set_history_status_msg, table_helpers):
-    if open_history_excel_btn.value:
-        _ids = selected_test_ids(history_table.value)
-        if len(_ids) == 1:
-            _test_id = _ids[0]
-            try:
-                _raw_table = db_mod.get_full_raw_table(_test_id)
-                _eval_table = db_mod.get_full_eval_table(_test_id)
-                _combined = table_helpers.combine_padded(_raw_table, _eval_table)
-                data_loader.open_dataframe_in_excel(_combined, f"test_{_test_id}_results")
-                set_history_status_msg(mo.callout(mo.md("Opened in Excel."), kind="success"))
-            except Exception as _e:
-                set_history_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
-        else:
-            set_history_status_msg(mo.callout(mo.md("Select exactly one saved test first."), kind="warn"))
-    return
 
 
 # ── Charts ─────────────────────────────────────────────────────────────────
@@ -1278,28 +1283,32 @@ def _(
     df_display,
     df_proc,
     mo,
-    open_results_excel_btn,
     pipeline,
     results_table,
-    set_results_status_msg,
     stats_error,
     stats_result,
     table_helpers,
 ):
-    if open_results_excel_btn.value and df_display is not None:
-        try:
-            _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
-            _df_raw_results = results_table.build_raw_table(df_display, df_proc, _filter_active)
-            _df_eval_results = results_table.build_eval_table(cof_eval, stats_result, stats_error)
-            if _df_eval_results is not None:
-                _combined = table_helpers.combine_padded(_df_raw_results, _df_eval_results)
-            else:
-                _combined = _df_raw_results
-            data_loader.open_dataframe_in_excel(_combined, "results")
-            set_results_status_msg(mo.callout(mo.md("Opened results in Excel."), kind="success"))
-        except Exception as _e:
-            set_results_status_msg(mo.callout(mo.md(f"**Could not open Excel:** {_e}"), kind="danger"))
-    return
+    # A download (see open_excel_btn): the combined results table as a .csv,
+    # only built when the button is clicked.
+    def _build_results_csv():
+        _filter_active = pipeline.is_filter_active(active_filter_params, df_proc)
+        _df_raw_results = results_table.build_raw_table(df_display, df_proc, _filter_active)
+        _df_eval_results = results_table.build_eval_table(cof_eval, stats_result, stats_error)
+        if _df_eval_results is not None:
+            _combined = table_helpers.combine_padded(_df_raw_results, _df_eval_results)
+        else:
+            _combined = _df_raw_results
+        return data_loader.dataframe_to_csv_bytes(_combined)
+
+    open_results_excel_btn = mo.download(
+        data=_build_results_csv,
+        filename="results.csv",
+        mimetype="text/csv",
+        disabled=df_display is None,
+        label="&#128194; Open Results in Excel",
+    )
+    return (open_results_excel_btn,)
 
 
 @app.cell
@@ -1539,20 +1548,17 @@ def _(get_box_values, mo):
 # ── Batch (whole folder) ───────────────────────────────────────────────────
 @app.cell
 def _(mo):
-    import os as _os
-
-    # Created and never rebuilt (no dependencies), so a picked folder stays
-    # picked. Starts in the app's data folder.
-    _start_folder = _os.path.join(_os.path.dirname(__file__), "backend", "data")
-    if not _os.path.isdir(_start_folder):
-        _start_folder = _os.path.dirname(__file__)
-    batch_folder = mo.ui.file_browser(
-        initial_path=_start_folder,
-        selection_mode="directory",
-        multiple=False,
-        label="Pick the folder with the test files (.txt)",
+    # Created and never rebuilt (no dependencies), so the uploaded files
+    # stay. An upload (not a folder browser), so the files come from the
+    # user's own computer even when the app runs as a server on another PC.
+    batch_folder = mo.ui.file(
+        filetypes=[".txt"],
+        multiple=True,
+        kind="area",
+        max_size=1_000_000_000,
+        label="Drag the folder (or its .txt files) here, or click to pick the files",
     )
-    batch_run_btn = mo.ui.run_button(label="&#9654; Run folder")
+    batch_run_btn = mo.ui.run_button(label="&#9654; Run files")
     batch_overwrite_btn = mo.ui.run_button(label="Overwrite them", kind="danger")
     batch_skip_btn = mo.ui.run_button(label="Skip them")
     return batch_folder, batch_overwrite_btn, batch_run_btn, batch_skip_btn
@@ -1576,7 +1582,7 @@ def _(batch, mo, set_batch_log):
         is True, otherwise skipped."""
         _rows = []
         _files = plan["files"]
-        with mo.status.progress_bar(total=len(_files), title="Evaluating folder", remove_on_exit=True) as _bar:
+        with mo.status.progress_bar(total=len(_files), title="Evaluating files", remove_on_exit=True) as _bar:
             for _name in _files:
                 _bar.update(increment=0, subtitle=_name)
                 _rows.append(batch.run_one(plan, _name, overwrite))
@@ -1600,22 +1606,22 @@ def _(
     set_batch_msg,
     set_batch_plan,
 ):
-    # "Run folder": take the settings as they are right now, look at the
-    # folder, and either ask about files that are already saved or start.
+    # "Run files": take the settings as they are right now, look at the
+    # uploaded files, and either ask about files that are already saved or
+    # start.
     if batch_run_btn.value:
         set_batch_plan(None)
         if not batch_folder.value:
-            set_batch_msg(mo.callout(mo.md("Pick a folder first."), kind="warn"))
+            set_batch_msg(mo.callout(mo.md("Upload the test files first."), kind="warn"))
         else:
-            _folder = str(batch_folder.value[0].path)
             _raw_params = dict(raw_data_form.value)
             _raw_params["has_step"] = has_step_checkbox.value
             _plan = batch.make_plan(
-                _folder, _raw_params,
+                batch_folder.value, _raw_params,
                 dict(filter_fields.value), dict(eval_fields.value),
             )
             if len(_plan["files"]) == 0:
-                set_batch_msg(mo.callout(mo.md(f"No .txt files in **{_folder}**."), kind="warn"))
+                set_batch_msg(mo.callout(mo.md("No .txt files among the uploaded files."), kind="warn"))
             elif len(_plan["existing"]) > 0:
                 set_batch_plan(_plan)
                 set_batch_msg(None)
@@ -1623,7 +1629,7 @@ def _(
                 set_batch_log(None)
                 set_batch_msg(None)
                 run_batch(_plan, overwrite=False)
-                set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files from **{_folder}**."), kind="success"))
+                set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files."), kind="success"))
     return
 
 
@@ -1636,7 +1642,7 @@ def _(batch_overwrite_btn, batch_skip_btn, get_batch_plan, mo, run_batch, set_ba
             set_batch_plan(None)
             set_batch_log(None)
             run_batch(_plan, overwrite=batch_overwrite_btn.value)
-            set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files from **{_plan['folder']}**."), kind="success"))
+            set_batch_msg(mo.callout(mo.md(f"Done: **{len(_plan['files'])}** files."), kind="success"))
     return
 
 
@@ -1657,7 +1663,7 @@ def _(
     _parts = [
         mo.Html('<p class="panel-title">Evaluate a whole folder</p>'),
         mo.md(
-            "Every `.txt` file in the folder goes through **Offset &rarr; Filter &rarr; "
+            "Every uploaded `.txt` file goes through **Offset &rarr; Filter &rarr; "
             "Find zeros &rarr; Evaluate with pulse &rarr; Save**, one after another. "
             "Uses the **Raw Data** settings and the **Filter pts / Static % / Dyn min % / "
             "Dyn max %** boxes from the Analysis tab, with pulse offset 0 ms."
