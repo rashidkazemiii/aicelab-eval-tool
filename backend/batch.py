@@ -73,6 +73,7 @@ def evaluate_file(raw_text, raw_params, filter_params, eval_params):
     if cof_eval is None:
         raise Exception("Evaluate with pulse found no cycles")
     stats_result = pipeline.compute_stats(cof_eval, df_display, step_df)
+    plus_minus_result = pipeline.compute_plus_minus_stats(cof_eval, df_display, step_df, stats_result)
 
     return {
         "df_display": df_display,
@@ -80,6 +81,7 @@ def evaluate_file(raw_text, raw_params, filter_params, eval_params):
         "filter_active": pipeline.is_filter_active(filter_params, df_proc),
         "cof_eval": cof_eval,
         "stats_result": stats_result,
+        "plus_minus_result": plus_minus_result,
         "step_df": step_df,
         "stroke_mm": data_loader.read_stroke_mm(raw_text),
     }
@@ -121,6 +123,7 @@ def run_one(plan, name, overwrite):
             result["df_display"], result["df_proc"], result["filter_active"],
             result["cof_eval"], result["stats_result"],
             step_df=result["step_df"],
+            plus_minus_result=result["plus_minus_result"],
         )
         details = old_details
         if details is None:

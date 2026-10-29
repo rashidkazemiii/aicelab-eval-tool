@@ -673,6 +673,22 @@ def _(cof_eval, df_display, pipeline, step_df):
     return stats_error, stats_result
 
 
+@app.cell
+def _(cof_eval, df_display, pipeline, stats_result, step_df):
+    # The same statistics split into CoF+ and CoF- (positive and negative
+    # strokes), plus CoF AVG: the two added back together and checked
+    # against stats_result. Kept apart from stats_result so a problem here
+    # never hides the normal results.
+    plus_minus_result = None
+    plus_minus_error = None
+    if cof_eval is not None and df_display is not None and stats_result is not None:
+        try:
+            plus_minus_result = pipeline.compute_plus_minus_stats(cof_eval, df_display, step_df, stats_result)
+        except Exception as _e:
+            plus_minus_error = str(_e)
+    return plus_minus_error, plus_minus_result
+
+
 # ── DB save ────────────────────────────────────────────────────────────────
 @app.cell
 def _(
@@ -689,6 +705,7 @@ def _(
     mo,
     overwrite_btn,
     pipeline,
+    plus_minus_result,
     save_btn,
     set_history_version,
     set_results_status_msg,
@@ -727,7 +744,7 @@ def _(
                 _filter_active = pipeline.is_filter_active(_fparams, df_proc)
                 _test_id = db_mod.save_full_evaluation(
                     _fname, _fparams, _eparams, df_display, df_proc, _filter_active, cof_eval, stats_result,
-                    step_df=step_df,
+                    step_df=step_df, plus_minus_result=plus_minus_result,
                 )
                 _details = _old_details
                 if _details is None:
@@ -923,7 +940,7 @@ def _(delete_btn, db_mod, history_table, mo, selected_test_ids, set_history_stat
 
 
 @app.cell
-def _(data_loader, db_mod, history_table, mo, selected_test_ids, table_helpers):
+def _(data_loader, db_mod, history_table, mo, results_table, selected_test_ids, table_helpers):
     _ids = selected_test_ids(history_table.value)
     if len(_ids) == 1:
         _test_id = _ids[0]
@@ -937,6 +954,10 @@ def _(data_loader, db_mod, history_table, mo, selected_test_ids, table_helpers):
                 _raw_table = db_mod.get_full_raw_table(_test_id)
                 _eval_table = db_mod.get_full_eval_table(_test_id)
                 _combined = table_helpers.combine_padded(_raw_table, _eval_table)
+                # The CoF+ / CoF- table goes in the columns to the right.
+                _pm_table = results_table.build_plus_minus_export(db_mod.get_plus_minus_df(_test_id))
+                if _pm_table is not None:
+                    _combined = table_helpers.combine_padded(_combined, _pm_table)
                 return data_loader.dataframe_to_csv_bytes(_combined)
 
             _history_excel_download = mo.download(
@@ -1028,7 +1049,7 @@ def _(charts, db_mod, get_shown_test_id, mo):
 
 
 @app.cell
-def _(db_mod, get_shown_test_id, mo, results_table):
+def _(db_mod, get_shown_test_id, mo, pipeline, results_table):
     # The per-step summary of a saved test: one row per step rather than one
     # per raw sample, so a test whose raw signal is hundreds of thousands of
     # rows lands here as a handful - small enough to render in the page.
@@ -1043,10 +1064,28 @@ def _(db_mod, get_shown_test_id, mo, results_table):
         if _eval_df is None or len(_eval_df) == 0:
             shown_eval_table = mo.callout(mo.md("No evaluated cycles saved for this test."), kind="info")
         else:
-            shown_eval_table = mo.ui.table(
-                _eval_df, selection=None,
-                pagination=False, show_column_summaries=False, show_data_types=False,
-            )
+            _parts = [
+                mo.ui.table(
+                    _eval_df, selection=None,
+                    pagination=False, show_column_summaries=False, show_data_types=False,
+                ),
+            ]
+            # Below it: the same numbers split into CoF+ and CoF-, with the
+            # Check against the per-step table, like on the Analysis tab.
+            try:
+                _pm = pipeline.add_check_column(
+                    db_mod.get_plus_minus_df(_shown), db_mod.get_stats_df(_shown),
+                )
+                _pm_df = results_table.build_plus_minus_table(_pm)
+                if _pm_df is not None:
+                    _parts.append(mo.Html('<p class="section-label" style="margin:12px 0 0 0">CoF+ / CoF- (POSITIVE AND NEGATIVE STROKES)</p>'))
+                    _parts.append(mo.ui.table(
+                        _pm_df, selection=None,
+                        pagination=False, show_column_summaries=False, show_data_types=False,
+                    ))
+            except Exception as _e:
+                _parts.append(mo.callout(mo.md(f"**CoF+ / CoF- could not be shown:** {_e}"), kind="danger"))
+            shown_eval_table = mo.vstack(_parts, gap=1)
     return (shown_eval_table,)
 
 
@@ -1253,7 +1292,7 @@ def _(cof_eval, df_display, mo, open_results_excel_btn):
 
 
 @app.cell
-def _(cof_eval, mo, results_table, stats_error, stats_result):
+def _(cof_eval, mo, plus_minus_error, plus_minus_result, results_table, stats_error, stats_result):
     # Same per-step summary table the History tab shows for a saved test,
     # but for the file currently being worked on. Only
     # results_table.SHOWN_COLUMNS are displayed; the raw Time/CoF/Filtered
@@ -1265,13 +1304,30 @@ def _(cof_eval, mo, results_table, stats_error, stats_result):
     if _eval_df is None or len(_eval_df) == 0:
         eval_table_panel = mo.Html("")
     else:
-        eval_table_panel = mo.vstack([
+        _parts = [
             mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
             mo.ui.table(
                 _eval_df, selection=None,
                 pagination=False, show_column_summaries=False, show_data_types=False,
             ),
-        ], gap=1)
+        ]
+
+        # Below it: the same numbers split into CoF+ and CoF-.
+        _pm_df = results_table.build_plus_minus_table(plus_minus_result)
+        if plus_minus_error is not None:
+            _parts.append(mo.callout(mo.md(f"**CoF+ / CoF- could not be calculated:** {plus_minus_error}"), kind="danger"))
+        elif _pm_df is not None:
+            _parts.append(mo.Html('<p class="section-label" style="margin:12px 0 0 0">CoF+ / CoF- (POSITIVE AND NEGATIVE STROKES)</p>'))
+            _parts.append(mo.md(
+                "**CoF+** uses only the positive strokes, **CoF-** only the negative ones "
+                "(shown as positive numbers). **CoF AVG** adds the two back together; "
+                "**Check** says whether that matches the table above."
+            ))
+            _parts.append(mo.ui.table(
+                _pm_df, selection=None,
+                pagination=False, show_column_summaries=False, show_data_types=False,
+            ))
+        eval_table_panel = mo.vstack(_parts, gap=1)
     return (eval_table_panel,)
 
 
@@ -1284,6 +1340,7 @@ def _(
     df_proc,
     mo,
     pipeline,
+    plus_minus_result,
     results_table,
     stats_error,
     stats_result,
@@ -1299,6 +1356,10 @@ def _(
             _combined = table_helpers.combine_padded(_df_raw_results, _df_eval_results)
         else:
             _combined = _df_raw_results
+        # The CoF+ / CoF- table goes in the columns to the right.
+        _df_pm = results_table.build_plus_minus_export(plus_minus_result)
+        if _df_pm is not None:
+            _combined = table_helpers.combine_padded(_combined, _df_pm)
         return data_loader.dataframe_to_csv_bytes(_combined)
 
     open_results_excel_btn = mo.download(

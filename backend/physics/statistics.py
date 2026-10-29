@@ -544,3 +544,177 @@ def CoF_Discontsepstatistics(CoF, step_df):
     )
     return statisticssep
 
+
+
+def _group_stats(static_values, dyn_n, dyn_sum, dyn_var):
+    """Statistics for one group of cycles (all CoF+ or all CoF- cycles of a
+    step). `static_values` are the absolute static CoF values of the group.
+    The dynamic lists hold each cycle's point count, CoF sum and variance
+    sum, which are pooled exactly like CoF_Stat does for the whole step.
+    Returns a dict; values that can't be computed (no cycles, or only one)
+    are NaN."""
+    result = {}
+
+    static_n = len(static_values)
+    if static_n > 0:
+        static_avg = float(np.mean(static_values))
+        static_sum = static_avg * static_n
+    else:
+        static_avg = np.nan
+        static_sum = 0.0
+    if static_n > 1:
+        static_sd = float(np.std(static_values, ddof=1))
+        static_var = static_sd ** 2 * (static_n - 1) + static_sum ** 2 / static_n
+    elif static_n == 1:
+        static_sd = np.nan
+        static_var = static_sum ** 2
+    else:
+        static_sd = np.nan
+        static_var = 0.0
+    result["Static Avg"] = static_avg
+    result["Static Std Dev"] = static_sd
+    result["Static N"] = static_n
+    result["Static Avg x N"] = static_sum
+    result["Static Var"] = static_var
+
+    total_n = float(np.sum(dyn_n))
+    total_sum = float(np.sum(dyn_sum))
+    total_var = float(np.sum(dyn_var))
+    result.update(_pooled_dynamic(total_n, total_sum, total_var))
+    return result
+
+
+def _pooled_dynamic(total_n, total_sum, total_var):
+    """Dynamic mean and standard deviation from pooled point count, CoF sum
+    and variance sum (same formulas as CoF_Stat)."""
+    if total_n > 0:
+        dyn_avg = total_sum / total_n
+    else:
+        dyn_avg = np.nan
+    if total_n > 1:
+        inside = (total_var - total_sum ** 2 / total_n) / (total_n - 1)
+        if inside < 0:
+            # tiny negative from floating-point rounding when all values are equal
+            inside = 0.0
+        dyn_sd = inside ** 0.5
+    else:
+        dyn_sd = np.nan
+    return {
+        "Dynamic Avg": dyn_avg,
+        "Dynamic Std Dev": dyn_sd,
+        "Dynamic N": int(round(total_n)),
+        "Dynamic Avg x N": total_sum,
+        "Dynamic Var": total_var,
+    }
+
+
+def CoF_Stat_PlusMinus(CoF, step_df):
+    """Per-step statistics split by stroke direction, like the
+    "CoF+" / "CoF-" blocks of the Friction_Evaluation_PlusMinus workbook.
+
+    For every active step, the cycles whose time falls in the step's window
+    are sorted into two groups:
+      - CoF+ : cycles with a positive CoF
+      - CoF- : cycles with a negative CoF (reported as absolute values)
+    Static values are sorted by the sign of the static CoF, dynamic values by
+    the sign of the dynamic CoF (the same as the workbook).
+
+    A third group, "CoF AVG", adds CoF+ and CoF- back together (sums and
+    counts added, mean and standard deviation recomputed from them). It
+    should equal CoF_Stat's row for the same step; pipeline compares the two
+    to check the calculation.
+
+    Returns a dict: {"CoF AVG": DataFrame, "CoF+": DataFrame, "CoF-": DataFrame},
+    each with one row per step that has cycles, and the same columns as
+    CoF_Stat.
+    """
+    static_time = CoF["staticCoFTime"].to_numpy()
+    static_cof = CoF["staticCoF"].to_numpy()
+    dynamic_cof = CoF["dynamicCoF"].to_numpy()
+    dynamic_n = CoF["dynamicCoFn"].to_numpy()
+    dynamic_sum = CoF["dynamicCoFsigma"].to_numpy()
+    dynamic_var = CoF["dynamicCoFvariance"].to_numpy()
+
+    rows_avg = []
+    rows_plus = []
+    rows_minus = []
+
+    for _, step in step_df.iterrows():
+        if step["inactive"]:
+            continue
+        lower = step["Startzeit [s]"]
+        upper = step["Endzeit [s]"]
+        time_range = f"{round(lower, 1)}-{round(upper, 1)}"
+
+        plus_static = []
+        minus_static = []
+        plus_n = []
+        plus_sum = []
+        plus_var = []
+        minus_n = []
+        minus_sum = []
+        minus_var = []
+
+        for j in range(len(static_time)):
+            if not (static_time[j] >= lower and static_time[j] <= upper):
+                continue
+
+            if static_cof[j] > 0:
+                plus_static.append(static_cof[j])
+            elif static_cof[j] < 0:
+                minus_static.append(abs(static_cof[j]))
+
+            if dynamic_cof[j] > 0:
+                plus_n.append(dynamic_n[j])
+                plus_sum.append(dynamic_sum[j])
+                plus_var.append(dynamic_var[j])
+            elif dynamic_cof[j] < 0:
+                minus_n.append(dynamic_n[j])
+                minus_sum.append(dynamic_sum[j])
+                minus_var.append(dynamic_var[j])
+
+        if len(plus_static) + len(minus_static) == 0:
+            continue
+
+        plus = _group_stats(plus_static, plus_n, plus_sum, plus_var)
+        minus = _group_stats(minus_static, minus_n, minus_sum, minus_var)
+
+        # CoF AVG: CoF+ and CoF- added back together
+        both = {}
+        static_n = plus["Static N"] + minus["Static N"]
+        static_sum = plus["Static Avg x N"] + minus["Static Avg x N"]
+        static_var = plus["Static Var"] + minus["Static Var"]
+        both["Static Avg"] = static_sum / static_n
+        if static_n > 1:
+            inside = (static_var - static_sum ** 2 / static_n) / (static_n - 1)
+            if inside < 0:
+                inside = 0.0
+            both["Static Std Dev"] = inside ** 0.5
+        else:
+            both["Static Std Dev"] = np.nan
+        both["Static N"] = static_n
+        both["Static Avg x N"] = static_sum
+        both["Static Var"] = static_var
+        both.update(_pooled_dynamic(
+            plus["Dynamic N"] + minus["Dynamic N"],
+            plus["Dynamic Avg x N"] + minus["Dynamic Avg x N"],
+            plus["Dynamic Var"] + minus["Dynamic Var"],
+        ))
+
+        plus["Time Range"] = time_range
+        minus["Time Range"] = time_range
+        both["Time Range"] = time_range
+        rows_plus.append(plus)
+        rows_minus.append(minus)
+        rows_avg.append(both)
+
+    columns = [
+        "Time Range",
+        "Static Avg", "Static Std Dev", "Static N", "Static Avg x N", "Static Var",
+        "Dynamic Avg", "Dynamic Std Dev", "Dynamic N", "Dynamic Avg x N", "Dynamic Var",
+    ]
+    return {
+        "CoF AVG": pd.DataFrame(rows_avg, columns=columns),
+        "CoF+": pd.DataFrame(rows_plus, columns=columns),
+        "CoF-": pd.DataFrame(rows_minus, columns=columns),
+    }

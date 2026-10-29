@@ -11,6 +11,11 @@ user selected, side by side, laid out like the lab's report sheet
       position on the mirrored axis, like the report charts)
     SLIDING FRICTION                      (same layout, dynamic CoF)
 
+Below those, the same two sections again for CoF+ (positive strokes only)
+and CoF- (negative strokes only), each with the static section's look:
+    STATIC FRICTION - CoF+, STATIC FRICTION - CoF-,
+    SLIDING FRICTION - CoF+, SLIDING FRICTION - CoF-
+
 Ss is the sum of the values (Average x n) and Ss2 the sum of their squares
 - the same numbers the app already stores per step. Anything the app does
 not know (normal force, dry/wet ice, ice temperatures, unevenness) is left
@@ -42,6 +47,18 @@ FIRST_TEST_COLUMN = 4     # column D
 COLUMNS_PER_TEST = 5      # Average, St. Dev., n, Ss, Ss2
 STATIC_SECTION_ROW = 3    # "STATIC FRICTION"
 STEP_MATCH_TOLERANCE_S = 0.05
+# The template's static section: rows 3-27 (title, 9 label rows, the header
+# row and 14 step rows). The CoF+ / CoF- sections below row 53 copy its look.
+TEMPLATE_SECTION_LAST_ROW = 27
+TEMPLATE_GAP_ROW = 28     # the empty row between the two sections
+
+# (title, "static"/"dynamic", group) of the extra sections, in order.
+PLUS_MINUS_SECTIONS = [
+    ("STATIC FRICTION - CoF+ (positive strokes)", "static", "CoF+"),
+    ("STATIC FRICTION - CoF- (negative strokes)", "static", "CoF-"),
+    ("SLIDING FRICTION - CoF+ (positive strokes)", "dynamic", "CoF+"),
+    ("SLIDING FRICTION - CoF- (negative strokes)", "dynamic", "CoF-"),
+]
 
 PHASE_ORDER = {"running-in": 0, "up": 1, "down": 2}
 
@@ -68,9 +85,55 @@ def _phases(speeds):
     return phases
 
 
+def _parse_time_range(text):
+    """(start, end) from a "60.0-80.0" time-range text, or None."""
+    parts = str(text or "").replace("–", "-").split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        return (float(parts[0]), float(parts[1]))
+    except ValueError:
+        return None
+
+
+def _same_window(time_range, step):
+    """Whether a "start-end" time-range text belongs to this Step row."""
+    window = _parse_time_range(time_range)
+    if window is None:
+        return False
+    start, end = window
+    if abs(start - step.start_time) > STEP_MATCH_TOLERANCE_S:
+        return False
+    if abs(end - step.end_time) > STEP_MATCH_TOLERANCE_S:
+        return False
+    return True
+
+
+def _five_values(mean, sd, n, total, variance):
+    """The five numbers of one section's block (Average, St. Dev., n, Ss,
+    Ss2), or None when the step has no numbers."""
+    if mean is None:
+        return None
+    try:
+        if mean != mean:   # NaN: a group with no cycles
+            return None
+    except TypeError:
+        return None
+    values = [mean, sd, n, total, variance]
+    cleaned = []
+    for v in values:
+        # NaN (e.g. the std dev of a single cycle) is left empty in Excel
+        if v is not None and v != v:
+            cleaned.append(None)
+        else:
+            cleaned.append(v)
+    return cleaned
+
+
 def _load_test(test_id):
     """A saved test's header values and its steps: a list of
-    {"key": (phase, speed, occurrence), "result": Result or None}."""
+    {"key": (phase, speed, occurrence), "values": {(group, kind): [5 values] or None}}
+    where group is "main", "CoF+" or "CoF-" and kind is "static" or "dynamic"."""
     db = database.SessionLocal()
     try:
         test = db.query(database.Test).filter(database.Test.id == test_id).first()
@@ -83,6 +146,7 @@ def _load_test(test_id):
         results = db.query(database.Result).filter(database.Result.test_id == test_id).all()
     finally:
         db.close()
+    plus_minus = database.get_plus_minus_df(test_id)
 
     with_speed = []
     for s in steps:
@@ -102,20 +166,31 @@ def _load_test(test_id):
         base_key = (phases[k], speeds[k])
         occurrence = seen.get(base_key, 0)
         seen[base_key] = occurrence + 1
-        match = None
+        values = {
+            ("main", "static"): None, ("main", "dynamic"): None,
+            ("CoF+", "static"): None, ("CoF+", "dynamic"): None,
+            ("CoF-", "static"): None, ("CoF-", "dynamic"): None,
+        }
         for r in results:
-            parts = str(r.time_range or "").replace("–", "-").split("-")
-            if len(parts) != 2:
-                continue
-            try:
-                start = float(parts[0])
-                end = float(parts[1])
-            except ValueError:
-                continue
-            if abs(start - step.start_time) <= STEP_MATCH_TOLERANCE_S and abs(end - step.end_time) <= STEP_MATCH_TOLERANCE_S:
-                match = r
+            if _same_window(r.time_range, step):
+                values[("main", "static")] = _five_values(
+                    r.static_mean_cof, r.static_sd, r.static_n, r.static_sum, r.static_variance)
+                values[("main", "dynamic")] = _five_values(
+                    r.dynamic_mean_cof, r.dynamic_sd, r.dynamic_n, r.dynamic_sum, r.dynamic_variance)
                 break
-        step_rows.append({"key": (phases[k], speeds[k], occurrence), "result": match})
+        for _, pm in plus_minus.iterrows():
+            group = pm["Group"]
+            if group != "CoF+" and group != "CoF-":
+                continue
+            if not _same_window(pm["Time Range"], step):
+                continue
+            values[(group, "static")] = _five_values(
+                pm["Static Avg"], pm["Static Std Dev"], pm["Static N"],
+                pm["Static Avg x N"], pm["Static Var"])
+            values[(group, "dynamic")] = _five_values(
+                pm["Dynamic Avg"], pm["Dynamic Std Dev"], pm["Dynamic N"],
+                pm["Dynamic Avg x N"], pm["Dynamic Var"])
+        step_rows.append({"key": (phases[k], speeds[k], occurrence), "values": values})
 
     name = test.file_name
     if name.lower().endswith(".txt"):
@@ -187,10 +262,20 @@ def build_summary_excel(test_ids):
     _format_test_blocks(sheet, len(tests))
 
     sheet.cell(2, LABEL_COLUMN, "Separate display for increasing and decreasing velocity")
-    static_end = _write_section(sheet, STATIC_SECTION_ROW, "STATIC FRICTION", "static",
+    static_end = _write_section(sheet, STATIC_SECTION_ROW, "STATIC FRICTION", "static", "main",
                                 tests, keys, stroke, fastest_speed)
-    _write_section(sheet, static_end + 2, "SLIDING FRICTION", "dynamic",
-                   tests, keys, stroke, fastest_speed)
+    section_end = _write_section(sheet, static_end + 2, "SLIDING FRICTION", "dynamic", "main",
+                                 tests, keys, stroke, fastest_speed)
+
+    # CoF+ / CoF- sections, below the template's rows: they copy the look
+    # of the static section first, then get their values.
+    last_column = FIRST_TEST_COLUMN + max(len(tests), 1) * COLUMNS_PER_TEST
+    section_rows = section_end - static_end - 1
+    for title, kind, group in PLUS_MINUS_SECTIONS:
+        start_row = max(section_end, TEMPLATE_LAST_ROW) + 2
+        _copy_section_look(sheet, start_row, section_rows, last_column)
+        section_end = _write_section(sheet, start_row, title, kind, group,
+                                     tests, keys, stroke, fastest_speed)
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -220,9 +305,31 @@ def _format_test_blocks(sheet, n_tests):
         sheet.cell(r, after_last)._style = copy.copy(background[r - 1])
 
 
-def _write_section(sheet, start_row, title, kind, tests, keys, stroke, fastest_speed):
-    """One section (static or sliding friction). Returns its last row.
-    Only writes values - the look comes from the template."""
+def _copy_section_look(sheet, start_row, n_rows, last_column):
+    """Give rows start_row .. start_row + n_rows - 1 the look of the
+    template's static section (rows STATIC_SECTION_ROW onwards), and the
+    row above them the look of the empty row between two sections. A
+    section longer than the template's repeats its last step row's look."""
+    for c in range(1, last_column + 1):
+        gap_source = sheet.cell(TEMPLATE_GAP_ROW, c)
+        sheet.cell(start_row - 1, c)._style = copy.copy(gap_source._style)
+    for i in range(n_rows):
+        source_row = STATIC_SECTION_ROW + i
+        if source_row > TEMPLATE_SECTION_LAST_ROW:
+            source_row = TEMPLATE_SECTION_LAST_ROW
+        target_row = start_row + i
+        for c in range(1, last_column + 1):
+            source = sheet.cell(source_row, c)
+            sheet.cell(target_row, c)._style = copy.copy(source._style)
+        height = sheet.row_dimensions[source_row].height
+        if height is not None:
+            sheet.row_dimensions[target_row].height = height
+
+
+def _write_section(sheet, start_row, title, kind, group, tests, keys, stroke, fastest_speed):
+    """One section (static or sliding friction, for group "main", "CoF+"
+    or "CoF-"). Returns its last row. Only writes values - the look comes
+    from the template."""
     sheet.cell(start_row, LABEL_COLUMN, title)
 
     labels = [
@@ -295,20 +402,12 @@ def _write_section(sheet, start_row, title, kind, tests, keys, stroke, fastest_s
             sheet.cell(row, LABEL_COLUMN, f"{speed:g} U/min")
 
         for t in range(len(tests)):
-            result = None
+            values = None
             for step in tests[t]["steps"]:
                 if step["key"] == key:
-                    result = step["result"]
-            if result is None:
-                continue
-            if kind == "static":
-                values = [result.static_mean_cof, result.static_sd, result.static_n,
-                          result.static_sum, result.static_variance]
-            else:
-                values = [result.dynamic_mean_cof, result.dynamic_sd, result.dynamic_n,
-                          result.dynamic_sum, result.dynamic_variance]
-            if values[0] is None:
-                continue  # step skipped (noisy / no cycles): leave it empty
+                    values = step["values"][(group, kind)]
+            if values is None:
+                continue  # no such step, or skipped (noisy / no cycles): leave it empty
             column = FIRST_TEST_COLUMN + t * COLUMNS_PER_TEST
             for v in range(len(values)):
                 sheet.cell(row, column + v, values[v])

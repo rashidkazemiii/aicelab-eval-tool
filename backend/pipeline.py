@@ -191,6 +191,18 @@ NOTE_SKIPPED_NOISY = "Skipped: noisy"
 NOTE_NO_CYCLES = "Skipped: no cycles"
 
 
+def _steps_or_whole_file(df_display, step_df):
+    """The test steps, or one synthetic step spanning the whole file when
+    there's no step data."""
+    if step_df is not None:
+        return step_df
+    return pd.DataFrame({
+        "Startzeit [s]": [df_display["Zeit"].min()],
+        "Endzeit [s]":   [df_display["Zeit"].max()],
+        "inactive":      [False],
+    })
+
+
 def compute_stats(cof_eval, df_display, step_df):
     """Per-step CoF statistics for the current evaluation. Falls back to a
     single synthetic step spanning the whole file when there's no step data.
@@ -198,14 +210,7 @@ def compute_stats(cof_eval, df_display, step_df):
     cycles keeps its time range with empty numbers, and its "Note" says why
     it was not used. Raises on conversion/computation error.
     """
-    if step_df is not None:
-        steps = step_df
-    else:
-        steps = pd.DataFrame({
-            "Startzeit [s]": [df_display["Zeit"].min()],
-            "Endzeit [s]":   [df_display["Zeit"].max()],
-            "inactive":      [False],
-        })
+    steps = _steps_or_whole_file(df_display, step_df)
     stats = stat_funcs.CoF_Stat(cof_eval["cof_res"], steps)
 
     skipped_steps = cof_eval.get("skipped_steps", [])
@@ -236,3 +241,105 @@ def compute_stats(cof_eval, df_display, step_df):
         rows.append(row)
 
     return pd.DataFrame(rows, columns=list(stats.columns) + ["Note"])
+
+
+# The largest difference between the recombined CoF AVG and the normal
+# per-step mean that still counts as "the same number" (floating-point noise).
+CHECK_TOLERANCE = 1e-9
+
+GROUP_ORDER = ["CoF AVG", "CoF+", "CoF-"]
+
+
+def compute_plus_minus_stats(cof_eval, df_display, step_df, stats):
+    """Per-step statistics split into CoF+ and CoF- (positive and negative
+    strokes), plus "CoF AVG": the two added back together.
+
+    `stats` is compute_stats' result for the same evaluation, or None. Every
+    CoF AVG row is compared with the matching row there (see
+    add_check_column).
+
+    Returns one DataFrame with a "Group" column, the rows ordered like the
+    workbook: all CoF AVG rows, then all CoF+ rows, then all CoF- rows.
+    Raises on conversion/computation error.
+    """
+    steps = _steps_or_whole_file(df_display, step_df)
+    groups = stat_funcs.CoF_Stat_PlusMinus(cof_eval["cof_res"], steps)
+
+    rows = []
+    for group_name in GROUP_ORDER:
+        for _, group_row in groups[group_name].iterrows():
+            row = group_row.to_dict()
+            row["Group"] = group_name
+            rows.append(row)
+
+    columns = ["Group"] + list(groups["CoF AVG"].columns)
+    table = pd.DataFrame(rows, columns=columns)
+    return add_check_column(table, stats)
+
+
+def add_check_column(plus_minus_table, stats):
+    """Add the "Check" column: for every CoF AVG row, whether it matches the
+    normal per-step row in `stats` (compute_stats' result) - if it does, no
+    cycle was lost or counted twice when splitting by direction. Empty for
+    the CoF+ / CoF- rows, and everywhere when `stats` is None."""
+    # The normal per-step rows, looked up by their time window.
+    main_rows_by_range = {}
+    if stats is not None:
+        for _, main_row in stats.iterrows():
+            main_rows_by_range[_range_key(main_row["Time Range"])] = main_row
+
+    checks = []
+    for _, row in plus_minus_table.iterrows():
+        if stats is not None and row["Group"] == "CoF AVG":
+            checks.append(_check_against_main(row, main_rows_by_range))
+        else:
+            checks.append("")
+    table = plus_minus_table.copy()
+    table["Check"] = checks
+    return table
+
+
+def _range_key(time_range):
+    """The (start, end) numbers of a "start-end" time-range text, so that
+    "80-90.0" and "80.0-90.0" (the same window, written once from the file
+    and once from the database) are recognised as the same step. None if
+    the text can't be read."""
+    parts = str(time_range).replace("–", "-").split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        return (round(float(parts[0]), 1), round(float(parts[1]), 1))
+    except ValueError:
+        return None
+
+
+def _check_against_main(avg_row, main_rows_by_range):
+    """Compare one recombined CoF AVG row with the normal per-step row.
+    Returns "OK" or a short text saying what differs."""
+    key = _range_key(avg_row["Time Range"])
+    if key is None or key not in main_rows_by_range:
+        return "No matching step"
+    main_row = main_rows_by_range[key]
+
+    if pd.isna(main_row["Static N"]) or pd.isna(main_row["Dynamic N"]):
+        return "No numbers in the step above"
+
+    problems = []
+    if int(avg_row["Static N"]) != int(main_row["Static N"]):
+        problems.append(
+            "static N " + str(int(avg_row["Static N"])) + " vs " + str(int(main_row["Static N"]))
+        )
+    if int(avg_row["Dynamic N"]) != int(main_row["Dynamic N"]):
+        problems.append(
+            "dynamic N " + str(int(avg_row["Dynamic N"])) + " vs " + str(int(main_row["Dynamic N"]))
+        )
+    static_diff = abs(avg_row["Static Avg"] - main_row["Static Avg"])
+    if not static_diff <= CHECK_TOLERANCE:
+        problems.append("static mean off by " + format(static_diff, ".3g"))
+    dynamic_diff = abs(avg_row["Dynamic Avg"] - main_row["Dynamic Avg"])
+    if not dynamic_diff <= CHECK_TOLERANCE:
+        problems.append("dynamic mean off by " + format(dynamic_diff, ".3g"))
+
+    if len(problems) == 0:
+        return "OK"
+    return "Differs: " + ", ".join(problems)

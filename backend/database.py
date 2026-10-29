@@ -6,6 +6,9 @@ One SQLite file (tribology.db, next to this module) holds:
   tests        — one row per saved test (identity + the params it was evaluated with)
   results      — one row per row of CoF_Stat's output (one step, or one synthetic
                  whole-file "step" when the test has no real step data)
+  plus_minus_results — the same per-step statistics split into CoF+ / CoF-
+                 (positive / negative strokes), plus CoF AVG (the two added
+                 back together)
   per_cycle    — one row per friction cycle (for future ML / AI training)
   minima       — one row per detected zero-crossing pair
   raw_samples  — one row per raw data sample (the full-resolution signal)
@@ -77,6 +80,8 @@ class Test(Base):
                                 cascade="all, delete-orphan")
     steps       = relationship("Step",       back_populates="test",
                                 cascade="all, delete-orphan")
+    plus_minus_results = relationship("PlusMinusResult", back_populates="test",
+                                      cascade="all, delete-orphan")
 
 
 class Result(Base):
@@ -101,6 +106,33 @@ class Result(Base):
     note             = Column(String)
 
     test = relationship("Test", back_populates="results")
+
+
+class PlusMinusResult(Base):
+    """One row per step and group of pipeline.compute_plus_minus_stats:
+    group "CoF+" (positive strokes only), "CoF-" (negative strokes only,
+    stored as positive numbers) or "CoF AVG" (the two added back together).
+    Same columns as Result. Tests saved before this table existed have no
+    rows here; get_plus_minus_df calculates them from the saved cycles."""
+    __tablename__ = "plus_minus_results"
+
+    id               = Column(Integer, primary_key=True)
+    test_id          = Column(Integer, ForeignKey("tests.id"), nullable=False, index=True)
+    row_index        = Column(Integer)
+    group_name       = Column(String)
+    time_range       = Column(String)
+    static_mean_cof  = Column(Float)
+    static_sd        = Column(Float)
+    static_n         = Column(Integer)
+    static_sum       = Column(Float)
+    static_variance  = Column(Float)
+    dynamic_mean_cof = Column(Float)
+    dynamic_sd       = Column(Float)
+    dynamic_n        = Column(Integer)
+    dynamic_sum      = Column(Float)
+    dynamic_variance = Column(Float)
+
+    test = relationship("Test", back_populates="plus_minus_results")
 
 
 class PerCycle(Base):
@@ -227,6 +259,7 @@ def save_evaluation(
     minima_df: Optional[pd.DataFrame] = None, # from cof_eval["minima"] — one row per zero-crossing pair
     static_method: str = "fixed_window",      # see Test.static_method
     step_df: Optional[pd.DataFrame] = None,   # the file's step table — see Step
+    plus_minus_df: Optional[pd.DataFrame] = None,  # from pipeline.compute_plus_minus_stats
 ) -> int:
     """Persist one complete evaluation to the database. Returns the new test.id."""
     db = SessionLocal()
@@ -260,6 +293,27 @@ def save_evaluation(
                 dynamic_variance=_clean(row.get("Dynamic Var")),
                 note=row.get("Note"),
             ))
+
+        if plus_minus_df is not None:
+            row_index = 0
+            for _, row in plus_minus_df.iterrows():
+                db.add(PlusMinusResult(
+                    test_id=test.id,
+                    row_index=row_index,
+                    group_name=row.get("Group"),
+                    time_range=row.get("Time Range"),
+                    static_mean_cof=_clean(row.get("Static Avg")),
+                    static_sd=_clean(row.get("Static Std Dev")),
+                    static_n=_clean(row.get("Static N")),
+                    static_sum=_clean(row.get("Static Avg x N")),
+                    static_variance=_clean(row.get("Static Var")),
+                    dynamic_mean_cof=_clean(row.get("Dynamic Avg")),
+                    dynamic_sd=_clean(row.get("Dynamic Std Dev")),
+                    dynamic_n=_clean(row.get("Dynamic N")),
+                    dynamic_sum=_clean(row.get("Dynamic Avg x N")),
+                    dynamic_variance=_clean(row.get("Dynamic Var")),
+                ))
+                row_index = row_index + 1
 
         for idx, row in per_cycle_df.iterrows():
             db.add(PerCycle(
@@ -500,6 +554,7 @@ def save_full_evaluation(
     cof_eval: dict,
     stats_result: pd.DataFrame,
     step_df: Optional[pd.DataFrame] = None,
+    plus_minus_result: Optional[pd.DataFrame] = None,
 ) -> int:
     """Build the raw-sample dataframe from the current pipeline state and
     persist one full evaluation via save_evaluation(). Returns the new
@@ -527,6 +582,7 @@ def save_full_evaluation(
         minima_df=cof_eval["minima"],
         static_method=cof_eval.get("static_method", "fixed_window"),
         step_df=step_df,
+        plus_minus_df=plus_minus_result,
     )
 
 
@@ -676,6 +732,114 @@ def load_test_for_analysis(test_id: int) -> dict:
         "cof_eval": {"minima": minima, "cof_res": cof_res, "static_method": static_method},
         "step_df": step_df,
     }
+
+
+# CoF_Stat's column names, which the plus/minus rows use too.
+STATS_COLUMNS = [
+    "Time Range",
+    "Static Avg", "Static Std Dev", "Static N", "Static Avg x N", "Static Var",
+    "Dynamic Avg", "Dynamic Std Dev", "Dynamic N", "Dynamic Avg x N", "Dynamic Var",
+]
+
+
+def _result_row_as_dict(r) -> dict:
+    """A Result or PlusMinusResult row, with CoF_Stat's column names."""
+    return {
+        "Time Range": r.time_range,
+        "Static Avg": r.static_mean_cof,
+        "Static Std Dev": r.static_sd,
+        "Static N": r.static_n,
+        "Static Avg x N": r.static_sum,
+        "Static Var": r.static_variance,
+        "Dynamic Avg": r.dynamic_mean_cof,
+        "Dynamic Std Dev": r.dynamic_sd,
+        "Dynamic N": r.dynamic_n,
+        "Dynamic Avg x N": r.dynamic_sum,
+        "Dynamic Var": r.dynamic_variance,
+    }
+
+
+def get_stats_df(test_id: int) -> pd.DataFrame:
+    """A saved test's per-step results with CoF_Stat's own column names
+    (what pipeline.compute_stats returns), in the order they were saved."""
+    db = SessionLocal()
+    try:
+        results = (
+            db.query(Result).filter(Result.test_id == test_id)
+            .order_by(Result.id).all()
+        )
+    finally:
+        db.close()
+    rows = []
+    for r in results:
+        rows.append(_result_row_as_dict(r))
+    return pd.DataFrame(rows, columns=STATS_COLUMNS)
+
+
+def get_plus_minus_df(test_id: int) -> pd.DataFrame:
+    """A saved test's CoF AVG / CoF+ / CoF- rows, in the same shape as
+    pipeline.compute_plus_minus_stats (without its "Check" column).
+
+    Tests saved before the plus_minus_results table existed have no rows
+    there; for those the rows are calculated from the saved cycles and
+    steps instead, which gives the same numbers."""
+    db = SessionLocal()
+    try:
+        stored = (
+            db.query(PlusMinusResult).filter(PlusMinusResult.test_id == test_id)
+            .order_by(PlusMinusResult.row_index).all()
+        )
+        cycles = []
+        if len(stored) == 0:
+            cycles = (
+                db.query(PerCycle).filter(PerCycle.test_id == test_id)
+                .order_by(PerCycle.cycle_index).all()
+            )
+    finally:
+        db.close()
+
+    columns = ["Group"] + STATS_COLUMNS
+    if len(stored) > 0:
+        rows = []
+        for r in stored:
+            row = _result_row_as_dict(r)
+            row["Group"] = r.group_name
+            rows.append(row)
+        return pd.DataFrame(rows, columns=columns)
+
+    if len(cycles) == 0:
+        return pd.DataFrame(columns=columns)
+
+    import pipeline
+
+    static_times = []
+    static_cofs = []
+    dynamic_cofs = []
+    dynamic_ns = []
+    dynamic_sums = []
+    dynamic_variances = []
+    for c in cycles:
+        static_times.append(c.static_cof_time)
+        static_cofs.append(c.static_cof)
+        dynamic_cofs.append(c.dynamic_cof)
+        dynamic_ns.append(c.dynamic_n)
+        dynamic_sums.append(c.dynamic_sigma)
+        dynamic_variances.append(c.dynamic_variance)
+    cof_res = pd.DataFrame({
+        "staticCoFTime": static_times,
+        "staticCoF": static_cofs,
+        "dynamicCoF": dynamic_cofs,
+        "dynamicCoFn": dynamic_ns,
+        "dynamicCoFsigma": dynamic_sums,
+        "dynamicCoFvariance": dynamic_variances,
+    }).astype(float)
+    # Only used when the test has no steps: then the whole test is one
+    # step, from its first to its last cycle.
+    df_display = pd.DataFrame({"Zeit": cof_res["staticCoFTime"]})
+    table = pipeline.compute_plus_minus_stats(
+        {"cof_res": cof_res}, df_display, get_step_df(test_id), None,
+    )
+    return table[columns]
 
 
 def get_cycles(test_id: int) -> list[dict]:

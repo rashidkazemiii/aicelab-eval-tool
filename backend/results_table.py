@@ -137,3 +137,58 @@ def shown_columns_only(eval_df):
     shown = shown.dropna(how="all")
     shown = shown.reset_index(drop=True)
     return shown
+
+
+# CoF+ / CoF- table: the result of pipeline.compute_plus_minus_stats with
+# the same column names the per-step table above uses.
+PLUS_MINUS_COLUMNS = [
+    ("Group", "Group"),
+    ("Time Range", "Time range [s]"),
+    ("Check", "Check"),
+    ("Static Avg", "Static mean CoF"),
+    ("Static Std Dev", "Static std dev"),
+    ("Static N", "Static N"),
+    ("Static Avg x N", "Static CoF sum"),
+    ("Static Var", "Static CoF variance"),
+    ("Dynamic Avg", "Dynamic mean CoF"),
+    ("Dynamic Std Dev", "Dynamic mean std dev"),
+    ("Dynamic N", "Dynamic mean N"),
+    ("Dynamic Avg x N", "Dynamic CoF avg×N"),
+    ("Dynamic Var", "Dynamic CoF var (step)"),
+]
+
+PLUS_MINUS_TEXT_COLUMNS = ["Group", "Time Range", "Check", "Static N", "Dynamic N"]
+
+
+def build_plus_minus_table(plus_minus_stats, include_check=True):
+    """The CoF AVG / CoF+ / CoF- table, or None if there is nothing to show.
+    `include_check=False` leaves the "Check" column out (Excel exports); it
+    is also left out when the data has no Check column."""
+    if plus_minus_stats is None or len(plus_minus_stats) == 0:
+        return None
+    cols = {}
+    for source_name, shown_name in PLUS_MINUS_COLUMNS:
+        if source_name == "Check":
+            if not include_check or "Check" not in plus_minus_stats.columns:
+                continue
+        values = plus_minus_stats[source_name]
+        if source_name in PLUS_MINUS_TEXT_COLUMNS:
+            cols[shown_name] = list(values)
+        else:
+            # None (an empty value read back from the database) becomes NaN
+            values = pd.to_numeric(values, errors="coerce")
+            cols[shown_name] = table_helpers.round_and_pad(values, len(values), DEFAULT_COF_DECIMALS)
+    return pd.DataFrame(cols)
+
+
+def build_plus_minus_export(plus_minus_stats):
+    """The CoF AVG / CoF+ / CoF- table for an Excel (.csv) export: no Check
+    column, and every column name marked with "(±)" so it can't clash with
+    the per-step columns next to it. None if there is nothing to export."""
+    table = build_plus_minus_table(plus_minus_stats, include_check=False)
+    if table is None:
+        return None
+    renamed = {}
+    for name in table.columns:
+        renamed[name] = name + " (±)"
+    return table.rename(columns=renamed)
