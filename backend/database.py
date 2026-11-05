@@ -12,6 +12,9 @@ One SQLite file (tribology.db, next to this module) holds:
   per_cycle    — one row per friction cycle (for future ML / AI training)
   minima       — one row per detected zero-crossing pair
   raw_samples  — one row per raw data sample (the full-resolution signal)
+  info_columns — the information columns shown on the Database tab: the
+                 built-in ones (stored on tests) and the ones added by hand
+  info_values  — one row per filled-in value of an added column
 """
 
 from __future__ import annotations
@@ -82,6 +85,8 @@ class Test(Base):
                                 cascade="all, delete-orphan")
     plus_minus_results = relationship("PlusMinusResult", back_populates="test",
                                       cascade="all, delete-orphan")
+    info_values = relationship("InfoValue", back_populates="test",
+                               cascade="all, delete-orphan")
 
 
 class Result(Base):
@@ -194,6 +199,36 @@ class Minima(Base):
     test = relationship("Test", back_populates="minima")
 
 
+class InfoColumn(Base):
+    """One column of information about a test (Database tab, save form).
+
+    A built-in column keeps its values on the tests table: `field` names
+    the Test attribute. A column added by hand has field = NULL and keeps
+    its values in info_values. Deleting a built-in column clears its values
+    and sets `deleted`, because the Test attribute itself must stay: the AI
+    tab and Export summary read it. A deleted one can be added again."""
+    __tablename__ = "info_columns"
+
+    id        = Column(Integer, primary_key=True)
+    name      = Column(String, nullable=False)
+    kind      = Column(String, nullable=False)   # "number" or "text"
+    field     = Column(String)
+    protected = Column(Integer, default=0)       # 1 = can't be deleted
+    deleted   = Column(Integer, default=0)
+
+
+class InfoValue(Base):
+    """One filled-in value of a column added by hand, stored as text."""
+    __tablename__ = "info_values"
+
+    id        = Column(Integer, primary_key=True)
+    test_id   = Column(Integer, ForeignKey("tests.id"), nullable=False, index=True)
+    column_id = Column(Integer, ForeignKey("info_columns.id"), nullable=False, index=True)
+    value     = Column(Text)
+
+    test = relationship("Test", back_populates="info_values")
+
+
 class RawSample(Base):
     """One row per raw data sample (the full-resolution signal shown in the
     CoF Analysis results table: Time / CoF / Filtered CoF)."""
@@ -231,6 +266,39 @@ def create_tables() -> None:
                     conn.execute(text(
                         f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'
                     ))
+    _add_builtin_info_columns()
+
+
+# (name, kind, Test attribute, protected). Stroke is protected because the
+# velocity charts and Export summary need it.
+BUILTIN_INFO_COLUMNS = [
+    ("Temperature [°C]", "number", "temperature", 0),
+    ("Humidity [%]", "number", "humidity", 0),
+    ("Material", "text", "material", 0),
+    ("Stroke [mm]", "number", "stroke_mm", 1),
+    ("Note", "text", "note", 0),
+]
+
+# Names the Database tab's table already uses, so no added column can have
+# them. Compared in lower case.
+RESERVED_COLUMN_NAMES = [
+    "id", "file name", "saved", "evaluation", "filter pts", "static %",
+    "dyn min %", "dyn max %", "steps", "empty fields",
+]
+
+
+def _add_builtin_info_columns() -> None:
+    """Put each built-in column into info_columns once."""
+    db = SessionLocal()
+    try:
+        for name, kind, field, protected in BUILTIN_INFO_COLUMNS:
+            found = db.query(InfoColumn).filter(InfoColumn.field == field).first()
+            if found is None:
+                db.add(InfoColumn(name=name, kind=kind, field=field,
+                                  protected=protected, deleted=0))
+        db.commit()
+    finally:
+        db.close()
 
 
 def _clean(v) -> Optional[float]:
@@ -840,6 +908,166 @@ def get_plus_minus_df(test_id: int) -> pd.DataFrame:
         {"cof_res": cof_res}, df_display, get_step_df(test_id), None,
     )
     return table[columns]
+
+
+def list_info_columns() -> list[dict]:
+    """The information columns in use, in the order they are shown:
+    built-in ones first, then the added ones, oldest first."""
+    db = SessionLocal()
+    try:
+        rows = db.query(InfoColumn).order_by(InfoColumn.id).all()
+    finally:
+        db.close()
+    columns = []
+    for r in rows:
+        if not r.deleted:
+            columns.append({
+                "id": r.id,
+                "key": "c%d" % r.id,
+                "name": r.name,
+                "kind": r.kind,
+                "field": r.field,
+                "protected": bool(r.protected),
+            })
+    return columns
+
+
+def deleted_info_fields() -> list[str]:
+    """The Test attributes of the built-in columns that were deleted."""
+    db = SessionLocal()
+    try:
+        rows = db.query(InfoColumn).filter(InfoColumn.deleted == 1).all()
+    finally:
+        db.close()
+    fields = []
+    for r in rows:
+        fields.append(r.field)
+    return fields
+
+
+def add_info_column(name: str, kind: str) -> str:
+    """Add a column for every test, or bring back a deleted built-in column
+    of the same name. Returns the name the column ended up with. Raises
+    ValueError when the name is empty or already taken."""
+    name = name.strip()
+    if name == "":
+        raise ValueError("type a name for the new column")
+    wanted = name.lower()
+    if wanted in RESERVED_COLUMN_NAMES:
+        raise ValueError(f"the table already has a column named {name}")
+    db = SessionLocal()
+    try:
+        for r in db.query(InfoColumn).all():
+            if r.name.lower() != wanted:
+                continue
+            if not r.deleted:
+                raise ValueError(f"the table already has a column named {r.name}")
+            r.deleted = 0
+            db.commit()
+            return r.name
+        db.add(InfoColumn(name=name, kind=kind, field=None, protected=0, deleted=0))
+        db.commit()
+        return name
+    finally:
+        db.close()
+
+
+def delete_info_column(column_id: int) -> str:
+    """Delete a column and all its values, in every test. Returns its name.
+    Raises ValueError for a protected column."""
+    db = SessionLocal()
+    try:
+        column = db.query(InfoColumn).filter(InfoColumn.id == column_id).first()
+        if column is None:
+            raise ValueError("that column no longer exists")
+        if column.protected:
+            raise ValueError(f"{column.name} is needed by the app and can't be deleted")
+        name = column.name
+        if column.field is not None:
+            for test in db.query(Test).all():
+                setattr(test, column.field, None)
+            column.deleted = 1
+        else:
+            db.query(InfoValue).filter(InfoValue.column_id == column_id).delete()
+            db.delete(column)
+        db.commit()
+        return name
+    finally:
+        db.close()
+
+
+def _stored_value(text_value, kind):
+    """An added column's stored text as the value it stands for."""
+    if text_value is None:
+        return None
+    if kind == "number":
+        return float(text_value)
+    return text_value
+
+
+def get_all_info_values() -> dict:
+    """Every test's information: {test id: {column id: value or None}}."""
+    columns = list_info_columns()
+    db = SessionLocal()
+    try:
+        tests = db.query(Test).all()
+        stored = db.query(InfoValue).all()
+        all_values = {}
+        for test in tests:
+            values = {}
+            for column in columns:
+                if column["field"] is not None:
+                    values[column["id"]] = getattr(test, column["field"])
+                else:
+                    values[column["id"]] = None
+            all_values[test.id] = values
+        kinds = {}
+        for column in columns:
+            kinds[column["id"]] = column["kind"]
+        for row in stored:
+            if row.test_id in all_values and row.column_id in kinds:
+                all_values[row.test_id][row.column_id] = _stored_value(
+                    row.value, kinds[row.column_id])
+        return all_values
+    finally:
+        db.close()
+
+
+def get_info_values(test_id: int) -> dict:
+    """One test's information: {column id: value or None}. Empty when the
+    test does not exist."""
+    all_values = get_all_info_values()
+    if test_id in all_values:
+        return all_values[test_id]
+    return {}
+
+
+def save_info_values(test_id: int, values: dict) -> bool:
+    """Store a test's information. `values` is {column id: value or None};
+    columns not in it are left as they are. Returns whether the test was
+    found."""
+    columns = list_info_columns()
+    db = SessionLocal()
+    try:
+        test = db.query(Test).filter(Test.id == test_id).first()
+        if test is None:
+            return False
+        for column in columns:
+            if column["id"] not in values:
+                continue
+            value = values[column["id"]]
+            if column["field"] is not None:
+                setattr(test, column["field"], value)
+                continue
+            (db.query(InfoValue)
+             .filter(InfoValue.test_id == test_id, InfoValue.column_id == column["id"])
+             .delete())
+            if value is not None:
+                db.add(InfoValue(test_id=test_id, column_id=column["id"], value=str(value)))
+        db.commit()
+        return True
+    finally:
+        db.close()
 
 
 def get_cycles(test_id: int) -> list[dict]:

@@ -113,10 +113,10 @@ def run_one(plan, name, overwrite):
             raw_text,
             plan["raw_params"], plan["filter_params"], plan["eval_params"],
         )
-        # The hand-typed conditions of the old copy move to the new one.
-        old_details = None
+        # The information typed in for the old copy moves to the new one.
+        old_info = None
         if existing is not None:
-            old_details = database.get_test_details(existing.id)
+            old_info = database.get_info_values(existing.id)
             database.delete_test(existing.id)
         test_id = database.save_full_evaluation(
             name, plan["filter_params"], plan["eval_params"],
@@ -125,9 +125,9 @@ def run_one(plan, name, overwrite):
             step_df=result["step_df"],
             plus_minus_result=result["plus_minus_result"],
         )
-        details = old_details
-        if details is None:
-            details = database.get_test_details(test_id)
+        if old_info is not None:
+            database.save_info_values(test_id, old_info)
+        details = database.get_test_details(test_id)
         # The stroke comes from the file, so the file's value wins.
         if result["stroke_mm"] is not None:
             details["stroke_mm"] = result["stroke_mm"]
