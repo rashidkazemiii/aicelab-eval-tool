@@ -1,4 +1,4 @@
-"""Builds the Plotly figures for the CoF Analysis and History tabs' charts.
+"""Builds the Plotly figures for the Analysis and Database tabs' charts.
 
 Kept separate from app.py so the figure-building and the iframe/JS glue that
 gives the CoF chart persistent x-zoom can be read and edited without wading
@@ -14,7 +14,7 @@ import plotly.graph_objects as go
 import table_helpers
 
 # Shared marker styling for the 5 evaluation-marker traces that both the
-# History tab chart and the CoF Analysis chart draw identically.
+# Database tab chart and the CoF Analysis chart draw identically.
 COF_MARKER_STYLES = {
     "zero_crossing": dict(symbol="line-ns", size=10, color="#888",
                            line=dict(color="#888", width=1.5)),
@@ -42,10 +42,10 @@ def add_cof_marker_trace(fig, x, y, kind, name):
     ))
 
 
-def build_history_figure(raw_df, eval_df):
-    """Build the go.Figure for a saved test's History-tab chart, or None if
+def build_saved_test_figure(raw_df, eval_df):
+    """Build the go.Figure for a saved test's Database-tab chart, or None if
     `raw_df` has no raw signal saved. `raw_df`/`eval_df` are the same two
-    tables the History tab's Results/Evaluation Results tables show - kept
+    tables the Database tab's results tables show - kept
     separate for the same reason as the live CoF Analysis chart: raw_df has
     one row per raw sample, eval_df one row per cycle/step/zero-crossing.
     """
@@ -113,7 +113,7 @@ def _nice_tick_step(largest):
 
 def build_friction_velocity_figures(step_results, stroke_mm, title, all_steps=None):
     """The two per-step plots shown at the bottom of a saved test in
-    History: static friction and sliding (dynamic) friction against the
+    the Database tab: static friction and sliding (dynamic) friction against the
     mean sliding velocity, one point per evaluated step, with +/- one
     standard deviation as error bars.
 
@@ -433,7 +433,7 @@ def figure_to_zoom_iframe_html(fig, zoom_key="default"):
     reactive update, so the zoom range has to live outside of it to survive),
     keyed by `zoom_key` since window.parent is shared by every iframe on the
     page - without a distinct key per chart, switching to a different test in
-    History (or between History and the live Analysis chart) would apply
+    the Database tab (or between it and the live Analysis chart) would apply
     whatever x-range was last zoomed to on an unrelated, differently-scaled
     dataset, leaving the new chart looking blank until Autoscale was clicked.
     Callers must pass a key that changes whenever the underlying dataset does

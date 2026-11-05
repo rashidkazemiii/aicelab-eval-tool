@@ -94,7 +94,7 @@ def build_eval_table(cof_eval, stats_result, stats_error):
 
 
 # The only evaluation columns shown in the app's tables (Analysis and
-# History). These are the per-step summary columns; everything else in the
+# Database). These are the per-step summary columns; everything else in the
 # full table (per-cycle CoF values, minima, dynamic start/end points) is
 # still exported to Excel, just not displayed in the page.
 SHOWN_COLUMNS = [

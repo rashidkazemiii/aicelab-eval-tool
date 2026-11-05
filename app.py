@@ -115,7 +115,15 @@ def _(mo):
         "padding": "10px 16px",
         "box-shadow": "0 1px 4px rgba(0,0,0,0.08)",
     }
-    return PANEL_STYLE, TOOLBAR_STYLE
+    # A box inside a panel: a thin line instead of a shadow.
+    SUB_PANEL_STYLE = {
+        "border": "1px solid #eee",
+        "border-radius": "8px",
+        "padding": "16px",
+        "height": "100%",
+        "box-sizing": "border-box",
+    }
+    return PANEL_STYLE, SUB_PANEL_STYLE, TOOLBAR_STYLE
 
 
 # ── App state ──────────────────────────────────────────────────────────────
@@ -165,7 +173,7 @@ def _(mo):
     # Which evaluation the page shows:
     #   "zeros" - none, only the zero crossings (after Find zeros);
     #   "pulse" - the chart's Evaluate with pulse result;
-    #   "saved" - the evaluation stored with a test loaded from History.
+    #   "saved" - the evaluation stored with a test loaded from the Database tab.
     # Whichever action happened last wins.
     get_eval_mode, set_eval_mode = mo.state("zeros")
     return get_eval_mode, set_eval_mode
@@ -195,7 +203,7 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    # A saved test brought back from the History tab ("Load into Analysis"):
+    # A saved test brought back from the Database tab ("Load into Analysis"):
     # None, or the dict database.load_test_for_analysis returns. While set,
     # the Analysis pipeline shows that test instead of an uploaded file -
     # the signal, filter, evaluation and steps come from the database, and
@@ -224,7 +232,7 @@ def _(mo):
     # instead of every action having its own separate, independently-timed
     # message box scattered around the page. Kept as two separate states
     # (not one shared one) so an action on the Analysis tab never overwrites
-    # what's showing on the History tab, or vice versa.
+    # what's showing on the Database tab, or vice versa.
     get_results_status_msg, set_results_status_msg = mo.state(
         mo.callout(mo.md("Set the row numbers, then click **Calculate**."), kind="info")
     )
@@ -233,17 +241,11 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    get_history_status_msg, set_history_status_msg = mo.state(mo.Html(''))
-    return get_history_status_msg, set_history_status_msg
-
-
-@app.cell
-def _(mo):
     # A counter that goes up by one every time the Analysis tab saves a
-    # test. The History list reads it, so it re-reads the database after
-    # every save and the new test shows up without clicking Refresh.
-    get_history_version, set_history_version = mo.state(0)
-    return get_history_version, set_history_version
+    # test. The Database tab's table reads it, so it re-reads the database
+    # after every save and the new test shows up right away.
+    get_tests_version, set_tests_version = mo.state(0)
+    return get_tests_version, set_tests_version
 
 
 # ── Widgets / forms ────────────────────────────────────────────────────────
@@ -308,34 +310,34 @@ def _(mo):
 
 @app.cell
 def _(info_fields, mo):
-    def build_info_form(columns, values):
-        """One text box per information column, filled with `values`
-        ({column id: value}). `.value` gives {column key: typed text}."""
-        _field = ('<div style="display:flex;align-items:center;gap:6px">'
-                  '<span style="font-size:0.82rem;color:#444;white-space:nowrap">{label}</span>'
-                  '<div style="width:{width}px">{{{name}}}</div>'
-                  '<span style="font-size:0.82rem;color:#888;white-space:nowrap">{unit}</span></div>')
-        _html = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px 20px">'
-        _boxes = {}
-        for _column in columns:
-            # Fixed-width wrapper divs: marimo's text box is sized to its
-            # host element, so this is the only way to set each box's width.
-            _width = 160
-            if _column["kind"] == "number":
-                _width = 70
-            if _column["field"] == "note":
-                _width = 320
-            _html += _field.format(
-                label=info_fields.html_label(_column["name"]),
-                width=_width, name=_column["key"],
-                unit=info_fields.html_label(_column["unit"]),
-            )
-            _boxes[_column["key"]] = mo.ui.text(
-                value=info_fields.value_as_text(values.get(_column["id"]))
-            )
+    def form_rows_html(rows):
+        """A form with one box per row, all boxes the same width and exactly
+        under each other. `rows` is a list of (label, box, unit)."""
+        _html = ('<div style="display:grid;grid-template-columns:max-content 280px max-content;'
+                 'align-items:center;gap:10px 12px">')
+        for _label, _box, _unit in rows:
+            _html += (f'<span style="font-size:0.82rem;color:#444;white-space:nowrap">{_label}</span>'
+                      f'<div>{_box}</div>'
+                      f'<span style="font-size:0.82rem;color:#888;white-space:nowrap">{_unit}</span>')
         _html += '</div>'
-        return mo.Html(_html).batch(**_boxes)
-    return (build_info_form,)
+        return _html
+
+    def build_info_form(columns, values):
+        """One text box per information column, one per row, filled with
+        `values` ({column id: value}). `.value` gives {column key: typed
+        text}."""
+        _boxes = {}
+        _rows = []
+        for _column in columns:
+            _label = info_fields.html_label(_column["name"])
+            _unit = info_fields.html_label(_column["unit"])
+            _rows.append((_label, "{" + _column["key"] + "}", _unit))
+            _boxes[_column["key"]] = mo.ui.text(
+                value=info_fields.value_as_text(values.get(_column["id"])),
+                full_width=True,
+            )
+        return mo.Html(form_rows_html(_rows)).batch(**_boxes)
+    return build_info_form, form_rows_html
 
 
 @app.cell
@@ -413,7 +415,7 @@ def _(
     if calculate_btn.value:
         # Every Calculate press wipes out whatever was previously computed
         # first, then parses fresh from the raw file - never patches or
-        # reuses the old result. A test loaded from History is dropped too.
+        # reuses the old result. A test loaded from the Database tab is dropped too.
         set_parsed_data(None)
         set_loaded_test(None)
         settings_store.save_raw_data_settings(_p)
@@ -453,7 +455,7 @@ def _(calculate_btn, get_loaded_test, get_parsed_data):
     else:
         _loaded = get_loaded_test()
     if _loaded is not None:
-        # A saved test from History stands in for a parsed file. Its id is
+        # A saved test from the Database tab stands in for a parsed file. Its id is
         # (file name, "test-<id>") so Filter / Evaluate clicks are tracked
         # per loaded test just like per uploaded file.
         df_raw = None
@@ -481,7 +483,7 @@ def _(file_upload, get_seen_upload_id, set_loaded_test, set_parsed_data, set_see
     # Wipes any previously-calculated result the instant a different file
     # lands in the upload box - before Calculate is even pressed - so the
     # old file's data/chart never lingers behind a new upload. A test that
-    # was loaded from History is dropped here as well, for the same reason:
+    # was loaded from the Database tab is dropped here as well, for the same reason:
     # once a different file is in the box, its chart and evaluated cycles
     # are not what the page should be showing. Guarded by
     # get_seen_upload_id so this only fires once per actual file change, not
@@ -557,7 +559,7 @@ def _(
     _filter_clicked_here = get_filter_file_id() == parsed_file_id
     _loaded = get_loaded_test()
     if _loaded is not None and not _filter_clicked_here:
-        # Test from History, Filter not clicked since: show it as saved.
+        # Test from the Database tab, Filter not clicked since: show it as saved.
         active_filter_params = _loaded["filter_params"]
         df_proc = _loaded["df_proc"]
     else:
@@ -599,7 +601,7 @@ def _(
     _loaded = get_loaded_test()
     zero_crossings = None
     if _loaded is not None and not _zeros_clicked_here:
-        # Test from History, Find zeros not clicked since: use the
+        # Test from the Database tab, Find zeros not clicked since: use the
         # crossings stored with its evaluation.
         zero_crossings = _loaded["cof_eval"]["minima"]
     elif _zeros_clicked_here:
@@ -622,7 +624,7 @@ def _(charts, mo):
 
 @app.cell
 def _(file_upload, get_loaded_test):
-    # The file the Analysis tab is working on: the test loaded from History
+    # The file the Analysis tab is working on: the test loaded from the Database tab
     # if there is one, else the uploaded file. None when neither.
     _loaded = get_loaded_test()
     if _loaded is not None:
@@ -663,7 +665,7 @@ def _(
     # on the crossings. So any step not done yet for this file is started
     # here, the way its own button does, and a step already done is not
     # repeated. The next cell evaluates once these have finished. A test
-    # loaded from History brings its own results of these steps along.
+    # loaded from the Database tab brings its own results of these steps along.
     import json as _json
     _request = None
     if pulse_eval_field.value:
@@ -799,7 +801,7 @@ def _(cof_eval_pulse, get_eval_mode, get_loaded_test, get_pulse_eval_request):
     # The evaluation everything downstream (chart markers, tables, Excel,
     # Save) works with, and the Static/Dyn % values it was made with: the
     # pulse evaluation after Evaluate with pulse, the stored one for a test
-    # loaded from History, otherwise none.
+    # loaded from the Database tab, otherwise none.
     cof_eval = None
     active_eval_params = None
     _mode = get_eval_mode()
@@ -857,7 +859,7 @@ def _(
     # comes from its header.
     #
     # The boxes and the Save button are created AND laid out here, for the
-    # same reason as on the History tab (see details_form): other cells only
+    # same reason as on the Database tab (see db_fill_form): other cells only
     # get save_info_panel, which is plain layout, so typing rebuilds nothing.
     get_columns_version()
     _columns = db_mod.list_info_columns()
@@ -878,7 +880,8 @@ def _(
     save_info_panel = mo.vstack([
         mo.Html('<p class="section-label" style="margin:12px 0 0 0">SAVE TO DATABASE</p>'),
         mo.md("After evaluating, fill in the information about this test and save it."),
-        mo.hstack([save_info_form, save_btn], justify="start", align="center", gap=2, wrap=True),
+        save_info_form,
+        mo.hstack([save_btn], justify="start"),
     ], gap=1)
     return save_btn, save_info_form, save_info_panel
 
@@ -909,7 +912,7 @@ def _(
     save_anyway_btn,
     save_btn,
     save_info_form,
-    set_history_version,
+    set_tests_version,
     set_save_msg,
     stats_result,
     step_df,
@@ -962,53 +965,18 @@ def _(
                     )
                     db_mod.save_info_values(_test_id, _typed["values"])
                     set_save_msg(mo.callout(mo.md(f"Saved as test **#{_test_id}**."), kind="success"))
-                    # Makes the History list re-read the database.
-                    set_history_version(_test_id)
+                    # Makes the Database tab's table re-read the database.
+                    set_tests_version(_test_id)
                 except Exception as _e:
                     set_save_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
     return
 
 
-# ── History panel ──────────────────────────────────────────────────────────
-@app.cell
-def _(mo):
-    refresh_btn = mo.ui.run_button(label="&#128260; Refresh")
-    delete_btn = mo.ui.run_button(label="&#128465; Delete selected", kind="danger")
-    return delete_btn, refresh_btn
-
-
-@app.cell
-def _(db_mod, get_batch_log, get_columns_version, get_database_version, get_history_version, mo, refresh_btn):
-    # Reference this so marimo tracks it as a real dependency (reactivity is
-    # derived from names actually used in the body, not the signature) - this
-    # is what makes Refresh actually re-query the database. Delete is
-    # deliberately NOT a dependency here: re-running this cell reconstructs
-    # mo.ui.table, which resets its selection - if Delete triggered that
-    # rebuild too, it would always find "no row selected" on its own click,
-    # since this cell (which produces history_table) runs before the delete
-    # cell (which reads history_table.value) in the same pass.
-    refresh_btn.value
-    # A finished batch run also re-reads the list, so the tests it saved
-    # show up without clicking Refresh.
-    get_batch_log()
-    # So does a test saved on the Analysis tab.
-    get_history_version()
-    # And so do changes made on the Database tab.
-    get_columns_version()
-    get_database_version()
-
-    history_df = db_mod.list_tests_df().drop(columns=db_mod.deleted_info_fields())
-    history_table = mo.ui.table(
-        history_df, selection="multi",
-        pagination=True, show_column_summaries=False, show_data_types=False,
-    )
-    return (history_table,)
-
-
+# ── Saved tests ────────────────────────────────────────────────────────────
 @app.cell
 def _():
     def selected_test_ids(selection):
-        """The id of every currently-selected History row, as a plain list.
+        """The id of every ticked row of a table of tests, as a plain list.
 
         `selection` is mo.ui.table's .value - a DataFrame of the selected
         rows, or None before anything is picked.
@@ -1032,40 +1000,23 @@ def _(mo):
 
 
 @app.cell
-def _(history_table, mo, selected_test_ids):
-    # Off unless exactly one test is picked: there's nothing to draw for
-    # none, and no single chart to draw for several.
-    _n_selected = len(selected_test_ids(history_table.value))
-    show_chart_btn = mo.ui.run_button(
-        label="&#128200; Show chart",
-        disabled=_n_selected != 1,
-    )
-    load_to_analysis_btn = mo.ui.run_button(
-        label="&#128202; Load into Analysis",
-        disabled=_n_selected != 1,
-    )
-    return load_to_analysis_btn, show_chart_btn
-
-
-@app.cell
 def _(
     ANALYSIS_TAB,
     db_mod,
+    db_selected_ids,
     get_box_values,
-    history_table,
     load_to_analysis_btn,
     mo,
-    selected_test_ids,
     set_active_tab,
     set_box_values,
     set_eval_mode,
     set_loaded_test,
     set_results_status_msg,
 ):
-    # Bring the selected saved test back into the Analysis tab, so it can be
+    # Bring the ticked saved test back into the Analysis tab, so it can be
     # re-evaluated and re-saved.
     if load_to_analysis_btn.value:
-        _ids = selected_test_ids(history_table.value)
+        _ids = db_selected_ids
         if len(_ids) == 1:
             _loaded = db_mod.load_test_for_analysis(_ids[0])
             if _loaded is None:
@@ -1094,94 +1045,18 @@ def _(
                 set_eval_mode("saved")
                 set_active_tab(ANALYSIS_TAB)
                 set_results_status_msg(mo.callout(mo.md(
-                    f"Loaded test **#{_ids[0]}** (**{_loaded['file_name']}**) from History."
+                    f"Loaded test **#{_ids[0]}** (**{_loaded['file_name']}**) from the Database tab."
                     " Uploading a file and clicking Calculate goes back to the uploaded file."
                 ), kind="info"))
     return
 
 
 @app.cell
-def _(history_table, selected_test_ids, set_shown_test_id, show_chart_btn):
+def _(db_selected_ids, set_shown_test_id, show_chart_btn):
     if show_chart_btn.value:
-        _ids = selected_test_ids(history_table.value)
-        if len(_ids) == 1:
-            set_shown_test_id(_ids[0])
+        if len(db_selected_ids) == 1:
+            set_shown_test_id(db_selected_ids[0])
     return
-
-
-@app.cell
-def _(delete_btn, db_mod, history_table, mo, selected_test_ids, set_history_status_msg):
-    if delete_btn.value:
-        _ids = selected_test_ids(history_table.value)
-        if len(_ids) > 0:
-            _deleted = []
-            _missing = []
-            for _id in _ids:
-                if db_mod.delete_test(_id):
-                    _deleted.append(str(_id))
-                else:
-                    _missing.append(str(_id))
-            if len(_missing) == 0:
-                set_history_status_msg(mo.callout(
-                    mo.md(f"Deleted test(s) **#{', #'.join(_deleted)}**. Click Refresh to update the list."),
-                    kind="success",
-                ))
-            elif len(_deleted) == 0:
-                set_history_status_msg(mo.callout(
-                    mo.md(f"Test(s) #{', #'.join(_missing)} not found."), kind="warn",
-                ))
-            else:
-                set_history_status_msg(mo.callout(
-                    mo.md(
-                        f"Deleted **#{', #'.join(_deleted)}**, but #{', #'.join(_missing)} "
-                        "was not found. Click Refresh to update the list."
-                    ),
-                    kind="warn",
-                ))
-        else:
-            set_history_status_msg(mo.callout(mo.md("Select a row first."), kind="warn"))
-    return
-
-
-@app.cell
-def _(data_loader, db_mod, history_table, mo, results_table, selected_test_ids, table_helpers):
-    _ids = selected_test_ids(history_table.value)
-    if len(_ids) == 1:
-        _test_id = _ids[0]
-        _n_raw = db_mod.count_raw_samples(_test_id)
-        _n_eval = db_mod.count_cycles(_test_id)
-        if _n_raw == 0 and _n_eval == 0:
-            cycles_panel = mo.callout(mo.md("No saved data for this test."), kind="info")
-        else:
-            # A download (see open_excel_btn), only built when clicked.
-            def _build_test_csv():
-                _raw_table = db_mod.get_full_raw_table(_test_id)
-                _eval_table = db_mod.get_full_eval_table(_test_id)
-                _combined = table_helpers.combine_padded(_raw_table, _eval_table)
-                # The CoF+ / CoF- table goes in the columns to the right.
-                _pm_table = results_table.build_plus_minus_export(db_mod.get_plus_minus_df(_test_id))
-                if _pm_table is not None:
-                    _combined = table_helpers.combine_padded(_combined, _pm_table)
-                return data_loader.dataframe_to_csv_bytes(_combined)
-
-            _history_excel_download = mo.download(
-                data=_build_test_csv,
-                filename=f"test_{_test_id}_results.csv",
-                mimetype="text/csv",
-                label="&#128194; Open in Excel",
-            )
-            cycles_panel = mo.vstack([
-                mo.Html(f'<p style="font-size:0.85rem;color:#444;margin:0 0 4px 0">{_n_raw:,} raw samples, {_n_eval:,} evaluated cycles.</p>'),
-                _history_excel_download,
-            ], gap=1)
-    elif len(_ids) > 1:
-        cycles_panel = mo.callout(
-            mo.md(f"**{len(_ids)} tests selected.** Select exactly one to see its details."),
-            kind="info",
-        )
-    else:
-        cycles_panel = mo.callout(mo.md("Select a row above to see the full CoF Analysis table for that test."), kind="info")
-    return (cycles_panel,)
 
 
 # ── Charts ─────────────────────────────────────────────────────────────────
@@ -1199,7 +1074,7 @@ def _(charts, db_mod, get_shown_test_id, mo):
     else:
         _raw_table = db_mod.get_full_raw_table(_shown)
         _eval_table = db_mod.get_full_eval_table(_shown)
-        _fig = charts.build_history_figure(_raw_table, _eval_table)
+        _fig = charts.build_saved_test_figure(_raw_table, _eval_table)
         if _fig is None:
             shown_chart = mo.callout(mo.md("No raw signal saved for this test."), kind="info")
         else:
@@ -1208,7 +1083,7 @@ def _(charts, db_mod, get_shown_test_id, mo):
             # from the full per-cycle marker tables, and mo.ui.plotly sends
             # the whole thing through marimo's own reactive output channel,
             # which enforces a size limit the raw HTML iframe below doesn't.
-            shown_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"history-{_shown}"))
+            shown_chart = mo.Html(charts.figure_to_zoom_iframe_html(_fig, zoom_key=f"saved-{_shown}"))
     return (shown_chart,)
 
 
@@ -1243,8 +1118,8 @@ def _(charts, db_mod, get_shown_test_id, mo):
             if _stroke is None:
                 _parts.append(mo.md(
                     "_The stroke of this test is not known, so the x axis is the speed in U/min. "
-                    "Type the stroke (Hub Exzenter, e.g. 24) into **Stroke [mm]** above and click "
-                    "**Save details**, then **Show chart** again._"
+                    "Type the stroke (Hub Exzenter, e.g. 24) into **Stroke** above and click "
+                    "**Save**, then tick the test and click **Show chart** again._"
                 ))
             _parts.append(mo.ui.plotly(_figures[0]))
             _parts.append(mo.ui.plotly(_figures[1]))
@@ -1291,93 +1166,6 @@ def _(db_mod, get_shown_test_id, mo, pipeline, results_table):
                 _parts.append(mo.callout(mo.md(f"**CoF+ / CoF- could not be shown:** {_e}"), kind="danger"))
             shown_eval_table = mo.vstack(_parts, gap=1)
     return (shown_eval_table,)
-
-
-@app.cell
-def _(build_info_form, db_mod, get_columns_version, get_database_version, get_shown_test_id, mo):
-    # The typed-in test conditions of the test shown in the chart. Rebuilt
-    # (and filled from the database) when a different test is shown, or when
-    # the Database tab changed something.
-    # The same values can also be typed into the AI tab's table.
-    #
-    # The boxes and the Save button are created AND laid out here, in one
-    # cell: marimo re-runs every cell that uses a box when its value
-    # changes, but never the cell that created it. If another cell placed
-    # the form on the page, each keystroke would re-run that cell, rebuild
-    # the History tab and throw away what was just typed. Other cells only
-    # get details_panel, which is plain layout, not a box.
-    get_columns_version()
-    get_database_version()
-    _shown = get_shown_test_id()
-    _values = {}
-    if _shown is not None:
-        _values = db_mod.get_info_values(_shown)
-    details_form = build_info_form(db_mod.list_info_columns(), _values)
-    details_save_btn = mo.ui.run_button(label="&#128190; Save details")
-    details_panel = mo.vstack([
-        mo.Html('<p class="section-label" style="margin:0">TEST CONDITIONS</p>'),
-        mo.hstack([details_form, details_save_btn], justify="start", align="center", gap=2, wrap=True),
-    ], gap=1)
-    return details_form, details_panel, details_save_btn
-
-
-@app.cell
-def _(db_mod, details_form, details_save_btn, get_shown_test_id, info_fields, mo, set_history_status_msg):
-    # "Save details": store the typed conditions on the shown test. Number
-    # columns must hold numbers (a decimal comma is fine); an empty box
-    # means "not known".
-    if details_save_btn.value:
-        _shown = get_shown_test_id()
-        if _shown is None:
-            set_history_status_msg(mo.callout(mo.md("Show a test's chart first, then fill in its conditions."), kind="warn"))
-        else:
-            _typed = info_fields.read_typed_values(db_mod.list_info_columns(), details_form.value)
-            if len(_typed["not_numbers"]) > 0:
-                set_history_status_msg(mo.callout(mo.md(
-                    f"**Not saved:** {', '.join(_typed['not_numbers'])} must be a number."
-                ), kind="warn"))
-            else:
-                db_mod.save_info_values(_shown, _typed["values"])
-                set_history_status_msg(mo.callout(mo.md(
-                    f"Saved the conditions of test **#{_shown}**. Click **Refresh** to see them in the list."
-                ), kind="success"))
-    return
-
-
-@app.cell
-def _(details_panel, get_shown_test_id, history_table, mo, selected_test_ids, shown_chart, shown_eval_table, shown_velocity_charts):
-    # Cheap: only picks between the already-built chart/table and a
-    # placeholder, so changing the table's selection costs nothing. They show
-    # while their own test is the one selected, and hide (without being
-    # thrown away) as soon as the selection is anything else - so
-    # re-selecting it brings them straight back with no database read.
-    _sel_ids = selected_test_ids(history_table.value)
-    _shown = get_shown_test_id()
-    _is_shown_selected = _sel_ids == [_shown]
-    if shown_chart is not None and _is_shown_selected:
-        history_chart = shown_chart
-    else:
-        history_chart = mo.Html(
-            '<div style="height:360px;display:flex;align-items:center;justify-content:center;'
-            'background:#fafafa;border-radius:6px;color:#bbb;font-size:13px">'
-            "Select one saved test above and click Show chart</div>"
-        )
-    if shown_eval_table is not None and _is_shown_selected:
-        history_eval_panel = mo.vstack([
-            mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
-            shown_eval_table,
-        ], gap=1)
-    else:
-        history_eval_panel = mo.Html("")
-    if _is_shown_selected and _shown is not None:
-        history_details_panel = details_panel
-    else:
-        history_details_panel = mo.md("_Select one test and click **Show chart** to type in its temperature, humidity and material._")
-    if shown_velocity_charts is not None and _is_shown_selected:
-        history_velocity_panel = shown_velocity_charts
-    else:
-        history_velocity_panel = mo.Html("")
-    return history_chart, history_details_panel, history_eval_panel, history_velocity_panel
 
 
 @app.cell
@@ -1450,7 +1238,7 @@ def _(cof_eval, df_display, mo, open_results_excel_btn):
 
 @app.cell
 def _(cof_eval, mo, plus_minus_error, plus_minus_result, results_table, stats_error, stats_result):
-    # Same per-step summary table the History tab shows for a saved test,
+    # Same per-step summary table the Database tab shows for a saved test,
     # but for the file currently being worked on. Only
     # results_table.SHOWN_COLUMNS are displayed; the raw Time/CoF/Filtered
     # CoF columns and the per-cycle/minima columns stay Excel-only (Open
@@ -1630,7 +1418,7 @@ def _(mo):
     # reading it here would rebuild these boxes on every Offset click.
     #
     # get_box_values is the one thing that may rebuild this cell: it changes
-    # only when a saved test is loaded from History, and then the boxes are
+    # only when a saved test is loaded from the Database tab, and then the boxes are
     # supposed to show that test's parameters.
     filter_btn = mo.ui.run_button(label="Filter")
     find_zeros_btn = mo.ui.run_button(label="Find zeros")
@@ -1767,10 +1555,30 @@ def _(get_box_values, mo):
 @app.cell
 def _(mo):
     # The Database tab's one message box, and the delete waiting for a
-    # "Yes, delete": {"kind": "test" or "column", "id": ..., "name": ...}.
+    # "Yes, delete": {"kind": "test", "ids": [...], "name": ...} or
+    # {"kind": "column", "id": ..., "name": ...}.
     get_db_msg, set_db_msg = mo.state(None)
     get_db_pending, set_db_pending = mo.state(None)
     return get_db_msg, get_db_pending, set_db_msg, set_db_pending
+
+
+@app.cell
+def _(mo, set_db_msg, set_db_pending):
+    # The jobs of this tab, shown one at a time. Never rebuilt, so the choice
+    # stays while tests are changed.
+    def _view_changed(_value):
+        # A message or question belongs to the view it came from.
+        set_db_msg(None)
+        set_db_pending(None)
+
+    db_view = mo.ui.radio(
+        options={"Tests": "tests", "Manage columns": "columns"},
+        value="Tests",
+        inline=True,
+        label="What do you want to do?",
+        on_change=_view_changed,
+    )
+    return (db_view,)
 
 
 @app.cell
@@ -1781,19 +1589,27 @@ def _(mo):
 
 
 @app.cell
-def _(get_columns_version, mo):
+def _(SUB_PANEL_STYLE, form_rows_html, get_columns_version, mo):
     # Rebuilt after a column was added, renamed or deleted, which also
     # empties the boxes for the next one. The boxes are created AND laid out
-    # here, so typing in them never re-runs anything else (see details_form).
+    # here, so typing in them never re-runs anything else (see db_fill_form).
     get_columns_version()
-    db_new_column_name = mo.ui.text(placeholder="New column name")
-    db_new_column_unit = mo.ui.text(placeholder="Unit, e.g. mm")
-    db_new_column_kind = mo.ui.dropdown(options={"Text": "text", "Number": "number"}, value="Text")
-    db_add_column_btn = mo.ui.run_button(label="Add column")
-    database_add_column_panel = mo.hstack(
-        [db_new_column_name, db_new_column_unit, db_new_column_kind, db_add_column_btn],
-        justify="start", align="center", gap=1, wrap=True,
+    db_new_column_name = mo.ui.text(full_width=True)
+    db_new_column_unit = mo.ui.text(placeholder="e.g. mm, leave empty if it has none", full_width=True)
+    db_new_column_kind = mo.ui.dropdown(
+        options={"Text": "text", "Number": "number"}, value="Text", full_width=True,
     )
+    db_add_column_btn = mo.ui.run_button(label="Add column")
+    _rows = [
+        ("Name", db_new_column_name, ""),
+        ("Unit", db_new_column_unit, ""),
+        ("Type", db_new_column_kind, ""),
+    ]
+    database_add_column_panel = mo.vstack([
+        mo.md("**Add a column**"),
+        mo.Html(form_rows_html(_rows)),
+        mo.hstack([db_add_column_btn], justify="start"),
+    ], gap=1).style(SUB_PANEL_STYLE)
     return (
         database_add_column_panel,
         db_add_column_btn,
@@ -1810,28 +1626,43 @@ def _(db_mod, get_columns_version, mo):
     for _column in db_mod.list_info_columns():
         if not _column["protected"]:
             _column_options[_column["label"]] = _column["id"]
-    db_column_select = mo.ui.dropdown(options=_column_options, label="Column")
+    db_column_select = mo.ui.dropdown(options=_column_options, full_width=True)
     return (db_column_select,)
 
 
 @app.cell
-def _(db_column_select, db_mod, mo):
+def _(SUB_PANEL_STYLE, db_column_select, db_mod, form_rows_html, mo):
     # Rebuilt for each chosen column, so the boxes start with its name and
-    # unit.
+    # unit. They only show once a column is chosen.
     _name = ""
     _unit = ""
     for _column in db_mod.list_info_columns():
         if _column["id"] == db_column_select.value:
             _name = _column["name"]
             _unit = _column["unit"]
-    db_rename_name = mo.ui.text(value=_name, placeholder="Name")
-    db_rename_unit = mo.ui.text(value=_unit, placeholder="Unit")
+    db_rename_name = mo.ui.text(value=_name, full_width=True)
+    db_rename_unit = mo.ui.text(value=_unit, full_width=True)
     db_rename_btn = mo.ui.run_button(label="Rename")
-    db_delete_column_btn = mo.ui.run_button(label="&#128465; Delete this column", kind="danger")
-    database_change_column_panel = mo.hstack(
-        [db_column_select, db_rename_name, db_rename_unit, db_rename_btn, db_delete_column_btn],
-        justify="start", align="center", gap=1, wrap=True,
-    )
+    db_delete_column_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
+    _title = mo.md("**Rename or delete a column**")
+    if db_column_select.value is None:
+        database_change_column_panel = mo.vstack([
+            _title,
+            mo.Html(form_rows_html([("Column", db_column_select, "")])),
+            mo.md("Choose a column to rename or delete it."),
+        ], gap=1).style(SUB_PANEL_STYLE)
+    else:
+        _rows = [
+            ("Column", db_column_select, ""),
+            ("Name", db_rename_name, ""),
+            ("Unit", db_rename_unit, ""),
+        ]
+        database_change_column_panel = mo.vstack([
+            _title,
+            mo.Html(form_rows_html(_rows)),
+            mo.hstack([db_rename_btn, db_delete_column_btn], justify="start", gap=1),
+            mo.md("A new unit does not convert the numbers already typed in."),
+        ], gap=1).style(SUB_PANEL_STYLE)
     return (
         database_change_column_panel,
         db_delete_column_btn,
@@ -1847,78 +1678,196 @@ def _(
     get_batch_log,
     get_columns_version,
     get_database_version,
-    get_history_version,
+    get_tests_version,
     info_fields,
     mo,
 ):
     # The stored tests, read again whenever this tab is opened or something
-    # changed them. Created AND laid out in this cell (see ai_data_editor),
-    # so typing in the table never rebuilds it and loses the typing.
+    # changed them. Ticking rows changes nothing here, so it doesn't rebuild
+    # the table and lose the ticks.
     get_active_tab()
     get_batch_log()
-    get_history_version()
+    get_tests_version()
     get_columns_version()
     get_database_version()
 
-    _table, _editable = info_fields.build_database_table()
-    db_editor = mo.ui.data_editor(_table, editable_columns=_editable, pagination=False)
-    db_save_btn = mo.ui.run_button(label="&#128190; Save changes")
-
-    _test_options = {}
-    for _i in range(len(_table)):
-        _test_options[f"#{_table.iloc[_i]['id']}  {_table.iloc[_i]['File name']}"] = int(_table.iloc[_i]["id"])
-    db_test_select = mo.ui.dropdown(options=_test_options, label="Test")
-    db_delete_test_btn = mo.ui.run_button(label="&#128465; Delete this test", kind="danger")
-    database_one_test_panel = mo.hstack([db_test_select, db_delete_test_btn], justify="start", align="center", gap=1)
+    _table = info_fields.build_database_table()
+    db_tests_table = mo.ui.table(
+        _table, selection="multi", page_size=12, show_column_summaries=False, show_data_types=False,
+    )
 
     _n_empty = 0
     if len(_table) > 0:
         _n_empty = int(_table["Empty fields"].sum())
-    database_table_panel = mo.vstack([
-        mo.hstack([mo.Html('<p class="panel-title">Stored tests</p>'), db_save_btn],
-                  justify="start", align="center", gap=2),
-        mo.md(
-            f"One row per test. Click a cell to fill it in or change it, then click "
-            f"**Save changes**. **{_n_empty}** fields are empty. The columns from **Saved** "
-            "onwards show how the test was evaluated and can't be edited here. The table's "
-            "own **+ New** and **Delete row** do nothing here: tests come from Analysis or "
-            "Batch, and **Delete this test** above removes one."
-        ),
-        db_editor,
+    database_tests_panel = mo.vstack([
+        mo.md(f"**{len(_table)}** tests, **{_n_empty}** empty fields."),
+        db_tests_table,
     ], gap=1)
+    return database_tests_panel, db_tests_table
 
-    # Read only: the Drehzahl and results come from the test itself.
-    _steps = info_fields.build_step_table()
-    database_steps_panel = mo.vstack([
-        mo.Html('<p class="panel-title">Stored steps</p>'),
-        mo.md(
-            "One row per step of every test, the way the AI tab learns from them: the "
-            "Drehzahl of the step (from the file) with the information about its test. "
-            "Fill the information in above; the search box filters by file name."
-        ),
-        mo.ui.table(_steps, selection=None, page_size=15, show_column_summaries=False, show_data_types=False),
-    ], gap=1)
+
+@app.cell
+def _(db_tests_table, selected_test_ids):
+    db_selected_ids = selected_test_ids(db_tests_table.value)
+    db_selected_name = f"{len(db_selected_ids)} tests"
+    if len(db_selected_ids) == 1:
+        db_selected_name = f"#{db_selected_ids[0]}  {db_tests_table.value.iloc[0]['File name']}"
+    return db_selected_ids, db_selected_name
+
+
+@app.cell
+def _(data_loader, db_mod, db_selected_ids, mo, results_table, table_helpers):
+    # What is saved of the one ticked test, and its "Open in Excel" button.
+    db_excel_download = None
+    db_saved_data_text = ""
+    if len(db_selected_ids) == 1:
+        _test_id = db_selected_ids[0]
+        _n_raw = db_mod.count_raw_samples(_test_id)
+        _n_eval = db_mod.count_cycles(_test_id)
+        if _n_raw == 0 and _n_eval == 0:
+            db_saved_data_text = "No saved data for this test."
+        else:
+            db_saved_data_text = f"{_n_raw:,} raw samples, {_n_eval:,} evaluated cycles."
+
+            # A download (see open_excel_btn), only built when clicked.
+            def _build_test_csv():
+                _raw_table = db_mod.get_full_raw_table(_test_id)
+                _eval_table = db_mod.get_full_eval_table(_test_id)
+                _combined = table_helpers.combine_padded(_raw_table, _eval_table)
+                # The CoF+ / CoF- table goes in the columns to the right.
+                _pm_table = results_table.build_plus_minus_export(db_mod.get_plus_minus_df(_test_id))
+                if _pm_table is not None:
+                    _combined = table_helpers.combine_padded(_combined, _pm_table)
+                return data_loader.dataframe_to_csv_bytes(_combined)
+
+            db_excel_download = mo.download(
+                data=_build_test_csv,
+                filename=f"test_{_test_id}_results.csv",
+                mimetype="text/csv",
+                label="&#128194; Open in Excel",
+            )
+    return db_excel_download, db_saved_data_text
+
+
+@app.cell
+def _(
+    build_info_form,
+    db_excel_download,
+    db_mod,
+    db_saved_data_text,
+    db_selected_ids,
+    db_selected_name,
+    mo,
+    summary_download,
+):
+    # The form for the ticked tests. Created AND laid out here: marimo re-runs
+    # every cell that uses a box when its value changes, but never the cell
+    # that created it. If another cell placed the form on the page, each
+    # keystroke would re-run that cell, rebuild the tab and throw away what
+    # was just typed. Other cells only get database_fill_panel, which is
+    # plain layout, not a box. Ticking other tests starts the form again.
+    _values = {}
+    if len(db_selected_ids) == 1:
+        _values = db_mod.get_info_values(db_selected_ids[0])
+    db_fill_form = build_info_form(db_mod.list_info_columns(), _values)
+    db_save_btn = mo.ui.run_button(label="&#128190; Save")
+    db_delete_test_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
+    show_chart_btn = mo.ui.run_button(label="&#128200; Show chart")
+    load_to_analysis_btn = mo.ui.run_button(label="&#128202; Load into Analysis")
+
+    if len(db_selected_ids) == 0:
+        database_fill_panel = mo.md(
+            "**Tick one or more tests** in the table to fill them in, see their results or delete them."
+        )
+    else:
+        _buttons = [db_save_btn]
+        if len(db_selected_ids) == 1:
+            _title = f"**Test {db_selected_name}**  \n{db_saved_data_text}"
+            _buttons.append(show_chart_btn)
+            _buttons.append(load_to_analysis_btn)
+            if db_excel_download is not None:
+                _buttons.append(db_excel_download)
+        else:
+            _title = (
+                f"**{db_selected_name} ticked.** Only the boxes you fill in are saved, "
+                "the others keep each test's own value."
+            )
+        _buttons.append(summary_download)
+        _buttons.append(db_delete_test_btn)
+        database_fill_panel = mo.vstack([
+            mo.md(_title),
+            db_fill_form,
+            mo.hstack(_buttons, justify="start", align="center", gap=1, wrap=True),
+        ], gap=1)
     return (
-        database_one_test_panel,
-        database_steps_panel,
-        database_table_panel,
+        database_fill_panel,
         db_delete_test_btn,
-        db_editor,
+        db_fill_form,
         db_save_btn,
-        db_test_select,
+        load_to_analysis_btn,
+        show_chart_btn,
     )
 
 
 @app.cell
-def _(db_editor, db_save_btn, get_database_version, info_fields, mo, set_database_version, set_db_msg):
-    # "Save changes": all or nothing, so one wrong cell loses no typing.
+def _(
+    db_selected_ids,
+    db_selected_name,
+    get_shown_test_id,
+    mo,
+    shown_chart,
+    shown_eval_table,
+    shown_velocity_charts,
+):
+    # Cheap: only places the already-built chart and tables. They show while
+    # their own test is the one ticked, and hide (without being thrown away)
+    # as soon as the ticks are anything else - so ticking it again brings
+    # them straight back with no database read.
+    _shown = get_shown_test_id()
+    database_results_panel = None
+    if _shown is not None and db_selected_ids == [_shown]:
+        database_results_panel = mo.vstack([
+            mo.md(f"**Results of test {db_selected_name}**"),
+            shown_chart,
+            mo.Html('<hr class="divider">'),
+            mo.Html('<p class="section-label" style="margin:0">EVALUATED CYCLES</p>'),
+            shown_eval_table,
+            shown_velocity_charts,
+        ], gap=1)
+    return (database_results_panel,)
+
+
+@app.cell
+def _(
+    get_active_tab,
+    get_batch_log,
+    get_columns_version,
+    get_database_version,
+    get_tests_version,
+    info_fields,
+    mo,
+):
+    get_active_tab()
+    get_batch_log()
+    get_tests_version()
+    get_columns_version()
+    get_database_version()
+    database_columns_table = mo.ui.table(
+        info_fields.build_column_table(), selection=None, pagination=False,
+        show_column_summaries=False, show_data_types=False, show_download=False,
+    )
+    return (database_columns_table,)
+
+
+@app.cell
+def _(db_fill_form, db_save_btn, db_selected_ids, get_database_version, info_fields, mo, set_database_version, set_db_msg):
     if db_save_btn.value:
         try:
-            _n_changed, _problems = info_fields.save_database_table(db_editor.value)
+            _n_saved, _problems = info_fields.save_typed_values(db_selected_ids, db_fill_form.value)
             if len(_problems) > 0:
                 set_db_msg(mo.callout(mo.md("**Not saved:** " + "; ".join(_problems) + "."), kind="warn"))
             else:
-                set_db_msg(mo.callout(mo.md(f"Saved the changes to **{_n_changed}** tests."), kind="success"))
+                set_db_msg(mo.callout(mo.md(f"Saved. Tests changed: **{_n_saved}**."), kind="success"))
                 set_database_version(get_database_version() + 1)
         except Exception as _e:
             set_db_msg(mo.callout(mo.md(f"**Save failed:** {_e}"), kind="danger"))
@@ -1952,35 +1901,26 @@ def _(
 @app.cell
 def _(db_column_select, db_mod, db_rename_btn, db_rename_name, db_rename_unit, get_columns_version, mo, set_columns_version, set_db_msg):
     if db_rename_btn.value:
-        if db_column_select.value is None:
-            set_db_msg(mo.callout(mo.md("Choose a column first."), kind="warn"))
-        else:
-            try:
-                _label = db_mod.rename_info_column(
-                    db_column_select.value, db_rename_name.value, db_rename_unit.value,
-                )
-                set_db_msg(mo.callout(mo.md(f"The column is now called **{_label}**."), kind="success"))
-                set_columns_version(get_columns_version() + 1)
-            except ValueError as _e:
-                set_db_msg(mo.callout(mo.md(f"**Not renamed:** {_e}."), kind="warn"))
+        try:
+            _label = db_mod.rename_info_column(
+                db_column_select.value, db_rename_name.value, db_rename_unit.value,
+            )
+            set_db_msg(mo.callout(mo.md(f"The column is now called **{_label}**."), kind="success"))
+            set_columns_version(get_columns_version() + 1)
+        except ValueError as _e:
+            set_db_msg(mo.callout(mo.md(f"**Not renamed:** {_e}."), kind="warn"))
     return
 
 
 @app.cell
-def _(db_column_select, db_delete_column_btn, db_delete_test_btn, db_test_select, mo, set_db_msg, set_db_pending):
+def _(db_column_select, db_delete_column_btn, db_delete_test_btn, db_selected_ids, db_selected_name, set_db_msg, set_db_pending):
     # A delete can't be undone, so these two buttons only ask.
     if db_delete_test_btn.value:
-        if db_test_select.value is None:
-            set_db_msg(mo.callout(mo.md("Choose a test first."), kind="warn"))
-        else:
-            set_db_msg(None)
-            set_db_pending({"kind": "test", "id": db_test_select.value, "name": db_test_select.selected_key})
+        set_db_msg(None)
+        set_db_pending({"kind": "test", "ids": db_selected_ids, "name": db_selected_name})
     if db_delete_column_btn.value:
-        if db_column_select.value is None:
-            set_db_msg(mo.callout(mo.md("Choose a column first."), kind="warn"))
-        else:
-            set_db_msg(None)
-            set_db_pending({"kind": "column", "id": db_column_select.value, "name": db_column_select.selected_key})
+        set_db_msg(None)
+        set_db_pending({"kind": "column", "id": db_column_select.value, "name": db_column_select.selected_key})
     return
 
 
@@ -2007,10 +1947,11 @@ def _(
         set_db_pending(None)
         try:
             if _pending["kind"] == "test":
-                db_mod.delete_test(_pending["id"])
-                if get_shown_test_id() == _pending["id"]:
-                    set_shown_test_id(None)
-                set_db_msg(mo.callout(mo.md(f"Deleted test **{_pending['name']}**."), kind="success"))
+                for _test_id in _pending["ids"]:
+                    db_mod.delete_test(_test_id)
+                    if get_shown_test_id() == _test_id:
+                        set_shown_test_id(None)
+                set_db_msg(mo.callout(mo.md(f"Deleted **{_pending['name']}**."), kind="success"))
                 set_database_version(get_database_version() + 1)
             else:
                 db_mod.delete_info_column(_pending["id"])
@@ -2022,57 +1963,30 @@ def _(
 
 
 @app.cell
-def _(db_mod, db_test_select, mo, results_table):
-    # The stored per-step results of the test chosen in the dropdown.
-    if db_test_select.value is None:
-        database_test_panel = mo.md("_Choose a test to see its stored results, or to delete it._")
-    else:
-        _eval_df = results_table.shown_columns_only(db_mod.get_full_eval_table(db_test_select.value))
-        if _eval_df is None or len(_eval_df) == 0:
-            database_test_panel = mo.callout(mo.md("No results stored for this test."), kind="info")
-        else:
-            database_test_panel = mo.ui.table(
-                _eval_df, selection=None,
-                pagination=False, show_column_summaries=False, show_data_types=False,
-            )
-    return (database_test_panel,)
-
-
-@app.cell
 def _(
     PANEL_STYLE,
     database_add_column_panel,
     database_change_column_panel,
-    database_one_test_panel,
-    database_steps_panel,
-    database_table_panel,
-    database_test_panel,
+    database_columns_table,
+    database_fill_panel,
+    database_results_panel,
+    database_tests_panel,
     db_cancel_btn,
     db_confirm_btn,
+    db_view,
     get_db_msg,
     get_db_pending,
     mo,
 ):
-    # Every button and the answer to it are together above the long tables.
-    # The answer used to be at the top with the buttons below the table, so
-    # with the page scrolled down a click seemed to do nothing.
-    _parts = [
-        mo.Html('<p class="panel-title">Columns</p>'),
-        database_add_column_panel,
-        database_change_column_panel,
-        mo.md(
-            "A new unit does not convert the numbers already typed in. Stroke [mm], file "
-            "name and the evaluation settings can't be changed: the app needs them."
-        ),
-        mo.Html('<p class="panel-title">One test</p>'),
-        database_one_test_panel,
-        mo.md("The cycles of the chosen test are shown at the bottom of this tab."),
-    ]
+    # A question or message always comes right under the buttons that asked
+    # for it, above any long table: with the answer far from the button, a
+    # click seemed to do nothing.
+    _answers = []
     _pending = get_db_pending()
     if _pending is not None:
         if _pending["kind"] == "test":
             _question = (
-                f"Delete test **{_pending['name']}** with all its stored data? "
+                f"Delete **{_pending['name']}** with all the stored data? "
                 "This can't be undone."
             )
         else:
@@ -2080,20 +1994,32 @@ def _(
                 f"Delete the column **{_pending['name']}** and its values in every test? "
                 "This can't be undone."
             )
-        _parts.append(mo.callout(mo.vstack([
+        _answers.append(mo.callout(mo.vstack([
             mo.md(_question),
             mo.hstack([db_confirm_btn, db_cancel_btn], justify="start", gap=1),
         ], gap=1), kind="warn"))
     if get_db_msg() is not None:
-        _parts.append(get_db_msg())
-    _parts.append(mo.Html('<hr class="divider">'))
-    _parts.append(database_table_panel)
-    _parts.append(mo.Html('<hr class="divider">'))
-    _parts.append(database_steps_panel)
-    _parts.append(mo.Html('<hr class="divider">'))
-    _parts.append(database_test_panel)
+        _answers.append(get_db_msg())
+
+    # Only the chosen view goes into the page.
+    if db_view.value == "tests":
+        if database_results_panel is not None:
+            _answers.append(mo.md("The chart and results are **under the table**."))
+        _parts = [database_fill_panel] + _answers + [database_tests_panel]
+        if database_results_panel is not None:
+            _parts.append(mo.Html('<hr class="divider">'))
+            _parts.append(database_results_panel)
+    else:
+        _parts = [mo.hstack(
+            [database_add_column_panel, database_change_column_panel],
+            widths="equal", align="stretch", gap=2,
+        )]
+        _parts = _parts + _answers + [
+            mo.md("**All columns**"),
+            database_columns_table,
+        ]
     database_tab = mo.vstack([
-        mo.vstack(_parts, gap=2).style(PANEL_STYLE),
+        mo.vstack([db_view, mo.Html('<hr class="divider">')] + _parts, gap=2).style(PANEL_STYLE),
     ], gap=2).style({"padding": "20px 0"})
     return (database_tab,)
 
@@ -2542,7 +2468,7 @@ def _(ai_model, get_ai_model, mo):
 @app.cell
 def _(ai_model, ai_predict_btn, ai_predict_inputs, charts, get_ai_model, mo, set_ai_prediction):
     # "Predict": one prediction per step of the speed program, shown the same
-    # way as a saved test in History - static and sliding friction against
+    # way as a saved test on the Database tab - static and sliding friction against
     # mean velocity - plus the numbers as a table.
     if ai_predict_btn.value and ai_predict_inputs is not None:
         import pandas as _pd
@@ -2598,7 +2524,7 @@ def _(ai_model, ai_predict_btn, ai_predict_inputs, charts, get_ai_model, mo, set
                 })
             _table = _pd.DataFrame(_rows)
 
-            # Same shape as database.get_step_results, so the History plot
+            # Same shape as database.get_step_results, so the saved test plot
             # function draws it, with the predicted std dev as error bars.
             _for_plot = _pd.DataFrame({
                 "start": list(range(len(_speeds))),
@@ -2730,15 +2656,15 @@ def _(actions_row, mo, raw_data_card, upload_card, viz_card):
 
 
 @app.cell
-def _(history_table, mo, selected_test_ids):
-    # "Export summary": the selected tests side by side in one Excel sheet,
+def _(db_selected_ids, mo):
+    # "Export summary": the ticked tests side by side in one Excel sheet,
     # laid out like the lab's report sheet (see summary_export.py). The file
     # is only built when the button is clicked, and goes straight to the
     # browser's downloads - it is not stored anywhere.
     import datetime as _datetime
     import summary_export as _summary_export
 
-    _ids = selected_test_ids(history_table.value)
+    _ids = db_selected_ids
 
     def _build_file():
         return _summary_export.build_summary_excel(_ids)
@@ -2750,48 +2676,16 @@ def _(history_table, mo, selected_test_ids):
         )
     else:
         _stamp = _datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        _count = f"{len(_ids)} tests"
+        if len(_ids) == 1:
+            _count = "1 test"
         summary_download = mo.download(
             data=_build_file,
             filename=f"Friction_summary_{_stamp}.xlsx",
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            label=f"&#128202; Export summary ({len(_ids)} tests)",
+            label=f"&#128202; Export summary ({_count})",
         )
     return (summary_download,)
-
-
-@app.cell
-def _(PANEL_STYLE, delete_btn, get_history_status_msg, history_table, load_to_analysis_btn, mo, refresh_btn, show_chart_btn, summary_download):
-    tests_card = mo.vstack([
-        mo.hstack([refresh_btn, show_chart_btn, load_to_analysis_btn, delete_btn, summary_download], gap=2, justify="start"),
-        get_history_status_msg(),
-        mo.Html('<hr class="divider">'),
-        mo.Html('<p class="panel-title">Saved Tests</p>'),
-        history_table,
-    ], gap=2).style(PANEL_STYLE)
-    return (tests_card,)
-
-
-@app.cell
-def _(PANEL_STYLE, cycles_panel, history_chart, history_details_panel, history_eval_panel, history_velocity_panel, mo):
-    chart_card = mo.vstack([
-        mo.Html('<p class="panel-title">Chart</p>'),
-        history_details_panel,
-        history_chart,
-        mo.Html('<hr class="divider">'),
-        history_eval_panel,
-        cycles_panel,
-        history_velocity_panel,
-    ], gap=1).style(PANEL_STYLE)
-    return (chart_card,)
-
-
-@app.cell
-def _(chart_card, mo, tests_card):
-    history_tab = mo.vstack([
-        tests_card,
-        chart_card,
-    ], gap=2).style({"padding": "20px 0"})
-    return (history_tab,)
 
 
 @app.cell
@@ -2829,16 +2723,15 @@ def _(mo):
     # literal emoji quadruples its measured size and trips marimo's 5 MB
     # output limit as soon as a chart is on the page.
     ANALYSIS_TAB = "&#128202;  Analysis"
-    HISTORY_TAB = "&#128450;  History"
     BATCH_TAB = "&#128193;  Batch"
     DATABASE_TAB = "&#128451;  Database"
     AI_TAB = "&#129504;  AI"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, HISTORY_TAB, get_active_tab, set_active_tab
+    return AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, HISTORY_TAB, ai_tab, batch_tab, database_tab, get_active_tab, history_tab, mo, results_tab):
+def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, ai_tab, batch_tab, database_tab, get_active_tab, mo, results_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -2856,14 +2749,11 @@ def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, HISTORY_TAB, ai_tab, batch_
     # Every tab starts as the placeholder; only the active one gets its content.
     tab_contents = {
         ANALYSIS_TAB: _placeholder,
-        HISTORY_TAB: _placeholder,
         BATCH_TAB: _placeholder,
         DATABASE_TAB: _placeholder,
         AI_TAB: _placeholder,
     }
-    if get_active_tab() == HISTORY_TAB:
-        tab_contents[HISTORY_TAB] = history_tab
-    elif get_active_tab() == BATCH_TAB:
+    if get_active_tab() == BATCH_TAB:
         tab_contents[BATCH_TAB] = batch_tab
     elif get_active_tab() == DATABASE_TAB:
         tab_contents[DATABASE_TAB] = database_tab

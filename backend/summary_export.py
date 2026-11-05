@@ -1,4 +1,4 @@
-"""The "Export summary" Excel file for the History tab: the saved tests the
+"""The "Export summary" Excel file for the Database tab: the saved tests the
 user selected, side by side, laid out like the lab's report sheet
 (RTU_Ice-Friction-2026_1.xlsx, rows 1-53):
 

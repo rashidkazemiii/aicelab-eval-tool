@@ -61,7 +61,7 @@ class Test(Base):
     # before this column existed = fixed_window.
     static_method = Column(String)
 
-    # Test conditions, typed in by hand on the History / AI tab. Kept with
+    # Test conditions, typed in by hand on the Database / AI tab. Kept with
     # the test so a model can later learn how they affect the CoF.
     # NULL = not filled in yet.
     temperature   = Column(Float)    # [deg C]
@@ -69,7 +69,7 @@ class Test(Base):
     material      = Column(String)
     note          = Column(Text)
     # Stroke of the eccentric ("Hub Exzenter" in the file header), read from
-    # the file when the test is saved; can also be typed in on History. Needed
+    # the file when the test is saved; can also be typed in on the Database tab. Needed
     # to turn a step's speed (U/min) into a sliding velocity (m/s).
     stroke_mm     = Column(Float)
 
@@ -548,7 +548,7 @@ def list_tests() -> list[dict]:
 
 def list_tests_df() -> pd.DataFrame:
     """list_tests(), as a DataFrame with the right columns present even when
-    there are no saved tests yet - so the History table doesn't render with a
+    there are no saved tests yet - so the tests table doesn't render with a
     blank schema.
     """
     tests = list_tests()
@@ -623,51 +623,6 @@ def get_step_results(test_id: int) -> pd.DataFrame:
         "start", "end", "speed", "static_mean", "static_sd", "dynamic_mean", "dynamic_sd",
     ])
     return table.sort_values("start").reset_index(drop=True)
-
-
-def get_step_rows(test_id: int) -> list[dict]:
-    """Every step of a saved test, in test order, with the file's Drehzahl
-    and the step's results. Unlike get_step_results no step is left out: a
-    step without numbers (skipped as noisy, or inactive) has None for them."""
-    step_df = get_step_df(test_id)
-    if step_df is None:
-        return []
-    db = SessionLocal()
-    try:
-        results = db.query(Result).filter(Result.test_id == test_id).all()
-    finally:
-        db.close()
-
-    rows = []
-    for k in range(len(step_df)):
-        start = float(step_df["Startzeit [s]"].iloc[k])
-        end = float(step_df["Endzeit [s]"].iloc[k])
-        speed = None
-        if "Drehzahl" in step_df.columns:
-            speed = _clean(step_df["Drehzahl"].iloc[k])
-        row = {
-            "start": start,
-            "end": end,
-            "speed": speed,
-            "static_mean": None,
-            "static_sd": None,
-            "dynamic_mean": None,
-            "dynamic_sd": None,
-            "note": None,
-        }
-        for r in results:
-            time_range = _range_numbers(r.time_range)
-            if time_range is None:
-                continue
-            if abs(time_range[0] - start) <= 0.05 and abs(time_range[1] - end) <= 0.05:
-                row["static_mean"] = r.static_mean_cof
-                row["static_sd"] = r.static_sd
-                row["dynamic_mean"] = r.dynamic_mean_cof
-                row["dynamic_sd"] = r.dynamic_sd
-                row["note"] = r.note
-                break
-        rows.append(row)
-    return rows
 
 
 def get_test_details(test_id: int) -> dict:
