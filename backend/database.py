@@ -206,11 +206,16 @@ class InfoColumn(Base):
     the Test attribute. A column added by hand has field = NULL and keeps
     its values in info_values. Deleting a built-in column clears its values
     and sets `deleted`, because the Test attribute itself must stay: the AI
-    tab and Export summary read it. A deleted one can be added again."""
+    tab and Export summary read it. A deleted one can be added again.
+
+    The unit is kept apart from the name, so a form can show it next to the
+    box. unit = NULL means the row was saved before this field existed;
+    create_tables moves such a row's "[unit]" out of its name once."""
     __tablename__ = "info_columns"
 
     id        = Column(Integer, primary_key=True)
     name      = Column(String, nullable=False)
+    unit      = Column(String)                   # "" = no unit
     kind      = Column(String, nullable=False)   # "number" or "text"
     field     = Column(String)
     protected = Column(Integer, default=0)       # 1 = can't be deleted
@@ -267,23 +272,26 @@ def create_tables() -> None:
                         f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'
                     ))
     _add_builtin_info_columns()
+    _move_units_out_of_names()
 
 
-# (name, kind, Test attribute, protected). Stroke is protected because the
-# velocity charts and Export summary need it.
+# (name, unit, kind, Test attribute, protected). Stroke is protected because
+# the velocity charts and Export summary need it, in mm.
 BUILTIN_INFO_COLUMNS = [
-    ("Temperature [°C]", "number", "temperature", 0),
-    ("Humidity [%]", "number", "humidity", 0),
-    ("Material", "text", "material", 0),
-    ("Stroke [mm]", "number", "stroke_mm", 1),
-    ("Note", "text", "note", 0),
+    ("Temperature", "°C", "number", "temperature", 0),
+    ("Humidity", "%", "number", "humidity", 0),
+    ("Material", "", "text", "material", 0),
+    ("Stroke", "mm", "number", "stroke_mm", 1),
+    ("Note", "", "text", "note", 0),
 ]
 
-# Names the Database tab's table already uses, so no added column can have
-# them. Compared in lower case.
+# Names the Database tab's two tables already use, so no added column can
+# have them. Compared in lower case.
 RESERVED_COLUMN_NAMES = [
     "id", "file name", "saved", "evaluation", "filter pts", "static %",
     "dyn min %", "dyn max %", "steps", "empty fields",
+    "step", "start", "end", "drehzahl", "velocity", "direction",
+    "static cof", "static sd", "dynamic cof", "dynamic sd", "step note",
 ]
 
 
@@ -291,14 +299,45 @@ def _add_builtin_info_columns() -> None:
     """Put each built-in column into info_columns once."""
     db = SessionLocal()
     try:
-        for name, kind, field, protected in BUILTIN_INFO_COLUMNS:
+        for name, unit, kind, field, protected in BUILTIN_INFO_COLUMNS:
             found = db.query(InfoColumn).filter(InfoColumn.field == field).first()
             if found is None:
-                db.add(InfoColumn(name=name, kind=kind, field=field,
+                db.add(InfoColumn(name=name, unit=unit, kind=kind, field=field,
                                   protected=protected, deleted=0))
         db.commit()
     finally:
         db.close()
+
+
+def split_name_and_unit(text_value: str):
+    """"Ice thickness [mm]" gives ("Ice thickness", "mm"). A text without a
+    "[unit]" at its end comes back whole, with the unit ""."""
+    text_value = text_value.strip()
+    if text_value.endswith("]") and "[" in text_value:
+        position = text_value.rindex("[")
+        name = text_value[:position].strip()
+        unit = text_value[position + 1:-1].strip()
+        if name != "":
+            return name, unit
+    return text_value, ""
+
+
+def _move_units_out_of_names() -> None:
+    """Rows saved when the unit was still part of the name."""
+    db = SessionLocal()
+    try:
+        for r in db.query(InfoColumn).filter(InfoColumn.unit.is_(None)).all():
+            r.name, r.unit = split_name_and_unit(r.name)
+        db.commit()
+    finally:
+        db.close()
+
+
+def column_label(name: str, unit: str) -> str:
+    """How a column is headed in a table: "Temperature [°C]"."""
+    if unit:
+        return f"{name} [{unit}]"
+    return name
 
 
 def _clean(v) -> Optional[float]:
@@ -525,6 +564,20 @@ def list_tests_df() -> pd.DataFrame:
 DETAIL_FIELDS = ["temperature", "humidity", "material", "note", "stroke_mm"]
 
 
+def _range_numbers(text_range):
+    """(start, end) from a results time range like "60.0-80.0", or None."""
+    if not text_range:
+        return None
+    # older rows used an en dash as the separator
+    parts = str(text_range).replace("\u2013", "-").split("-")
+    if len(parts) != 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+
+
 def get_step_results(test_id: int) -> pd.DataFrame:
     """One row per evaluated step of a saved test, in time order: start and
     end time [s], speed [U/min] (None when unknown), and the step's static
@@ -547,17 +600,11 @@ def get_step_results(test_id: int) -> pd.DataFrame:
     for r in results:
         if r.static_mean_cof is None or r.dynamic_mean_cof is None:
             continue
-        if not r.time_range:
+        time_range = _range_numbers(r.time_range)
+        if time_range is None:
             continue
-        # "60.0-80.0"; older rows used an en dash as the separator
-        parts = str(r.time_range).replace("–", "-").split("-")
-        if len(parts) != 2:
-            continue
-        try:
-            start = float(parts[0])
-            end = float(parts[1])
-        except ValueError:
-            continue
+        start = time_range[0]
+        end = time_range[1]
         speed = None
         for s in steps:
             if abs(s.start_time - start) <= 0.05 and abs(s.end_time - end) <= 0.05:
@@ -576,6 +623,51 @@ def get_step_results(test_id: int) -> pd.DataFrame:
         "start", "end", "speed", "static_mean", "static_sd", "dynamic_mean", "dynamic_sd",
     ])
     return table.sort_values("start").reset_index(drop=True)
+
+
+def get_step_rows(test_id: int) -> list[dict]:
+    """Every step of a saved test, in test order, with the file's Drehzahl
+    and the step's results. Unlike get_step_results no step is left out: a
+    step without numbers (skipped as noisy, or inactive) has None for them."""
+    step_df = get_step_df(test_id)
+    if step_df is None:
+        return []
+    db = SessionLocal()
+    try:
+        results = db.query(Result).filter(Result.test_id == test_id).all()
+    finally:
+        db.close()
+
+    rows = []
+    for k in range(len(step_df)):
+        start = float(step_df["Startzeit [s]"].iloc[k])
+        end = float(step_df["Endzeit [s]"].iloc[k])
+        speed = None
+        if "Drehzahl" in step_df.columns:
+            speed = _clean(step_df["Drehzahl"].iloc[k])
+        row = {
+            "start": start,
+            "end": end,
+            "speed": speed,
+            "static_mean": None,
+            "static_sd": None,
+            "dynamic_mean": None,
+            "dynamic_sd": None,
+            "note": None,
+        }
+        for r in results:
+            time_range = _range_numbers(r.time_range)
+            if time_range is None:
+                continue
+            if abs(time_range[0] - start) <= 0.05 and abs(time_range[1] - end) <= 0.05:
+                row["static_mean"] = r.static_mean_cof
+                row["static_sd"] = r.static_sd
+                row["dynamic_mean"] = r.dynamic_mean_cof
+                row["dynamic_sd"] = r.dynamic_sd
+                row["note"] = r.note
+                break
+        rows.append(row)
+    return rows
 
 
 def get_test_details(test_id: int) -> dict:
@@ -685,18 +777,11 @@ def get_step_df(test_id: int):
             inactive.append(bool(s.inactive))
     else:
         for r in results:
-            text_range = r.time_range
-            if not text_range:
+            time_range = _range_numbers(r.time_range)
+            if time_range is None:
                 continue
-            # "60.0-80.0"; older rows used an en dash as the separator
-            parts = str(text_range).replace("\u2013", "-").split("-")
-            if len(parts) != 2:
-                continue
-            try:
-                starts.append(float(parts[0]))
-                ends.append(float(parts[1]))
-            except ValueError:
-                continue
+            starts.append(time_range[0])
+            ends.append(time_range[1])
             speeds.append(None)
             inactive.append(False)
 
@@ -925,6 +1010,8 @@ def list_info_columns() -> list[dict]:
                 "id": r.id,
                 "key": "c%d" % r.id,
                 "name": r.name,
+                "unit": r.unit or "",
+                "label": column_label(r.name, r.unit),
                 "kind": r.kind,
                 "field": r.field,
                 "protected": bool(r.protected),
@@ -945,16 +1032,27 @@ def deleted_info_fields() -> list[str]:
     return fields
 
 
-def add_info_column(name: str, kind: str) -> str:
-    """Add a column for every test, or bring back a deleted built-in column
-    of the same name. Returns the name the column ended up with. Raises
-    ValueError when the name is empty or already taken."""
+def _read_name_and_unit(name: str, unit: str):
+    """What was typed for a column: its name and unit, without the spaces
+    around them. "[mm]" typed after the name counts as the unit, unless a
+    unit was typed separately."""
     name = name.strip()
+    unit = unit.strip()
+    if unit == "":
+        name, unit = split_name_and_unit(name)
     if name == "":
-        raise ValueError("type a name for the new column")
-    wanted = name.lower()
-    if wanted in RESERVED_COLUMN_NAMES:
+        raise ValueError("type a name for the column")
+    if name.lower() in RESERVED_COLUMN_NAMES:
         raise ValueError(f"the table already has a column named {name}")
+    return name, unit
+
+
+def add_info_column(name: str, kind: str, unit: str = "") -> str:
+    """Add a column for every test, or bring back a deleted built-in column
+    of the same name. Returns the label the column ended up with. Raises
+    ValueError when the name is empty or already taken."""
+    name, unit = _read_name_and_unit(name, unit)
+    wanted = name.lower()
     db = SessionLocal()
     try:
         for r in db.query(InfoColumn).all():
@@ -963,11 +1061,40 @@ def add_info_column(name: str, kind: str) -> str:
             if not r.deleted:
                 raise ValueError(f"the table already has a column named {r.name}")
             r.deleted = 0
+            if unit != "":
+                r.unit = unit
+            label = column_label(r.name, r.unit)
             db.commit()
-            return r.name
-        db.add(InfoColumn(name=name, kind=kind, field=None, protected=0, deleted=0))
+            return label
+        db.add(InfoColumn(name=name, unit=unit, kind=kind, field=None, protected=0, deleted=0))
         db.commit()
-        return name
+        return column_label(name, unit)
+    finally:
+        db.close()
+
+
+def rename_info_column(column_id: int, name: str, unit: str) -> str:
+    """Change a column's name and unit; its values stay as they are, so a
+    new unit does not convert them. Returns the new label. Raises ValueError
+    for a protected column, or when the name is empty or already taken."""
+    name, unit = _read_name_and_unit(name, unit)
+    wanted = name.lower()
+    db = SessionLocal()
+    try:
+        column = db.query(InfoColumn).filter(InfoColumn.id == column_id).first()
+        if column is None:
+            raise ValueError("that column no longer exists")
+        if column.protected:
+            raise ValueError(f"{column.name} is needed by the app and can't be renamed")
+        # Deleted built-in columns count too: "Add column" brings them back
+        # by name.
+        for r in db.query(InfoColumn).all():
+            if r.id != column_id and r.name.lower() == wanted:
+                raise ValueError(f"the table already has a column named {r.name}")
+        column.name = name
+        column.unit = unit
+        db.commit()
+        return column_label(name, unit)
     finally:
         db.close()
 

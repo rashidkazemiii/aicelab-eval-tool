@@ -313,7 +313,8 @@ def _(info_fields, mo):
         ({column id: value}). `.value` gives {column key: typed text}."""
         _field = ('<div style="display:flex;align-items:center;gap:6px">'
                   '<span style="font-size:0.82rem;color:#444;white-space:nowrap">{label}</span>'
-                  '<div style="width:{width}px">{{{name}}}</div></div>')
+                  '<div style="width:{width}px">{{{name}}}</div>'
+                  '<span style="font-size:0.82rem;color:#888;white-space:nowrap">{unit}</span></div>')
         _html = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px 20px">'
         _boxes = {}
         for _column in columns:
@@ -327,6 +328,7 @@ def _(info_fields, mo):
             _html += _field.format(
                 label=info_fields.html_label(_column["name"]),
                 width=_width, name=_column["key"],
+                unit=info_fields.html_label(_column["unit"]),
             )
             _boxes[_column["key"]] = mo.ui.text(
                 value=info_fields.value_as_text(values.get(_column["id"]))
@@ -1780,21 +1782,67 @@ def _(mo):
 
 @app.cell
 def _(get_columns_version, mo):
-    # Rebuilt after a column was added or deleted, which also empties the
-    # name box for the next one.
+    # Rebuilt after a column was added, renamed or deleted, which also
+    # empties the boxes for the next one. The boxes are created AND laid out
+    # here, so typing in them never re-runs anything else (see details_form).
     get_columns_version()
-    db_new_column_name = mo.ui.text(placeholder="New column name", full_width=True)
+    db_new_column_name = mo.ui.text(placeholder="New column name")
+    db_new_column_unit = mo.ui.text(placeholder="Unit, e.g. mm")
     db_new_column_kind = mo.ui.dropdown(options={"Text": "text", "Number": "number"}, value="Text")
     db_add_column_btn = mo.ui.run_button(label="Add column")
-    return db_add_column_btn, db_new_column_kind, db_new_column_name
+    database_add_column_panel = mo.hstack(
+        [db_new_column_name, db_new_column_unit, db_new_column_kind, db_add_column_btn],
+        justify="start", align="center", gap=1, wrap=True,
+    )
+    return (
+        database_add_column_panel,
+        db_add_column_btn,
+        db_new_column_kind,
+        db_new_column_name,
+        db_new_column_unit,
+    )
+
+
+@app.cell
+def _(db_mod, get_columns_version, mo):
+    get_columns_version()
+    _column_options = {}
+    for _column in db_mod.list_info_columns():
+        if not _column["protected"]:
+            _column_options[_column["label"]] = _column["id"]
+    db_column_select = mo.ui.dropdown(options=_column_options, label="Column")
+    return (db_column_select,)
+
+
+@app.cell
+def _(db_column_select, db_mod, mo):
+    # Rebuilt for each chosen column, so the boxes start with its name and
+    # unit.
+    _name = ""
+    _unit = ""
+    for _column in db_mod.list_info_columns():
+        if _column["id"] == db_column_select.value:
+            _name = _column["name"]
+            _unit = _column["unit"]
+    db_rename_name = mo.ui.text(value=_name, placeholder="Name")
+    db_rename_unit = mo.ui.text(value=_unit, placeholder="Unit")
+    db_rename_btn = mo.ui.run_button(label="Rename")
+    db_delete_column_btn = mo.ui.run_button(label="&#128465; Delete this column", kind="danger")
+    database_change_column_panel = mo.hstack(
+        [db_column_select, db_rename_name, db_rename_unit, db_rename_btn, db_delete_column_btn],
+        justify="start", align="center", gap=1, wrap=True,
+    )
+    return (
+        database_change_column_panel,
+        db_delete_column_btn,
+        db_rename_btn,
+        db_rename_name,
+        db_rename_unit,
+    )
 
 
 @app.cell
 def _(
-    db_add_column_btn,
-    db_mod,
-    db_new_column_kind,
-    db_new_column_name,
     get_active_tab,
     get_batch_log,
     get_columns_version,
@@ -1821,42 +1869,39 @@ def _(
         _test_options[f"#{_table.iloc[_i]['id']}  {_table.iloc[_i]['File name']}"] = int(_table.iloc[_i]["id"])
     db_test_select = mo.ui.dropdown(options=_test_options, label="Test")
     db_delete_test_btn = mo.ui.run_button(label="&#128465; Delete this test", kind="danger")
-
-    _column_options = {}
-    for _column in db_mod.list_info_columns():
-        if not _column["protected"]:
-            _column_options[_column["name"]] = _column["id"]
-    db_column_select = mo.ui.dropdown(options=_column_options, label="Column")
-    db_delete_column_btn = mo.ui.run_button(label="&#128465; Delete this column", kind="danger")
+    database_one_test_panel = mo.hstack([db_test_select, db_delete_test_btn], justify="start", align="center", gap=1)
 
     _n_empty = 0
     if len(_table) > 0:
         _n_empty = int(_table["Empty fields"].sum())
     database_table_panel = mo.vstack([
-        mo.Html('<p class="panel-title">Stored tests</p>'),
+        mo.hstack([mo.Html('<p class="panel-title">Stored tests</p>'), db_save_btn],
+                  justify="start", align="center", gap=2),
         mo.md(
-            f"Click a cell to fill it in or change it, then click **Save changes**. "
-            f"**{_n_empty}** fields are empty. The columns from **Saved** onwards show how "
-            "the test was evaluated and can't be edited here."
+            f"One row per test. Click a cell to fill it in or change it, then click "
+            f"**Save changes**. **{_n_empty}** fields are empty. The columns from **Saved** "
+            "onwards show how the test was evaluated and can't be edited here. The table's "
+            "own **+ New** and **Delete row** do nothing here: tests come from Analysis or "
+            "Batch, and **Delete this test** above removes one."
         ),
         db_editor,
-        db_save_btn,
     ], gap=1)
-    database_tools_panel = mo.vstack([
-        mo.Html('<p class="panel-title">Columns</p>'),
-        mo.hstack([db_new_column_name, db_new_column_kind, db_add_column_btn],
-                  justify="start", align="center", gap=1),
-        mo.hstack([db_column_select, db_delete_column_btn], justify="start", align="center", gap=1),
-        mo.md("Stroke [mm], file name and the evaluation settings can't be deleted: the app needs them."),
-        mo.Html('<hr class="divider">'),
-        mo.Html('<p class="panel-title">One test</p>'),
-        mo.hstack([db_test_select, db_delete_test_btn], justify="start", align="center", gap=1),
+
+    # Read only: the Drehzahl and results come from the test itself.
+    _steps = info_fields.build_step_table()
+    database_steps_panel = mo.vstack([
+        mo.Html('<p class="panel-title">Stored steps</p>'),
+        mo.md(
+            "One row per step of every test, the way the AI tab learns from them: the "
+            "Drehzahl of the step (from the file) with the information about its test. "
+            "Fill the information in above; the search box filters by file name."
+        ),
+        mo.ui.table(_steps, selection=None, page_size=15, show_column_summaries=False, show_data_types=False),
     ], gap=1)
     return (
+        database_one_test_panel,
+        database_steps_panel,
         database_table_panel,
-        database_tools_panel,
-        db_column_select,
-        db_delete_column_btn,
         db_delete_test_btn,
         db_editor,
         db_save_btn,
@@ -1881,14 +1926,43 @@ def _(db_editor, db_save_btn, get_database_version, info_fields, mo, set_databas
 
 
 @app.cell
-def _(db_add_column_btn, db_mod, db_new_column_kind, db_new_column_name, get_columns_version, mo, set_columns_version, set_db_msg):
+def _(
+    db_add_column_btn,
+    db_mod,
+    db_new_column_kind,
+    db_new_column_name,
+    db_new_column_unit,
+    get_columns_version,
+    mo,
+    set_columns_version,
+    set_db_msg,
+):
     if db_add_column_btn.value:
         try:
-            _name = db_mod.add_info_column(db_new_column_name.value, db_new_column_kind.value)
-            set_db_msg(mo.callout(mo.md(f"Added the column **{_name}**."), kind="success"))
+            _label = db_mod.add_info_column(
+                db_new_column_name.value, db_new_column_kind.value, db_new_column_unit.value,
+            )
+            set_db_msg(mo.callout(mo.md(f"Added the column **{_label}**."), kind="success"))
             set_columns_version(get_columns_version() + 1)
         except ValueError as _e:
             set_db_msg(mo.callout(mo.md(f"**Column not added:** {_e}."), kind="warn"))
+    return
+
+
+@app.cell
+def _(db_column_select, db_mod, db_rename_btn, db_rename_name, db_rename_unit, get_columns_version, mo, set_columns_version, set_db_msg):
+    if db_rename_btn.value:
+        if db_column_select.value is None:
+            set_db_msg(mo.callout(mo.md("Choose a column first."), kind="warn"))
+        else:
+            try:
+                _label = db_mod.rename_info_column(
+                    db_column_select.value, db_rename_name.value, db_rename_unit.value,
+                )
+                set_db_msg(mo.callout(mo.md(f"The column is now called **{_label}**."), kind="success"))
+                set_columns_version(get_columns_version() + 1)
+            except ValueError as _e:
+                set_db_msg(mo.callout(mo.md(f"**Not renamed:** {_e}."), kind="warn"))
     return
 
 
@@ -1967,16 +2041,33 @@ def _(db_mod, db_test_select, mo, results_table):
 @app.cell
 def _(
     PANEL_STYLE,
+    database_add_column_panel,
+    database_change_column_panel,
+    database_one_test_panel,
+    database_steps_panel,
     database_table_panel,
     database_test_panel,
-    database_tools_panel,
     db_cancel_btn,
     db_confirm_btn,
     get_db_msg,
     get_db_pending,
     mo,
 ):
-    _parts = []
+    # Every button and the answer to it are together above the long tables.
+    # The answer used to be at the top with the buttons below the table, so
+    # with the page scrolled down a click seemed to do nothing.
+    _parts = [
+        mo.Html('<p class="panel-title">Columns</p>'),
+        database_add_column_panel,
+        database_change_column_panel,
+        mo.md(
+            "A new unit does not convert the numbers already typed in. Stroke [mm], file "
+            "name and the evaluation settings can't be changed: the app needs them."
+        ),
+        mo.Html('<p class="panel-title">One test</p>'),
+        database_one_test_panel,
+        mo.md("The cycles of the chosen test are shown at the bottom of this tab."),
+    ]
     _pending = get_db_pending()
     if _pending is not None:
         if _pending["kind"] == "test":
@@ -1995,9 +2086,11 @@ def _(
         ], gap=1), kind="warn"))
     if get_db_msg() is not None:
         _parts.append(get_db_msg())
+    _parts.append(mo.Html('<hr class="divider">'))
     _parts.append(database_table_panel)
     _parts.append(mo.Html('<hr class="divider">'))
-    _parts.append(database_tools_panel)
+    _parts.append(database_steps_panel)
+    _parts.append(mo.Html('<hr class="divider">'))
     _parts.append(database_test_panel)
     database_tab = mo.vstack([
         mo.vstack(_parts, gap=2).style(PANEL_STYLE),

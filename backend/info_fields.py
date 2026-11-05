@@ -55,16 +55,16 @@ def read_typed_value(column, typed):
 def read_typed_values(columns, typed):
     """Read a filled-in form. `typed` is {column key: typed text}. Returns
     {"values": {column id: value}, "empty": [column names],
-    "not_numbers": [column names]}."""
+    "not_numbers": [column names]}. The names are the column labels."""
     values = {}
     empty = []
     not_numbers = []
     for column in columns:
         value, is_valid = read_typed_value(column, typed.get(column["key"]))
         if not is_valid:
-            not_numbers.append(column["name"])
+            not_numbers.append(column["label"])
         elif value is None:
-            empty.append(column["name"])
+            empty.append(column["label"])
         values[column["id"]] = value
     return {"values": values, "empty": empty, "not_numbers": not_numbers}
 
@@ -91,7 +91,7 @@ def build_database_table():
         values = all_values.get(test["id"], {})
         for column in columns:
             text = value_as_text(values.get(column["id"]))
-            row[column["name"]] = text
+            row[column["label"]] = text
             if text == "":
                 n_empty = n_empty + 1
         row["Empty fields"] = n_empty
@@ -106,10 +106,78 @@ def build_database_table():
     names = ["id", "File name"]
     editable = []
     for column in columns:
-        names.append(column["name"])
-        editable.append(column["name"])
+        names.append(column["label"])
+        editable.append(column["label"])
     names = names + ["Empty fields", "Saved", "Filter pts", "Static %", "Dyn min %", "Dyn max %", "Steps"]
     return pd.DataFrame(rows, columns=names), editable
+
+
+def build_step_table():
+    """The Database tab's table of steps: one row per step of every saved
+    test, newest test first. This is the shape the AI tab learns from: what
+    is known about the step (from the file) next to the test's information,
+    which is the same on all the test's rows."""
+    columns = database.list_info_columns()
+    all_values = database.get_all_info_values()
+
+    names = ["id", "File name", "Step", "Start [s]", "End [s]", "Drehzahl [U/min]",
+             "Direction", "Velocity [m/s]", "Static CoF", "Static SD",
+             "Dynamic CoF", "Dynamic SD", "Step note"]
+    labels = {}
+    for column in columns:
+        label = column["label"]
+        if label in names:
+            label = label + " (test)"    # added before the name was reserved
+        labels[column["id"]] = label
+        names.append(label)
+
+    rows = []
+    for test in database.list_tests():
+        steps = database.get_step_rows(test["id"])
+        speeds = []
+        all_known = True
+        for step in steps:
+            speeds.append(step["speed"])
+            if step["speed"] is None:
+                all_known = False
+        going_down = None
+        if all_known and len(speeds) > 0:
+            going_down = ai_model.going_down_flags(speeds)
+
+        values = all_values.get(test["id"], {})
+        for k in range(len(steps)):
+            step = steps[k]
+            direction = None
+            if going_down is not None:
+                if going_down[k] == 1:
+                    direction = "down"
+                else:
+                    direction = "up"
+            velocity = None
+            if step["speed"] is not None and test["stroke_mm"] is not None:
+                # same formula as the velocity charts
+                velocity = 2 * (test["stroke_mm"] / 1000.0) * step["speed"] / 60.0
+            row = {
+                "id": test["id"],
+                "File name": test["file_name"],
+                "Step": k + 1,
+                "Start [s]": step["start"],
+                "End [s]": step["end"],
+                "Drehzahl [U/min]": step["speed"],
+                "Direction": direction,
+                "Velocity [m/s]": velocity,
+                "Static CoF": step["static_mean"],
+                "Static SD": step["static_sd"],
+                "Dynamic CoF": step["dynamic_mean"],
+                "Dynamic SD": step["dynamic_sd"],
+                "Step note": step["note"],
+            }
+            for column in columns:
+                row[labels[column["id"]]] = values.get(column["id"])
+            rows.append(row)
+    table = pd.DataFrame(rows, columns=names)
+    return table.round({"Velocity [m/s]": 4, "Static CoF": 5, "Static SD": 5,
+                        "Dynamic CoF": 5, "Dynamic SD": 5})
 
 
 def save_database_table(edited_table):
@@ -124,17 +192,19 @@ def save_database_table(edited_table):
     problems = []
     for i in range(len(table)):
         row = table.iloc[i]
+        if _is_empty(row["id"]):
+            continue    # a row made with the table's own "+ New"
         test_id = int(row["id"])
         stored = all_values.get(test_id)
         if stored is None:
             continue    # deleted since the table was read
         changed = {}
         for column in columns:
-            if column["name"] not in table.columns:
-                continue    # added since the table was read
-            value, is_valid = read_typed_value(column, row[column["name"]])
+            if column["label"] not in table.columns:
+                continue    # added or renamed since the table was read
+            value, is_valid = read_typed_value(column, row[column["label"]])
             if not is_valid:
-                problems.append(f"test #{test_id}: {column['name']} must be a number")
+                problems.append(f"test #{test_id}: {column['label']} must be a number")
             elif value != stored.get(column["id"]):
                 changed[column["id"]] = value
         if len(changed) > 0:
