@@ -20,10 +20,9 @@ def _():
     import settings_store
     import speed_pulse
     import batch
-    import ai_model
     import info_fields
 
-    return ai_model, batch, charts, data_loader, info_fields, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
+    return batch, charts, data_loader, info_fields, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -309,7 +308,15 @@ def _(mo):
 
 
 @app.cell
-def _(info_fields, mo):
+def _(mo):
+    # Goes up by one whenever the Materials tab changes a material, so the
+    # lists to choose from are read again.
+    get_materials_version, set_materials_version = mo.state(0)
+    return get_materials_version, set_materials_version
+
+
+@app.cell
+def _(db_mod, info_fields, mo):
     def form_rows_html(rows):
         """A form with one box per row, all boxes the same width and exactly
         under each other. `rows` is a list of (label, box, unit)."""
@@ -323,19 +330,33 @@ def _(info_fields, mo):
         return _html
 
     def build_info_form(columns, values):
-        """One text box per information column, one per row, filled with
-        `values` ({column id: value}). `.value` gives {column key: typed
-        text}."""
+        """One box per information column, one per row, filled with `values`
+        ({column id: value}). The material is chosen from the Materials
+        tab's list, the others are text boxes. `.value` gives {column key:
+        typed text}."""
+        _materials = {}
+        for _material in db_mod.list_materials():
+            _materials[_material["name"]] = _material["name"]
         _boxes = {}
         _rows = []
         for _column in columns:
             _label = info_fields.html_label(_column["name"])
             _unit = info_fields.html_label(_column["unit"])
+            _value = values.get(_column["id"])
+            if _column["field"] == "material":
+                if len(_materials) == 0:
+                    _unit = "Add materials on the Materials tab"
+                # Left over from hand typing, e.g. "nan": not in the list.
+                if _value not in _materials:
+                    _value = None
+                _boxes[_column["key"]] = mo.ui.dropdown(
+                    options=_materials, value=_value, full_width=True,
+                )
+            else:
+                _boxes[_column["key"]] = mo.ui.text(
+                    value=info_fields.value_as_text(_value), full_width=True,
+                )
             _rows.append((_label, "{" + _column["key"] + "}", _unit))
-            _boxes[_column["key"]] = mo.ui.text(
-                value=info_fields.value_as_text(values.get(_column["id"])),
-                full_width=True,
-            )
         return mo.Html(form_rows_html(_rows)).batch(**_boxes)
     return build_info_form, form_rows_html
 
@@ -852,6 +873,7 @@ def _(
     file_upload,
     get_columns_version,
     get_loaded_test,
+    get_materials_version,
     mo,
 ):
     # The information asked for when saving. Filled in from the saved test
@@ -862,6 +884,7 @@ def _(
     # same reason as on the Database tab (see db_fill_form): other cells only
     # get save_info_panel, which is plain layout, so typing rebuilds nothing.
     get_columns_version()
+    get_materials_version()
     _columns = db_mod.list_info_columns()
     _values = {}
     if analysis_file_name is not None:
@@ -975,8 +998,9 @@ def _(
 # ── Saved tests ────────────────────────────────────────────────────────────
 @app.cell
 def _():
-    def selected_test_ids(selection):
-        """The id of every ticked row of a table of tests, as a plain list.
+    def selected_row_ids(selection):
+        """The id of every ticked row of a table with an id column, as a
+        plain list.
 
         `selection` is mo.ui.table's .value - a DataFrame of the selected
         rows, or None before anything is picked.
@@ -986,7 +1010,7 @@ def _():
             for _, row in selection.iterrows():
                 ids.append(int(row["id"]))
         return ids
-    return (selected_test_ids,)
+    return (selected_row_ids,)
 
 
 @app.cell
@@ -1707,8 +1731,8 @@ def _(
 
 
 @app.cell
-def _(db_tests_table, selected_test_ids):
-    db_selected_ids = selected_test_ids(db_tests_table.value)
+def _(db_tests_table, selected_row_ids):
+    db_selected_ids = selected_row_ids(db_tests_table.value)
     db_selected_name = f"{len(db_selected_ids)} tests"
     if len(db_selected_ids) == 1:
         db_selected_name = f"#{db_selected_ids[0]}  {db_tests_table.value.iloc[0]['File name']}"
@@ -1757,6 +1781,7 @@ def _(
     db_saved_data_text,
     db_selected_ids,
     db_selected_name,
+    get_materials_version,
     mo,
     summary_download,
 ):
@@ -1766,6 +1791,7 @@ def _(
     # keystroke would re-run that cell, rebuild the tab and throw away what
     # was just typed. Other cells only get database_fill_panel, which is
     # plain layout, not a box. Ticking other tests starts the form again.
+    get_materials_version()
     _values = {}
     if len(db_selected_ids) == 1:
         _values = db_mod.get_info_values(db_selected_ids[0])
@@ -2180,405 +2206,184 @@ def _(
     return (batch_tab,)
 
 
-# ── AI (train a model, predict) ────────────────────────────────────────────
+# ── Materials ──────────────────────────────────────────────────────────────
 @app.cell
-def _(ai_model, mo):
-    # The trained model (a plain dict, see ai_model.py), starting with the
-    # one saved last time; the latest AI message; and the latest prediction.
-    get_ai_model, set_ai_model = mo.state(ai_model.load_model())
-    get_ai_msg, set_ai_msg = mo.state(None)
-    get_ai_prediction, set_ai_prediction = mo.state(None)
-    return get_ai_model, get_ai_msg, get_ai_prediction, set_ai_model, set_ai_msg, set_ai_prediction
+def _(mo):
+    get_material_msg, set_material_msg = mo.state(None)
+    # The material waiting for "Yes, delete": {"id": ..., "name": ...}.
+    get_material_pending, set_material_pending = mo.state(None)
+    return get_material_msg, get_material_pending, set_material_msg, set_material_pending
 
 
 @app.cell
 def _(mo):
-    # Own cell with no dependencies, so this button is never rebuilt.
-    ai_reload_btn = mo.ui.run_button(label="&#128260; Reload tests")
-    return (ai_reload_btn,)
+    material_confirm_btn = mo.ui.run_button(label="Yes, delete", kind="danger")
+    material_cancel_btn = mo.ui.run_button(label="Cancel")
+    return material_cancel_btn, material_confirm_btn
 
 
 @app.cell
-def _(ai_model, ai_reload_btn, db_mod, get_batch_log, get_columns_version, get_database_version, mo):
-    # The data table: one row per saved test. Tick "use" for the tests the
-    # model should learn from, and type in their temperature, humidity and
-    # material. Re-read from the database on Reload and after a batch run.
-    #
-    # The table, the parameter choice and the buttons are created AND laid
-    # out in this cell: marimo re-runs every cell that uses an element when
-    # its value changes, except the cell that created it. So typing in the
-    # table never rebuilds the table and throws the typing away.
-    ai_reload_btn.value
-    get_batch_log()
-    get_columns_version()
-    get_database_version()
+def _(get_active_tab, get_materials_version, info_fields, mo):
+    # Read again when this tab is opened, so "Tests" is up to date.
+    get_active_tab()
+    get_materials_version()
+    material_table = mo.ui.table(
+        info_fields.build_material_table(), selection="single", page_size=12,
+        show_column_summaries=False, show_data_types=False,
+    )
+    return (material_table,)
 
-    import pandas as _pd
 
-    # A column deleted on the Database tab is not offered here either.
-    _deleted = db_mod.deleted_info_fields()
+@app.cell
+def _(db_mod, form_rows_html, info_fields, material_table, mo, selected_row_ids):
+    # Without a ticked row the form adds a new material; with one, it changes
+    # that material. Created AND laid out here (see db_fill_form), so typing
+    # in it rebuilds nothing; ticking another material starts it again.
+    material_selected_id = None
+    _values = {}
+    _ids = selected_row_ids(material_table.value)
+    if len(_ids) == 1:
+        for _material in db_mod.list_materials():
+            if _material["id"] == _ids[0]:
+                material_selected_id = _ids[0]
+                _values = _material
 
-    _tests = db_mod.list_tests_df()
+    _boxes = {}
     _rows = []
-    for _i in range(len(_tests)):
-        _t = _tests.iloc[_i]
-        _material = _t["material"]
-        if _material is None or str(_material).lower() == "nan":
-            _material = ""
-        _rows.append({
-            "use": True,
-            "id": int(_t["id"]),
-            "file_name": _t["file_name"],
-            "temperature": ai_model.to_number(_t["temperature"]),
-            "humidity": ai_model.to_number(_t["humidity"]),
-            "material": _material,
-            "stroke_mm": ai_model.to_number(_t["stroke_mm"]),
-        })
-    _table = _pd.DataFrame(_rows, columns=["use", "id", "file_name", "temperature", "humidity", "material", "stroke_mm"])
-    _table = _table.drop(columns=_deleted)
+    for _attribute, _name, _unit, _kind in db_mod.MATERIAL_FIELDS:
+        _placeholder = ""
+        if _attribute == "hardness_scale":
+            _placeholder = "e.g. Shore A, Shore D, HV"
+        _boxes[_attribute] = mo.ui.text(
+            value=info_fields.value_as_text(_values.get(_attribute)),
+            placeholder=_placeholder, full_width=True,
+        )
+        _rows.append((
+            info_fields.html_label(_name), "{" + _attribute + "}", info_fields.html_label(_unit),
+        ))
+    material_form = mo.Html(form_rows_html(_rows)).batch(**_boxes)
 
-    _editable = ["use"]
-    for _name in ["temperature", "humidity", "material", "stroke_mm"]:
-        if _name not in _deleted:
-            _editable.append(_name)
-    ai_data_editor = mo.ui.data_editor(
-        _table,
-        editable_columns=_editable,
-        pagination=False,
+    material_delete_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
+    if material_selected_id is None:
+        material_save_btn = mo.ui.run_button(label="&#10133; Add material")
+        material_form_panel = mo.vstack([
+            mo.md("**Add a material**  \nOr tick a material in the table to change or delete it."),
+            material_form,
+            mo.hstack([material_save_btn], justify="start"),
+        ], gap=1)
+    else:
+        material_save_btn = mo.ui.run_button(label="&#128190; Save")
+        material_form_panel = mo.vstack([
+            mo.md(f"**Material {_values['name']}**"),
+            material_form,
+            mo.hstack([material_save_btn, material_delete_btn], justify="start", gap=1),
+        ], gap=1)
+    return (
+        material_delete_btn,
+        material_form,
+        material_form_panel,
+        material_save_btn,
+        material_selected_id,
     )
-    # marimo shows the dict's keys and gives back its values: so the keys
-    # are the readable labels and the values the names ai_model uses.
-    _feature_choices = {}
-    for _name in ai_model.ALL_FEATURES:
-        if _name not in _deleted:
-            _feature_choices[ai_model.FEATURE_LABELS[_name]] = _name
-    ai_features = mo.ui.multiselect(
-        options=_feature_choices,
-        value=list(_feature_choices.keys()),
-        label="Input parameters for the model",
-    )
-    ai_save_btn = mo.ui.run_button(label="&#128190; Save parameters")
-    ai_train_btn = mo.ui.run_button(label="&#129504; Train model")
-
-    ai_data_panel = mo.vstack([
-        mo.Html('<p class="panel-title">1. Data: choose the tests and type in their parameters</p>'),
-        mo.md(
-            "Tick **use** for the tests the model should learn from, and fill in "
-            "**temperature [&deg;C]**, **humidity [%]** and **material** "
-            "(**stroke_mm** is filled in from the file when a test is saved). Each evaluated "
-            "step of a test is one example: its speed and whether the speed is going up or "
-            "down come from the file, and a step counts more the more cycles it has. "
-            "Skipped steps, and tests with an empty parameter, are left out."
-        ),
-        ai_data_editor,
-        mo.hstack([ai_reload_btn, ai_save_btn], justify="start", gap=2),
-        mo.Html('<hr class="divider">'),
-        mo.Html('<p class="panel-title">2. Train</p>'),
-        mo.hstack([ai_features, ai_train_btn], justify="start", align="end", gap=2, wrap=True),
-    ], gap=2)
-    return ai_data_editor, ai_data_panel, ai_features, ai_save_btn, ai_train_btn
 
 
 @app.cell
-def _(ai_model, db_mod):
-    def save_ai_parameters(edited_table):
-        """Store the typed-in temperature / humidity / material / stroke of
-        every row of the data table on its saved test. The test's note is kept.
-        Returns how many tests were updated."""
-        import pandas as _pd
-        _table = _pd.DataFrame(edited_table)
-        _count = 0
-        for _i in range(len(_table)):
-            _row = _table.iloc[_i]
-            _test_id = int(_row["id"])
-            _details = db_mod.get_test_details(_test_id)
-            if _details is None:
-                continue
-            if "material" in _table.columns:
-                _material = _row["material"]
-                if _material is None or str(_material).strip() == "" or str(_material).lower() == "nan":
-                    _material = None
+def _(
+    db_mod,
+    get_materials_version,
+    info_fields,
+    material_form,
+    material_save_btn,
+    material_selected_id,
+    mo,
+    set_material_msg,
+    set_materials_version,
+):
+    if material_save_btn.value:
+        _values, _not_numbers = info_fields.read_material_form(material_form.value)
+        if len(_not_numbers) > 0:
+            set_material_msg(mo.callout(mo.md(
+                f"**Not saved:** {', '.join(_not_numbers)} must be a number."
+            ), kind="warn"))
+        else:
+            try:
+                if material_selected_id is None:
+                    _name = db_mod.add_material(_values)
+                    set_material_msg(mo.callout(mo.md(f"Added the material **{_name}**."), kind="success"))
                 else:
-                    _material = str(_material).strip()
-                _details["material"] = _material
-            if "temperature" in _table.columns:
-                _details["temperature"] = ai_model.to_number(_row["temperature"])
-            if "humidity" in _table.columns:
-                _details["humidity"] = ai_model.to_number(_row["humidity"])
-            if "stroke_mm" in _table.columns:
-                _details["stroke_mm"] = ai_model.to_number(_row["stroke_mm"])
-            db_mod.save_test_details(_test_id, _details)
-            _count = _count + 1
-        return _count
-    return (save_ai_parameters,)
+                    _name = db_mod.update_material(material_selected_id, _values)
+                    set_material_msg(mo.callout(mo.md(f"Saved the material **{_name}**."), kind="success"))
+                set_materials_version(get_materials_version() + 1)
+            except ValueError as _e:
+                set_material_msg(mo.callout(mo.md(f"**Not saved:** {_e}."), kind="warn"))
+    return
 
 
 @app.cell
-def _(ai_data_editor, ai_save_btn, mo, save_ai_parameters, set_ai_msg):
-    if ai_save_btn.value:
-        try:
-            _n = save_ai_parameters(ai_data_editor.value)
-            set_ai_msg(mo.callout(mo.md(f"Saved the parameters of **{_n}** tests."), kind="success"))
-        except Exception as _e:
-            set_ai_msg(mo.callout(mo.md(f"**Could not save the parameters:** {_e}"), kind="danger"))
+def _(db_mod, material_delete_btn, material_selected_id, set_material_msg, set_material_pending):
+    # A delete can't be undone, so this button only asks.
+    if material_delete_btn.value and material_selected_id is not None:
+        set_material_msg(None)
+        for _material in db_mod.list_materials():
+            if _material["id"] == material_selected_id:
+                set_material_pending({"id": material_selected_id, "name": _material["name"]})
     return
 
 
 @app.cell
 def _(
-    ai_data_editor,
-    ai_features,
-    ai_model,
-    ai_train_btn,
+    db_mod,
+    get_material_pending,
+    get_materials_version,
+    material_cancel_btn,
+    material_confirm_btn,
     mo,
-    save_ai_parameters,
-    set_ai_model,
-    set_ai_msg,
-    set_ai_prediction,
+    set_material_msg,
+    set_material_pending,
+    set_materials_version,
 ):
-    # "Train model": save the typed-in parameters first (so the model and
-    # the database agree), then learn from the ticked tests.
-    if ai_train_btn.value:
+    if material_cancel_btn.value:
+        set_material_pending(None)
+    if material_confirm_btn.value and get_material_pending() is not None:
+        _pending = get_material_pending()
+        set_material_pending(None)
         try:
-            save_ai_parameters(ai_data_editor.value)
-            import pandas as _pd
-            _table = _pd.DataFrame(ai_data_editor.value)
-            _ids = []
-            for _i in range(len(_table)):
-                if bool(_table.iloc[_i]["use"]):
-                    _ids.append(int(_table.iloc[_i]["id"]))
-            if len(_ids) == 0:
-                raise ValueError("tick **use** for at least one test")
-            # Keep the parameters in the fixed order of ai_model.ALL_FEATURES.
-            _features = []
-            for _name in ai_model.ALL_FEATURES:
-                if _name in ai_features.value:
-                    _features.append(_name)
-            _training = ai_model.build_training_table(_ids)
-            _model = ai_model.train(_training, _features)
-            ai_model.save_model(_model)
-            set_ai_model(_model)
-            set_ai_prediction(None)
-            set_ai_msg(mo.callout(mo.md(
-                f"Trained on **{_model['n_rows']}** steps from **{_model['n_tests']}** tests "
-                f"({_model['n_rows_left_out']} steps left out because a parameter was missing)."
-            ), kind="success"))
+            _name = db_mod.delete_material(_pending["id"])
+            set_material_msg(mo.callout(mo.md(f"Deleted the material **{_name}**."), kind="success"))
+            set_materials_version(get_materials_version() + 1)
         except ValueError as _e:
-            set_ai_msg(mo.callout(mo.md(f"**Not trained:** {_e}"), kind="warn"))
-        except Exception as _e:
-            set_ai_msg(mo.callout(mo.md(f"**Training failed:** {_e}"), kind="danger"))
+            set_material_msg(mo.callout(mo.md(f"**Not deleted:** {_e}."), kind="warn"))
     return
 
 
 @app.cell
-def _(ai_model, get_ai_model, mo):
-    # What the trained model looks like: how good it is and what it learned.
-    _model = get_ai_model()
-    if _model is None:
-        ai_model_panel = mo.md("_No model trained yet._")
-    else:
-        _names = []
-        for _f in _model["features"]:
-            _names.append(ai_model.FEATURE_LABELS[_f])
-        _parts = [
-            mo.md(
-                f"**Model inputs:** {', '.join(_names)}  \n"
-                f"**Trained on:** {_model['n_rows']} steps from {_model['n_tests']} tests"
-            ),
-        ]
-        _error = _model["error"]
-        if _error is None:
-            _parts.append(mo.md("_Accuracy needs at least 2 tests._"))
-        else:
-            _parts.append(mo.md(
-                "**Accuracy on a test the model has not seen** (average error, "
-                "each test predicted by a model trained on the others):\n\n"
-                "| | Model | Just guessing the average |\n|---|---|---|\n"
-                f"| Static CoF | {_error['static_cof']['model']:.4f} | {_error['static_cof']['average_guess']:.4f} |\n"
-                f"| Dynamic CoF | {_error['dynamic_cof']['model']:.4f} | {_error['dynamic_cof']['average_guess']:.4f} |\n\n"
-                "The model is only useful when its error is clearly smaller than the guess."
-            ))
-        _parts.append(mo.md("**What the model learned** (change of the CoF per unit of each input):"))
-        _parts.append(mo.ui.table(
-            ai_model.coefficients_table(_model), selection=None,
-            pagination=False, show_column_summaries=False, show_data_types=False,
-        ))
-        ai_model_panel = mo.vstack(_parts, gap=1)
-    return (ai_model_panel,)
-
-
-@app.cell
-def _(ai_model, get_ai_model, mo):
-    # The prediction inputs: the test conditions (every model input except
-    # the speed), the speed program (the steps to predict, in U/min, in test
-    # order) and the stroke (to turn U/min into m/s for the plots). Rebuilt
-    # only when a new model is trained; created and laid out here for the
-    # same reason as the data table above.
-    _model = get_ai_model()
-    ai_predict_inputs = None
-    ai_predict_btn = mo.ui.run_button(label="&#128302; Predict")
-    if _model is None:
-        ai_predict_panel = mo.md("_Train a model first._")
-    else:
-        _boxes = {}
-        for _name in _model["features"]:
-            # speed and going up/down come from the speed program below,
-            # the stroke from its own box (it is also needed for m/s).
-            if _name == "speed" or _name == "going_down" or _name == "stroke_mm":
-                continue
-            if _name == "material":
-                _boxes[_name] = mo.ui.dropdown(
-                    options=_model["materials"], value=_model["materials"][0],
-                    label=ai_model.FEATURE_LABELS[_name],
-                )
-            else:
-                # Start in the middle of what the model was trained on.
-                _low = _model["ranges"][_name][0]
-                _high = _model["ranges"][_name][1]
-                _boxes[_name] = mo.ui.number(
-                    value=round((_low + _high) / 2, 2),
-                    label=ai_model.FEATURE_LABELS[_name],
-                )
-        _stroke_default = 24
-        if "stroke_mm" in _model["ranges"]:
-            _stroke_default = _model["ranges"]["stroke_mm"][1]
-        _boxes["stroke_mm"] = mo.ui.number(value=_stroke_default, start=0.1, label="Stroke [mm]")
-        # Fixed-width wrapper: marimo's text box is sized to its host element.
-        _program_tpl = mo.Html(
-            '<div style="display:flex;align-items:center;gap:6px">'
-            '<span style="font-size:0.82rem;color:#444;white-space:nowrap">Speed program [U/min]</span>'
-            '<div style="width:440px">{speeds}</div></div>'
-        )
-        _boxes["speeds"] = _program_tpl.batch(speeds=mo.ui.text(
-            value="30, 60, 120, 180, 240, 360, 480, 360, 240, 180, 120, 60, 30",
-        ))
-        ai_predict_inputs = mo.ui.dictionary(_boxes)
-
-        _condition_boxes = []
-        for _name in _boxes:
-            if _name != "speeds":
-                _condition_boxes.append(ai_predict_inputs[_name])
-        ai_predict_panel = mo.vstack([
-            mo.hstack(_condition_boxes, justify="start", align="end", gap=2, wrap=True),
-            mo.hstack([ai_predict_inputs["speeds"], ai_predict_btn], justify="start", align="center", gap=2, wrap=True),
-        ], gap=2)
-    return ai_predict_btn, ai_predict_inputs, ai_predict_panel
-
-
-@app.cell
-def _(ai_model, ai_predict_btn, ai_predict_inputs, charts, get_ai_model, mo, set_ai_prediction):
-    # "Predict": one prediction per step of the speed program, shown the same
-    # way as a saved test on the Database tab - static and sliding friction against
-    # mean velocity - plus the numbers as a table.
-    if ai_predict_btn.value and ai_predict_inputs is not None:
-        import pandas as _pd
-        _model = get_ai_model()
-        _values = ai_predict_inputs.value
-        try:
-            # The speed program: numbers separated by commas or spaces.
-            _speeds = []
-            for _part in _values["speeds"]["speeds"].replace(";", ",").replace(" ", ",").split(","):
-                if _part.strip() == "":
-                    continue
-                _speed = ai_model.to_number(_part)
-                if _speed is None or _speed <= 0:
-                    raise ValueError(f"'{_part}' in the speed program is not a speed above 0")
-                _speeds.append(_speed)
-            if len(_speeds) == 0:
-                raise ValueError("type at least one speed into the speed program")
-            _stroke = _values["stroke_mm"]
-            # 0 up to the fastest step of the program, 1 after it.
-            _going_down = ai_model.going_down_flags(_speeds)
-
-            _rows = []
-            _outside = []
-            for _k in range(len(_speeds)):
-                _inputs = {}
-                for _name in _model["features"]:
-                    if _name == "speed":
-                        _inputs[_name] = _speeds[_k]
-                    elif _name == "going_down":
-                        _inputs[_name] = _going_down[_k]
-                    else:
-                        _inputs[_name] = _values[_name]
-                _predicted = ai_model.predict(_model, _inputs)
-                for _name in ai_model.outside_training_range(_model, _inputs):
-                    if _name not in _outside:
-                        _outside.append(_name)
-                _velocity = None
-                if _stroke is not None and _stroke > 0:
-                    _velocity = 2 * (_stroke / 1000.0) * _speeds[_k] / 60.0
-                if _going_down[_k] == 1:
-                    _direction = "down"
-                else:
-                    _direction = "up"
-                _rows.append({
-                    "Step": _k + 1,
-                    "Speed [U/min]": _speeds[_k],
-                    "Up / down": _direction,
-                    "Mean velocity [m/s]": _velocity,
-                    "Predicted static CoF": round(_predicted["static_cof"], 5),
-                    "Static std dev": round(_predicted["static_sd"], 5),
-                    "Predicted sliding CoF": round(_predicted["dynamic_cof"], 5),
-                    "Sliding std dev": round(_predicted["dynamic_sd"], 5),
-                })
-            _table = _pd.DataFrame(_rows)
-
-            # Same shape as database.get_step_results, so the saved test plot
-            # function draws it, with the predicted std dev as error bars.
-            _for_plot = _pd.DataFrame({
-                "start": list(range(len(_speeds))),
-                "end": list(range(1, len(_speeds) + 1)),
-                "speed": _speeds,
-                "static_mean": _table["Predicted static CoF"],
-                "static_sd": _table["Static std dev"],
-                "dynamic_mean": _table["Predicted sliding CoF"],
-                "dynamic_sd": _table["Sliding std dev"],
-            })
-            _stroke_for_plot = None
-            if _stroke is not None and _stroke > 0:
-                _stroke_for_plot = float(_stroke)
-            _figures = charts.build_friction_velocity_figures(_for_plot, _stroke_for_plot, "Prediction")
-
-            _parts = []
-            if len(_outside) > 0:
-                _parts.append(mo.callout(mo.md(
-                    "Careful: " + ", ".join(_outside)
-                    + " goes outside the data the model learned from, so those values are a rough guess."
-                ), kind="warn"))
-            _parts.append(mo.ui.plotly(_figures[0]))
-            _parts.append(mo.ui.plotly(_figures[1]))
-            _parts.append(mo.ui.table(
-                _table, selection=None,
-                pagination=False, show_column_summaries=False, show_data_types=False,
-            ))
-            set_ai_prediction(mo.vstack(_parts, gap=1))
-        except ValueError as _e:
-            set_ai_prediction(mo.callout(mo.md(f"**Cannot predict:** {_e}"), kind="warn"))
-    return
-
-
-@app.cell
-def _(PANEL_STYLE, ai_data_panel, ai_model_panel, ai_predict_panel, get_ai_msg, get_ai_prediction, mo):
-    _msg = get_ai_msg()
-    if _msg is None:
-        _msg = mo.Html("")
-    _prediction = get_ai_prediction()
-    if _prediction is None:
-        _prediction = mo.Html("")
-    ai_tab = mo.vstack([
-        mo.vstack([ai_data_panel, _msg], gap=2).style(PANEL_STYLE),
-        mo.vstack([
-            mo.Html('<p class="panel-title">3. Model</p>'),
-            ai_model_panel,
-        ], gap=1).style(PANEL_STYLE),
-        mo.vstack([
-            mo.Html('<p class="panel-title">4. Predict</p>'),
-            ai_predict_panel,
-            _prediction,
-        ], gap=2).style(PANEL_STYLE),
+def _(
+    PANEL_STYLE,
+    get_material_msg,
+    get_material_pending,
+    material_cancel_btn,
+    material_confirm_btn,
+    material_form_panel,
+    material_table,
+    mo,
+):
+    # Like on the Database tab, a question or message comes right under the
+    # buttons, above the table.
+    _parts = [material_form_panel]
+    _pending = get_material_pending()
+    if _pending is not None:
+        _parts.append(mo.callout(mo.vstack([
+            mo.md(f"Delete the material **{_pending['name']}**? This can't be undone."),
+            mo.hstack([material_confirm_btn, material_cancel_btn], justify="start", gap=1),
+        ], gap=1), kind="warn"))
+    if get_material_msg() is not None:
+        _parts.append(get_material_msg())
+    _parts.append(mo.Html('<hr class="divider">'))
+    _parts.append(material_table)
+    materials_tab = mo.vstack([
+        mo.vstack(_parts, gap=2).style(PANEL_STYLE),
     ], gap=2).style({"padding": "20px 0"})
-    return (ai_tab,)
+    return (materials_tab,)
 
 
 # ── Final layout ───────────────────────────────────────────────────────────
@@ -2725,13 +2530,13 @@ def _(mo):
     ANALYSIS_TAB = "&#128202;  Analysis"
     BATCH_TAB = "&#128193;  Batch"
     DATABASE_TAB = "&#128451;  Database"
-    AI_TAB = "&#129504;  AI"
+    MATERIALS_TAB = "&#129521;  Materials"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, get_active_tab, set_active_tab
+    return ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, ai_tab, batch_tab, database_tab, get_active_tab, mo, results_tab):
+def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, batch_tab, database_tab, get_active_tab, materials_tab, mo, results_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -2751,14 +2556,14 @@ def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, ai_tab, batch_tab, database
         ANALYSIS_TAB: _placeholder,
         BATCH_TAB: _placeholder,
         DATABASE_TAB: _placeholder,
-        AI_TAB: _placeholder,
+        MATERIALS_TAB: _placeholder,
     }
     if get_active_tab() == BATCH_TAB:
         tab_contents[BATCH_TAB] = batch_tab
     elif get_active_tab() == DATABASE_TAB:
         tab_contents[DATABASE_TAB] = database_tab
-    elif get_active_tab() == AI_TAB:
-        tab_contents[AI_TAB] = ai_tab
+    elif get_active_tab() == MATERIALS_TAB:
+        tab_contents[MATERIALS_TAB] = materials_tab
     else:
         tab_contents[ANALYSIS_TAB] = results_tab
     return (tab_contents,)

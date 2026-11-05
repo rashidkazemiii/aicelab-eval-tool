@@ -1,6 +1,6 @@
 """The information typed in about a test: reading what the user typed on the
-save form and the Database tab's form, and the Database
-tab's tables.
+save form and the Database tab's form, the Database tab's tables, and the
+Materials tab's form and table.
 
 Everything is typed as text. A "number" column must hold a number (a decimal
 comma is fine); an empty box means "not known".
@@ -132,6 +132,36 @@ def build_column_table():
             "Can be changed": can_change,
         })
     return pd.DataFrame(rows, columns=["Column", "Unit", "Type", "Filled in", "Can be changed"])
+
+
+def read_material_form(typed):
+    """Read the Materials tab's form. `typed` is {attribute: typed text}.
+    Returns (values, list of number boxes holding something else); values
+    is {attribute: value or None}."""
+    values = {}
+    not_numbers = []
+    for attribute, name, unit, kind in database.MATERIAL_FIELDS:
+        value, is_valid = read_typed_value({"kind": kind}, typed.get(attribute))
+        if not is_valid:
+            not_numbers.append(name)
+        values[attribute] = value
+    return values, not_numbers
+
+
+def build_material_table():
+    """The Materials tab's table: one row per material. All cells are text."""
+    names = ["id"]
+    for attribute, name, unit, kind in database.MATERIAL_FIELDS:
+        names.append(database.column_label(name, unit))
+    names.append("Tests")
+
+    rows = []
+    for material in database.list_materials():
+        row = {"id": material["id"], "Tests": material["n_tests"]}
+        for attribute, name, unit, kind in database.MATERIAL_FIELDS:
+            row[database.column_label(name, unit)] = _text_or_empty(material[attribute])
+        rows.append(row)
+    return pd.DataFrame(rows, columns=names)
 
 
 def save_typed_values(test_ids, typed):

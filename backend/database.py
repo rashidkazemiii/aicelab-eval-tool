@@ -15,6 +15,7 @@ One SQLite file (tribology.db, next to this module) holds:
   info_columns — the information columns shown on the Database tab: the
                  built-in ones (stored on tests) and the ones added by hand
   info_values  — one row per filled-in value of an added column
+  materials    — one row per material (Materials tab): its name and properties
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ class Test(Base):
     # before this column existed = fixed_window.
     static_method = Column(String)
 
-    # Test conditions, typed in by hand on the Database / AI tab. Kept with
+    # Test conditions, typed in by hand on the Database tab. Kept with
     # the test so a model can later learn how they affect the CoF.
     # NULL = not filled in yet.
     temperature   = Column(Float)    # [deg C]
@@ -205,8 +206,8 @@ class InfoColumn(Base):
     A built-in column keeps its values on the tests table: `field` names
     the Test attribute. A column added by hand has field = NULL and keeps
     its values in info_values. Deleting a built-in column clears its values
-    and sets `deleted`, because the Test attribute itself must stay: the AI
-    tab and Export summary read it. A deleted one can be added again.
+    and sets `deleted`, because the Test attribute itself must stay: Export
+    summary reads it. A deleted one can be added again.
 
     The unit is kept apart from the name, so a form can show it next to the
     box. unit = NULL means the row was saved before this field existed;
@@ -232,6 +233,27 @@ class InfoValue(Base):
     value     = Column(Text)
 
     test = relationship("Test", back_populates="info_values")
+
+
+class Material(Base):
+    """One material and its own properties (Materials tab). A test keeps the
+    material's name in tests.material, so changing the name here also
+    changes it on those tests (see update_material). Temperature and
+    humidity are not here: they belong to the test's environment."""
+    __tablename__ = "materials"
+
+    id                   = Column(Integer, primary_key=True)
+    name                 = Column(String, nullable=False)
+    density              = Column(Float)
+    hardness             = Column(Float)
+    hardness_scale       = Column(String)
+    elastic_modulus      = Column(Float)
+    poisson_ratio        = Column(Float)
+    roughness_ra         = Column(Float)
+    thermal_conductivity = Column(Float)
+    specific_heat        = Column(Float)
+    contact_angle        = Column(Float)
+    note                 = Column(Text)
 
 
 class RawSample(Base):
@@ -273,14 +295,16 @@ def create_tables() -> None:
                     ))
     _add_builtin_info_columns()
     _move_units_out_of_names()
+    _add_materials_from_tests()
 
 
 # (name, unit, kind, Test attribute, protected). Stroke is protected because
-# the velocity charts and Export summary need it, in mm.
+# the velocity charts and Export summary need it, in mm. Material is, because
+# it is chosen from the Materials tab's list.
 BUILTIN_INFO_COLUMNS = [
     ("Temperature", "°C", "number", "temperature", 0),
     ("Humidity", "%", "number", "humidity", 0),
-    ("Material", "", "text", "material", 0),
+    ("Material", "", "text", "material", 1),
     ("Stroke", "mm", "number", "stroke_mm", 1),
     ("Note", "", "text", "note", 0),
 ]
@@ -304,6 +328,30 @@ def _add_builtin_info_columns() -> None:
             if found is None:
                 db.add(InfoColumn(name=name, unit=unit, kind=kind, field=field,
                                   protected=protected, deleted=0))
+            elif protected:
+                # Saved before this column was protected.
+                found.protected = 1
+                found.deleted = 0
+        db.commit()
+    finally:
+        db.close()
+
+
+def _add_materials_from_tests() -> None:
+    """A material typed in by hand on a test, from before there was a list
+    to choose from, joins the list once, so the test can still show it."""
+    db = SessionLocal()
+    try:
+        known = []
+        for r in db.query(Material).all():
+            known.append(r.name)
+        for row in db.query(Test.material).distinct().all():
+            name = row[0]
+            if name is None or name.strip() == "" or name.strip().lower() == "nan":
+                continue
+            if name not in known:
+                known.append(name)
+                db.add(Material(name=name))
         db.commit()
     finally:
         db.close()
@@ -1148,6 +1196,121 @@ def save_info_values(test_id: int, values: dict) -> bool:
                 db.add(InfoValue(test_id=test_id, column_id=column["id"], value=str(value)))
         db.commit()
         return True
+    finally:
+        db.close()
+
+
+# The boxes of the Materials tab: (Material attribute, name, unit, kind).
+# To add a property, add a Column to Material and a line here; create_tables
+# adds the column to the database at the next start.
+MATERIAL_FIELDS = [
+    ("name", "Name", "", "text"),
+    ("density", "Bulk density", "kg/m³", "number"),
+    ("hardness", "Hardness", "", "number"),
+    ("hardness_scale", "Hardness scale", "", "text"),
+    ("elastic_modulus", "Elastic modulus", "GPa", "number"),
+    ("poisson_ratio", "Poisson's ratio", "", "number"),
+    ("roughness_ra", "Roughness Ra", "µm", "number"),
+    ("thermal_conductivity", "Thermal conductivity", "W/(m·K)", "number"),
+    ("specific_heat", "Specific heat", "J/(kg·K)", "number"),
+    ("contact_angle", "Water contact angle", "°", "number"),
+    ("note", "Note", "", "text"),
+]
+
+
+def list_materials() -> list[dict]:
+    """Every material, sorted by name: {"id", "n_tests", and one key per
+    attribute of MATERIAL_FIELDS}. n_tests is how many tests use it."""
+    db = SessionLocal()
+    try:
+        n_tests = {}
+        for row in db.query(Test.material, func.count(Test.id)).group_by(Test.material).all():
+            n_tests[row[0]] = row[1]
+        materials = []
+        for r in db.query(Material).all():
+            material = {"id": r.id, "n_tests": n_tests.get(r.name, 0)}
+            for field in MATERIAL_FIELDS:
+                material[field[0]] = getattr(r, field[0])
+            materials.append(material)
+    finally:
+        db.close()
+    materials.sort(key=_material_sort_name)
+    return materials
+
+
+def _material_sort_name(material: dict) -> str:
+    return material["name"].lower()
+
+
+def _clean_material_name(db, material_id, name) -> str:
+    """The name to store. Raises ValueError when it is empty or another
+    material has it already. `material_id` is None for a new material."""
+    if name is None or name.strip() == "":
+        raise ValueError("the name is empty")
+    name = name.strip()
+    for r in db.query(Material).all():
+        if r.id != material_id and r.name.lower() == name.lower():
+            raise ValueError(f"there is already a material named {r.name}")
+    return name
+
+
+def add_material(values: dict) -> str:
+    """Store a new material. `values` is {attribute: value or None}. Returns
+    its name. Raises ValueError for an empty or taken name."""
+    db = SessionLocal()
+    try:
+        material = Material()
+        material.name = _clean_material_name(db, None, values.get("name"))
+        for field in MATERIAL_FIELDS:
+            if field[0] != "name":
+                setattr(material, field[0], values.get(field[0]))
+        db.add(material)
+        db.commit()
+        return material.name
+    finally:
+        db.close()
+
+
+def update_material(material_id: int, values: dict) -> str:
+    """Store a material's new values. A new name also goes onto the tests
+    that use it. Returns its name. Raises ValueError for an empty or taken
+    name."""
+    db = SessionLocal()
+    try:
+        material = db.query(Material).filter(Material.id == material_id).first()
+        if material is None:
+            raise ValueError("that material no longer exists")
+        new_name = _clean_material_name(db, material_id, values.get("name"))
+        (db.query(Test).filter(Test.material == material.name)
+         .update({Test.material: new_name}))
+        material.name = new_name
+        for field in MATERIAL_FIELDS:
+            if field[0] != "name":
+                setattr(material, field[0], values.get(field[0]))
+        db.commit()
+        return new_name
+    finally:
+        db.close()
+
+
+def delete_material(material_id: int) -> str:
+    """Delete a material. Returns its name. Raises ValueError when tests
+    still use it, because they would lose their material."""
+    db = SessionLocal()
+    try:
+        material = db.query(Material).filter(Material.id == material_id).first()
+        if material is None:
+            raise ValueError("that material no longer exists")
+        n_tests = db.query(Test).filter(Test.material == material.name).count()
+        if n_tests > 0:
+            raise ValueError(
+                f"{material.name} is used on {n_tests} test(s). "
+                "Choose another material on those tests first"
+            )
+        name = material.name
+        db.delete(material)
+        db.commit()
+        return name
     finally:
         db.close()
 
