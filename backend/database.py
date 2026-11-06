@@ -16,6 +16,8 @@ One SQLite file (tribology.db, next to this module) holds:
                  built-in ones (stored on tests) and the ones added by hand
   info_values  — one row per filled-in value of an added column
   materials    — one row per material (Materials tab): its name and properties
+  samples      — one row per sample (Samples tab): its material, surface
+                 treatment and roughness
 """
 
 from __future__ import annotations
@@ -65,9 +67,21 @@ class Test(Base):
     # Test conditions, typed in by hand on the Database tab. Kept with
     # the test so a model can later learn how they affect the CoF.
     # NULL = not filled in yet.
-    temperature   = Column(Float)    # [deg C]
+    temperature   = Column(Float)    # [deg C], of the air in the cooling chamber
     humidity      = Column(Float)    # [%]
+    # Copied from the test's sample, so a test can be read on its own. Kept
+    # right by _set_test_sample, update_sample and update_material.
     material      = Column(String)
+    sample        = Column(String)   # a Sample's name
+    normal_force  = Column(Float)    # [N]
+    ice_state     = Column(String)   # see COLUMN_CHOICES
+    chamber_state = Column(String)   # see COLUMN_CHOICES
+    cooling_place = Column(String)   # see COLUMN_CHOICES
+    cooling_wait  = Column(Float)    # [min] between cooling the sample and the test
+    ice_order     = Column(String)   # number of the test on this ice: 1A, 1B, 2A...
+    ice_surface_temp = Column(Float) # [deg C]
+    ice_bulk_temp    = Column(Float) # [deg C]
+    ice_unevenness   = Column(Float) # [um]
     note          = Column(Text)
     # Stroke of the eccentric ("Hub Exzenter" in the file header), read from
     # the file when the test is saved; can also be typed in on the Database tab. Needed
@@ -236,10 +250,11 @@ class InfoValue(Base):
 
 
 class Material(Base):
-    """One material and its own properties (Materials tab). A test keeps the
-    material's name in tests.material, so changing the name here also
-    changes it on those tests (see update_material). Temperature and
-    humidity are not here: they belong to the test's environment."""
+    """One material and its own properties (Materials tab). Samples and
+    tests keep the material's name, so changing the name here also changes
+    it there (see update_material). Temperature and humidity are not here:
+    they belong to the test's environment. Roughness is not here either: it
+    differs per sample of the same material."""
     __tablename__ = "materials"
 
     id                   = Column(Integer, primary_key=True)
@@ -249,11 +264,30 @@ class Material(Base):
     hardness_scale       = Column(String)
     elastic_modulus      = Column(Float)
     poisson_ratio        = Column(Float)
-    roughness_ra         = Column(Float)
     thermal_conductivity = Column(Float)
     specific_heat        = Column(Float)
     contact_angle        = Column(Float)
     note                 = Column(Text)
+
+
+class Sample(Base):
+    """One sample (Samples tab): a piece of a material with its own surface.
+    A test chooses a sample, and gets its material from it. Tests keep the
+    sample's name, so changing the name here also changes it there (see
+    update_sample)."""
+    __tablename__ = "samples"
+
+    id                = Column(Integer, primary_key=True)
+    name              = Column(String, nullable=False)
+    material          = Column(String)   # a Material's name
+    surface_treatment = Column(String)
+    chamfer           = Column(String)   # see SAMPLE_CHOICES
+    ra                = Column(Float)    # [um]
+    rz                = Column(Float)    # [um]
+    rq                = Column(Float)    # [um]
+    rsk               = Column(Float)
+    rku               = Column(Float)
+    note              = Column(Text)
 
 
 class RawSample(Base):
@@ -298,22 +332,38 @@ def create_tables() -> None:
     _add_materials_from_tests()
 
 
-# (name, unit, kind, Test attribute, protected). Stroke is protected because
-# the velocity charts and Export summary need it, in mm. Material is, because
-# it is chosen from the Materials tab's list.
+# (name, unit, kind, Test attribute, protected), in the order they are shown.
+# Stroke is protected because the velocity charts and Export summary need it,
+# in mm. Sample is, because it is chosen from the Samples tab's list.
 BUILTIN_INFO_COLUMNS = [
-    ("Temperature", "°C", "number", "temperature", 0),
+    ("Sample", "", "text", "sample", 1),
+    ("Normal force", "N", "number", "normal_force", 0),
+    ("Ice", "", "text", "ice_state", 0),
+    ("Chamber temperature", "°C", "number", "temperature", 0),
     ("Humidity", "%", "number", "humidity", 0),
-    ("Material", "", "text", "material", 1),
+    ("Chamber", "", "text", "chamber_state", 0),
+    ("Sample cooled in", "", "text", "cooling_place", 0),
+    ("Time after cooling", "min", "number", "cooling_wait", 0),
+    ("Test order on ice", "", "text", "ice_order", 0),
+    ("Ice surface temperature", "°C", "number", "ice_surface_temp", 0),
+    ("Ice bulk temperature", "°C", "number", "ice_bulk_temp", 0),
+    ("Ice unevenness", "µm", "number", "ice_unevenness", 0),
     ("Stroke", "mm", "number", "stroke_mm", 1),
     ("Note", "", "text", "note", 0),
 ]
+
+# The columns chosen from a fixed list: {Test attribute: choices}.
+COLUMN_CHOICES = {
+    "ice_state": ["dry", "wet"],
+    "chamber_state": ["open", "closed", "closed (plexiglass)", "covered with plastic foil"],
+    "cooling_place": ["freezer", "cooling chamber"],
+}
 
 # Names the Database tab's two tables already use, so no added column can
 # have them. Compared in lower case.
 RESERVED_COLUMN_NAMES = [
     "id", "file name", "saved", "evaluation", "filter pts", "static %",
-    "dyn min %", "dyn max %", "steps", "empty fields",
+    "dyn min %", "dyn max %", "steps", "empty fields", "material",
     "step", "start", "end", "drehzahl", "velocity", "direction",
     "static cof", "static sd", "dynamic cof", "dynamic sd", "step note",
 ]
@@ -323,6 +373,13 @@ def _add_builtin_info_columns() -> None:
     """Put each built-in column into info_columns once."""
     db = SessionLocal()
     try:
+        # A test's material comes from its sample now, so it is no box any
+        # more. The name of this column is the one from before ice
+        # temperatures were stored too.
+        db.query(InfoColumn).filter(InfoColumn.field == "material").delete()
+        (db.query(InfoColumn)
+         .filter(InfoColumn.field == "temperature", InfoColumn.name == "Temperature")
+         .update({InfoColumn.name: "Chamber temperature"}))
         for name, unit, kind, field, protected in BUILTIN_INFO_COLUMNS:
             found = db.query(InfoColumn).filter(InfoColumn.field == field).first()
             if found is None:
@@ -1019,7 +1076,17 @@ def list_info_columns() -> list[dict]:
                 "field": r.field,
                 "protected": bool(r.protected),
             })
+    columns.sort(key=_column_position)
     return columns
+
+
+def _column_position(column: dict) -> tuple:
+    """Sorts built-in columns in the order of BUILTIN_INFO_COLUMNS, then the
+    added ones, oldest first."""
+    for position in range(len(BUILTIN_INFO_COLUMNS)):
+        if BUILTIN_INFO_COLUMNS[position][3] == column["field"]:
+            return (position, 0)
+    return (len(BUILTIN_INFO_COLUMNS), column["id"])
 
 
 def deleted_info_fields() -> list[str]:
@@ -1172,6 +1239,17 @@ def get_info_values(test_id: int) -> dict:
     return {}
 
 
+def _set_test_sample(db, test, sample_name) -> None:
+    """Give a test its sample, and with it the sample's material."""
+    if sample_name is not None:
+        sample = db.query(Sample).filter(Sample.name == sample_name).first()
+        if sample is not None:
+            test.material = sample.material
+    elif test.sample is not None:
+        test.material = None
+    test.sample = sample_name
+
+
 def save_info_values(test_id: int, values: dict) -> bool:
     """Store a test's information. `values` is {column id: value or None};
     columns not in it are left as they are. Returns whether the test was
@@ -1186,6 +1264,9 @@ def save_info_values(test_id: int, values: dict) -> bool:
             if column["id"] not in values:
                 continue
             value = values[column["id"]]
+            if column["field"] == "sample":
+                _set_test_sample(db, test, value)
+                continue
             if column["field"] is not None:
                 setattr(test, column["field"], value)
                 continue
@@ -1210,12 +1291,27 @@ MATERIAL_FIELDS = [
     ("hardness_scale", "Hardness scale", "", "text"),
     ("elastic_modulus", "Elastic modulus", "GPa", "number"),
     ("poisson_ratio", "Poisson's ratio", "", "number"),
-    ("roughness_ra", "Roughness Ra", "µm", "number"),
     ("thermal_conductivity", "Thermal conductivity", "W/(m·K)", "number"),
     ("specific_heat", "Specific heat", "J/(kg·K)", "number"),
     ("contact_angle", "Water contact angle", "°", "number"),
     ("note", "Note", "", "text"),
 ]
+
+# The boxes of the Samples tab, the same way.
+SAMPLE_FIELDS = [
+    ("name", "Name", "", "text"),
+    ("material", "Material", "", "text"),
+    ("surface_treatment", "Surface treatment", "", "text"),
+    ("chamfer", "Chamfer", "", "text"),
+    ("ra", "Ra", "µm", "number"),
+    ("rz", "Rz", "µm", "number"),
+    ("rq", "Rq", "µm", "number"),
+    ("rsk", "Rsk", "", "number"),
+    ("rku", "Rku", "", "number"),
+    ("note", "Note", "", "text"),
+]
+
+SAMPLE_CHOICES = {"chamfer": ["yes", "no"]}
 
 
 def list_materials() -> list[dict]:
@@ -1234,23 +1330,24 @@ def list_materials() -> list[dict]:
             materials.append(material)
     finally:
         db.close()
-    materials.sort(key=_material_sort_name)
+    materials.sort(key=_name_for_sorting)
     return materials
 
 
-def _material_sort_name(material: dict) -> str:
-    return material["name"].lower()
+def _name_for_sorting(item: dict) -> str:
+    return item["name"].lower()
 
 
-def _clean_material_name(db, material_id, name) -> str:
-    """The name to store. Raises ValueError when it is empty or another
-    material has it already. `material_id` is None for a new material."""
+def _clean_name(db, model, item_id, name) -> str:
+    """The name to store for a Material or Sample (`model`). Raises
+    ValueError when it is empty or another one has it already. `item_id` is
+    None for a new one."""
     if name is None or name.strip() == "":
         raise ValueError("the name is empty")
     name = name.strip()
-    for r in db.query(Material).all():
-        if r.id != material_id and r.name.lower() == name.lower():
-            raise ValueError(f"there is already a material named {r.name}")
+    for r in db.query(model).all():
+        if r.id != item_id and r.name.lower() == name.lower():
+            raise ValueError(f"the name {r.name} is already used")
     return name
 
 
@@ -1260,7 +1357,7 @@ def add_material(values: dict) -> str:
     db = SessionLocal()
     try:
         material = Material()
-        material.name = _clean_material_name(db, None, values.get("name"))
+        material.name = _clean_name(db, Material, None, values.get("name"))
         for field in MATERIAL_FIELDS:
             if field[0] != "name":
                 setattr(material, field[0], values.get(field[0]))
@@ -1272,17 +1369,19 @@ def add_material(values: dict) -> str:
 
 
 def update_material(material_id: int, values: dict) -> str:
-    """Store a material's new values. A new name also goes onto the tests
-    that use it. Returns its name. Raises ValueError for an empty or taken
-    name."""
+    """Store a material's new values. A new name also goes onto the samples
+    and tests that use it. Returns its name. Raises ValueError for an empty
+    or taken name."""
     db = SessionLocal()
     try:
         material = db.query(Material).filter(Material.id == material_id).first()
         if material is None:
             raise ValueError("that material no longer exists")
-        new_name = _clean_material_name(db, material_id, values.get("name"))
+        new_name = _clean_name(db, Material, material_id, values.get("name"))
         (db.query(Test).filter(Test.material == material.name)
          .update({Test.material: new_name}))
+        (db.query(Sample).filter(Sample.material == material.name)
+         .update({Sample.material: new_name}))
         material.name = new_name
         for field in MATERIAL_FIELDS:
             if field[0] != "name":
@@ -1294,8 +1393,8 @@ def update_material(material_id: int, values: dict) -> str:
 
 
 def delete_material(material_id: int) -> str:
-    """Delete a material. Returns its name. Raises ValueError when tests
-    still use it, because they would lose their material."""
+    """Delete a material. Returns its name. Raises ValueError when samples
+    or tests still use it, because they would lose their material."""
     db = SessionLocal()
     try:
         material = db.query(Material).filter(Material.id == material_id).first()
@@ -1307,8 +1406,95 @@ def delete_material(material_id: int) -> str:
                 f"{material.name} is used on {n_tests} test(s). "
                 "Choose another material on those tests first"
             )
+        n_samples = db.query(Sample).filter(Sample.material == material.name).count()
+        if n_samples > 0:
+            raise ValueError(
+                f"{material.name} is used on {n_samples} sample(s). "
+                "Choose another material on those samples first"
+            )
         name = material.name
         db.delete(material)
+        db.commit()
+        return name
+    finally:
+        db.close()
+
+
+def list_samples() -> list[dict]:
+    """Every sample, sorted by name: {"id", "n_tests", and one key per
+    attribute of SAMPLE_FIELDS}. n_tests is how many tests use it."""
+    db = SessionLocal()
+    try:
+        n_tests = {}
+        for row in db.query(Test.sample, func.count(Test.id)).group_by(Test.sample).all():
+            n_tests[row[0]] = row[1]
+        samples = []
+        for r in db.query(Sample).all():
+            sample = {"id": r.id, "n_tests": n_tests.get(r.name, 0)}
+            for field in SAMPLE_FIELDS:
+                sample[field[0]] = getattr(r, field[0])
+            samples.append(sample)
+    finally:
+        db.close()
+    samples.sort(key=_name_for_sorting)
+    return samples
+
+
+def add_sample(values: dict) -> str:
+    """Store a new sample. `values` is {attribute: value or None}. Returns
+    its name. Raises ValueError for an empty or taken name."""
+    db = SessionLocal()
+    try:
+        sample = Sample()
+        sample.name = _clean_name(db, Sample, None, values.get("name"))
+        for field in SAMPLE_FIELDS:
+            if field[0] != "name":
+                setattr(sample, field[0], values.get(field[0]))
+        db.add(sample)
+        db.commit()
+        return sample.name
+    finally:
+        db.close()
+
+
+def update_sample(sample_id: int, values: dict) -> str:
+    """Store a sample's new values. Its name and material also go onto the
+    tests that use it. Returns its name. Raises ValueError for an empty or
+    taken name."""
+    db = SessionLocal()
+    try:
+        sample = db.query(Sample).filter(Sample.id == sample_id).first()
+        if sample is None:
+            raise ValueError("that sample no longer exists")
+        new_name = _clean_name(db, Sample, sample_id, values.get("name"))
+        (db.query(Test).filter(Test.sample == sample.name)
+         .update({Test.sample: new_name, Test.material: values.get("material")}))
+        sample.name = new_name
+        for field in SAMPLE_FIELDS:
+            if field[0] != "name":
+                setattr(sample, field[0], values.get(field[0]))
+        db.commit()
+        return new_name
+    finally:
+        db.close()
+
+
+def delete_sample(sample_id: int) -> str:
+    """Delete a sample. Returns its name. Raises ValueError when tests still
+    use it, because they would lose their sample."""
+    db = SessionLocal()
+    try:
+        sample = db.query(Sample).filter(Sample.id == sample_id).first()
+        if sample is None:
+            raise ValueError("that sample no longer exists")
+        n_tests = db.query(Test).filter(Test.sample == sample.name).count()
+        if n_tests > 0:
+            raise ValueError(
+                f"{sample.name} is used on {n_tests} test(s). "
+                "Choose another sample on those tests first"
+            )
+        name = sample.name
+        db.delete(sample)
         db.commit()
         return name
     finally:

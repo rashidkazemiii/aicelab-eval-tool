@@ -316,6 +316,13 @@ def _(mo):
 
 
 @app.cell
+def _(mo):
+    # The same for the Samples tab.
+    get_samples_version, set_samples_version = mo.state(0)
+    return get_samples_version, set_samples_version
+
+
+@app.cell
 def _(db_mod, info_fields, mo):
     def form_rows_html(rows):
         """A form with one box per row, all boxes the same width and exactly
@@ -331,34 +338,62 @@ def _(db_mod, info_fields, mo):
 
     def build_info_form(columns, values):
         """One box per information column, one per row, filled with `values`
-        ({column id: value}). The material is chosen from the Materials
-        tab's list, the others are text boxes. `.value` gives {column key:
-        typed text}."""
-        _materials = {}
-        for _material in db_mod.list_materials():
-            _materials[_material["name"]] = _material["name"]
+        ({column id: value}). The sample and a few others are chosen from a
+        list, the rest are text boxes. `.value` gives {column key: typed
+        text}."""
+        _samples = {}
+        for _sample in db_mod.list_samples():
+            _samples[_sample["name"]] = _sample["name"]
         _boxes = {}
         _rows = []
         for _column in columns:
             _label = info_fields.html_label(_column["name"])
             _unit = info_fields.html_label(_column["unit"])
             _value = values.get(_column["id"])
-            if _column["field"] == "material":
-                if len(_materials) == 0:
-                    _unit = "Add materials on the Materials tab"
-                # Left over from hand typing, e.g. "nan": not in the list.
-                if _value not in _materials:
-                    _value = None
-                _boxes[_column["key"]] = mo.ui.dropdown(
-                    options=_materials, value=_value, full_width=True,
-                )
+            if _column["field"] == "sample":
+                if len(_samples) == 0:
+                    _unit = "Add samples on the Samples tab"
+                _boxes[_column["key"]] = choice_box(_samples, _value)
+            elif _column["field"] in db_mod.COLUMN_CHOICES:
+                _choices = {}
+                for _choice in db_mod.COLUMN_CHOICES[_column["field"]]:
+                    _choices[_choice] = _choice
+                _boxes[_column["key"]] = choice_box(_choices, _value)
             else:
                 _boxes[_column["key"]] = mo.ui.text(
                     value=info_fields.value_as_text(_value), full_width=True,
                 )
             _rows.append((_label, "{" + _column["key"] + "}", _unit))
         return mo.Html(form_rows_html(_rows)).batch(**_boxes)
-    return build_info_form, form_rows_html
+
+    def choice_box(choices, value):
+        """A list to choose from. `choices` is {shown text: value}."""
+        # Left over from hand typing, e.g. "nan": not in the list.
+        if value not in choices:
+            value = None
+        return mo.ui.dropdown(options=choices, value=value, full_width=True)
+
+    def build_list_form(fields, values, choices, hints):
+        """The form of the Samples or Materials tab. `fields` is
+        database.SAMPLE_FIELDS or MATERIAL_FIELDS, `values` is {attribute:
+        value}, `choices` is {attribute: {shown text: value}} for the boxes
+        that are lists, `hints` is {attribute: grey text in the empty box}.
+        `.value` gives {attribute: typed text}."""
+        _boxes = {}
+        _rows = []
+        for _attribute, _name, _unit, _kind in fields:
+            if _attribute in choices:
+                _boxes[_attribute] = choice_box(choices[_attribute], values.get(_attribute))
+            else:
+                _boxes[_attribute] = mo.ui.text(
+                    value=info_fields.value_as_text(values.get(_attribute)),
+                    placeholder=hints.get(_attribute, ""), full_width=True,
+                )
+            _rows.append((
+                info_fields.html_label(_name), "{" + _attribute + "}", info_fields.html_label(_unit),
+            ))
+        return mo.Html(form_rows_html(_rows)).batch(**_boxes)
+    return build_info_form, build_list_form, form_rows_html
 
 
 @app.cell
@@ -873,7 +908,7 @@ def _(
     file_upload,
     get_columns_version,
     get_loaded_test,
-    get_materials_version,
+    get_samples_version,
     mo,
 ):
     # The information asked for when saving. Filled in from the saved test
@@ -884,7 +919,7 @@ def _(
     # same reason as on the Database tab (see db_fill_form): other cells only
     # get save_info_panel, which is plain layout, so typing rebuilds nothing.
     get_columns_version()
-    get_materials_version()
+    get_samples_version()
     _columns = db_mod.list_info_columns()
     _values = {}
     if analysis_file_name is not None:
@@ -1781,7 +1816,7 @@ def _(
     db_saved_data_text,
     db_selected_ids,
     db_selected_name,
-    get_materials_version,
+    get_samples_version,
     mo,
     summary_download,
 ):
@@ -1791,7 +1826,7 @@ def _(
     # keystroke would re-run that cell, rebuild the tab and throw away what
     # was just typed. Other cells only get database_fill_panel, which is
     # plain layout, not a box. Ticking other tests starts the form again.
-    get_materials_version()
+    get_samples_version()
     _values = {}
     if len(db_selected_ids) == 1:
         _values = db_mod.get_info_values(db_selected_ids[0])
@@ -2206,6 +2241,183 @@ def _(
     return (batch_tab,)
 
 
+# ── Samples ────────────────────────────────────────────────────────────────
+@app.cell
+def _(mo):
+    get_sample_msg, set_sample_msg = mo.state(None)
+    # The sample waiting for "Yes, delete": {"id": ..., "name": ...}.
+    get_sample_pending, set_sample_pending = mo.state(None)
+    return get_sample_msg, get_sample_pending, set_sample_msg, set_sample_pending
+
+
+@app.cell
+def _(mo):
+    sample_confirm_btn = mo.ui.run_button(label="Yes, delete", kind="danger")
+    sample_cancel_btn = mo.ui.run_button(label="Cancel")
+    return sample_cancel_btn, sample_confirm_btn
+
+
+@app.cell
+def _(get_active_tab, get_materials_version, get_samples_version, info_fields, mo):
+    # Read again when this tab is opened, so "Tests" is up to date.
+    get_active_tab()
+    get_materials_version()
+    get_samples_version()
+    sample_table = mo.ui.table(
+        info_fields.build_sample_table(), selection="single", page_size=12,
+        show_column_summaries=False, show_data_types=False,
+    )
+    return (sample_table,)
+
+
+@app.cell
+def _(build_list_form, db_mod, mo, sample_table, selected_row_ids):
+    # Without a ticked row the form adds a new sample; with one, it changes
+    # that sample. Created AND laid out here (see db_fill_form), so typing in
+    # it rebuilds nothing; ticking another sample starts it again.
+    sample_selected_id = None
+    _values = {}
+    _ids = selected_row_ids(sample_table.value)
+    if len(_ids) == 1:
+        for _sample in db_mod.list_samples():
+            if _sample["id"] == _ids[0]:
+                sample_selected_id = _ids[0]
+                _values = _sample
+
+    _materials = {}
+    for _material in db_mod.list_materials():
+        _materials[_material["name"]] = _material["name"]
+    _chamfer = {}
+    for _choice in db_mod.SAMPLE_CHOICES["chamfer"]:
+        _chamfer[_choice] = _choice
+    sample_form = build_list_form(
+        db_mod.SAMPLE_FIELDS, _values, {"material": _materials, "chamfer": _chamfer},
+        {"surface_treatment": "e.g. sandblasting, texturing"},
+    )
+
+    sample_delete_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
+    if sample_selected_id is None:
+        sample_save_btn = mo.ui.run_button(label="&#10133; Add sample")
+        sample_form_panel = mo.vstack([
+            mo.md("**Add a sample**  \nOr tick a sample in the table to change or delete it."),
+            sample_form,
+            mo.hstack([sample_save_btn], justify="start"),
+        ], gap=1)
+    else:
+        sample_save_btn = mo.ui.run_button(label="&#128190; Save")
+        sample_form_panel = mo.vstack([
+            mo.md(f"**Sample {_values['name']}**"),
+            sample_form,
+            mo.hstack([sample_save_btn, sample_delete_btn], justify="start", gap=1),
+        ], gap=1)
+    return (
+        sample_delete_btn,
+        sample_form,
+        sample_form_panel,
+        sample_save_btn,
+        sample_selected_id,
+    )
+
+
+@app.cell
+def _(
+    db_mod,
+    get_samples_version,
+    info_fields,
+    mo,
+    sample_form,
+    sample_save_btn,
+    sample_selected_id,
+    set_sample_msg,
+    set_samples_version,
+):
+    if sample_save_btn.value:
+        _values, _not_numbers = info_fields.read_list_form(db_mod.SAMPLE_FIELDS, sample_form.value)
+        if len(_not_numbers) > 0:
+            set_sample_msg(mo.callout(mo.md(
+                f"**Not saved:** {', '.join(_not_numbers)} must be a number."
+            ), kind="warn"))
+        else:
+            try:
+                if sample_selected_id is None:
+                    _name = db_mod.add_sample(_values)
+                    set_sample_msg(mo.callout(mo.md(f"Added the sample **{_name}**."), kind="success"))
+                else:
+                    _name = db_mod.update_sample(sample_selected_id, _values)
+                    set_sample_msg(mo.callout(mo.md(f"Saved the sample **{_name}**."), kind="success"))
+                set_samples_version(get_samples_version() + 1)
+            except ValueError as _e:
+                set_sample_msg(mo.callout(mo.md(f"**Not saved:** {_e}."), kind="warn"))
+    return
+
+
+@app.cell
+def _(db_mod, sample_delete_btn, sample_selected_id, set_sample_msg, set_sample_pending):
+    # A delete can't be undone, so this button only asks.
+    if sample_delete_btn.value and sample_selected_id is not None:
+        set_sample_msg(None)
+        for _sample in db_mod.list_samples():
+            if _sample["id"] == sample_selected_id:
+                set_sample_pending({"id": sample_selected_id, "name": _sample["name"]})
+    return
+
+
+@app.cell
+def _(
+    db_mod,
+    get_sample_pending,
+    get_samples_version,
+    mo,
+    sample_cancel_btn,
+    sample_confirm_btn,
+    set_sample_msg,
+    set_sample_pending,
+    set_samples_version,
+):
+    if sample_cancel_btn.value:
+        set_sample_pending(None)
+    if sample_confirm_btn.value and get_sample_pending() is not None:
+        _pending = get_sample_pending()
+        set_sample_pending(None)
+        try:
+            _name = db_mod.delete_sample(_pending["id"])
+            set_sample_msg(mo.callout(mo.md(f"Deleted the sample **{_name}**."), kind="success"))
+            set_samples_version(get_samples_version() + 1)
+        except ValueError as _e:
+            set_sample_msg(mo.callout(mo.md(f"**Not deleted:** {_e}."), kind="warn"))
+    return
+
+
+@app.cell
+def _(
+    PANEL_STYLE,
+    get_sample_msg,
+    get_sample_pending,
+    mo,
+    sample_cancel_btn,
+    sample_confirm_btn,
+    sample_form_panel,
+    sample_table,
+):
+    # Like on the Database tab, a question or message comes right under the
+    # buttons, above the table.
+    _parts = [sample_form_panel]
+    _pending = get_sample_pending()
+    if _pending is not None:
+        _parts.append(mo.callout(mo.vstack([
+            mo.md(f"Delete the sample **{_pending['name']}**? This can't be undone."),
+            mo.hstack([sample_confirm_btn, sample_cancel_btn], justify="start", gap=1),
+        ], gap=1), kind="warn"))
+    if get_sample_msg() is not None:
+        _parts.append(get_sample_msg())
+    _parts.append(mo.Html('<hr class="divider">'))
+    _parts.append(sample_table)
+    samples_tab = mo.vstack([
+        mo.vstack(_parts, gap=2).style(PANEL_STYLE),
+    ], gap=2).style({"padding": "20px 0"})
+    return (samples_tab,)
+
+
 # ── Materials ──────────────────────────────────────────────────────────────
 @app.cell
 def _(mo):
@@ -2235,7 +2447,7 @@ def _(get_active_tab, get_materials_version, info_fields, mo):
 
 
 @app.cell
-def _(db_mod, form_rows_html, info_fields, material_table, mo, selected_row_ids):
+def _(build_list_form, db_mod, material_table, mo, selected_row_ids):
     # Without a ticked row the form adds a new material; with one, it changes
     # that material. Created AND laid out here (see db_fill_form), so typing
     # in it rebuilds nothing; ticking another material starts it again.
@@ -2248,20 +2460,10 @@ def _(db_mod, form_rows_html, info_fields, material_table, mo, selected_row_ids)
                 material_selected_id = _ids[0]
                 _values = _material
 
-    _boxes = {}
-    _rows = []
-    for _attribute, _name, _unit, _kind in db_mod.MATERIAL_FIELDS:
-        _placeholder = ""
-        if _attribute == "hardness_scale":
-            _placeholder = "e.g. Shore A, Shore D, HV"
-        _boxes[_attribute] = mo.ui.text(
-            value=info_fields.value_as_text(_values.get(_attribute)),
-            placeholder=_placeholder, full_width=True,
-        )
-        _rows.append((
-            info_fields.html_label(_name), "{" + _attribute + "}", info_fields.html_label(_unit),
-        ))
-    material_form = mo.Html(form_rows_html(_rows)).batch(**_boxes)
+    material_form = build_list_form(
+        db_mod.MATERIAL_FIELDS, _values, {},
+        {"hardness_scale": "e.g. Shore A, Shore D, HV"},
+    )
 
     material_delete_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
     if material_selected_id is None:
@@ -2300,7 +2502,7 @@ def _(
     set_materials_version,
 ):
     if material_save_btn.value:
-        _values, _not_numbers = info_fields.read_material_form(material_form.value)
+        _values, _not_numbers = info_fields.read_list_form(db_mod.MATERIAL_FIELDS, material_form.value)
         if len(_not_numbers) > 0:
             set_material_msg(mo.callout(mo.md(
                 f"**Not saved:** {', '.join(_not_numbers)} must be a number."
@@ -2530,13 +2732,14 @@ def _(mo):
     ANALYSIS_TAB = "&#128202;  Analysis"
     BATCH_TAB = "&#128193;  Batch"
     DATABASE_TAB = "&#128451;  Database"
+    SAMPLES_TAB = "&#129514;  Samples"
     MATERIALS_TAB = "&#129521;  Materials"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, get_active_tab, set_active_tab
+    return ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, batch_tab, database_tab, get_active_tab, materials_tab, mo, results_tab):
+def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, batch_tab, database_tab, get_active_tab, materials_tab, mo, results_tab, samples_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -2556,12 +2759,15 @@ def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, batch_tab, database_
         ANALYSIS_TAB: _placeholder,
         BATCH_TAB: _placeholder,
         DATABASE_TAB: _placeholder,
+        SAMPLES_TAB: _placeholder,
         MATERIALS_TAB: _placeholder,
     }
     if get_active_tab() == BATCH_TAB:
         tab_contents[BATCH_TAB] = batch_tab
     elif get_active_tab() == DATABASE_TAB:
         tab_contents[DATABASE_TAB] = database_tab
+    elif get_active_tab() == SAMPLES_TAB:
+        tab_contents[SAMPLES_TAB] = samples_tab
     elif get_active_tab() == MATERIALS_TAB:
         tab_contents[MATERIALS_TAB] = materials_tab
     else:

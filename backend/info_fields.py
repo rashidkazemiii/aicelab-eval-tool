@@ -1,6 +1,6 @@
 """The information typed in about a test: reading what the user typed on the
 save form and the Database tab's form, the Database tab's tables, and the
-Materials tab's form and table.
+forms and tables of the Samples and Materials tabs.
 
 Everything is typed as text. A "number" column must hold a number (a decimal
 comma is fine); an empty box means "not known".
@@ -95,6 +95,7 @@ def build_database_table():
             row[column["label"]] = text
             if text == "":
                 n_empty = n_empty + 1
+        row["Material"] = _text_or_empty(test["material"])
         row["Empty fields"] = n_empty
         row["Saved"] = _text_or_empty(test["uploaded_at"])[:16]
         row["Filter pts"] = _text_or_empty(test["filter_window"])
@@ -107,6 +108,8 @@ def build_database_table():
     names = ["id", "File name", "Empty fields"]
     for column in columns:
         names.append(column["label"])
+        if column["field"] == "sample":
+            names.append("Material")    # read from the sample, so it has no box
     names = names + ["Steps", "Saved", "Filter pts", "Static %", "Dyn min %", "Dyn max %"]
     return pd.DataFrame(rows, columns=names)
 
@@ -134,13 +137,14 @@ def build_column_table():
     return pd.DataFrame(rows, columns=["Column", "Unit", "Type", "Filled in", "Can be changed"])
 
 
-def read_material_form(typed):
-    """Read the Materials tab's form. `typed` is {attribute: typed text}.
-    Returns (values, list of number boxes holding something else); values
-    is {attribute: value or None}."""
+def read_list_form(fields, typed):
+    """Read the form of the Samples or Materials tab. `fields` is
+    database.SAMPLE_FIELDS or MATERIAL_FIELDS, `typed` is {attribute: typed
+    text}. Returns (values, list of number boxes holding something else);
+    values is {attribute: value or None}."""
     values = {}
     not_numbers = []
-    for attribute, name, unit, kind in database.MATERIAL_FIELDS:
+    for attribute, name, unit, kind in fields:
         value, is_valid = read_typed_value({"kind": kind}, typed.get(attribute))
         if not is_valid:
             not_numbers.append(name)
@@ -148,20 +152,30 @@ def read_material_form(typed):
     return values, not_numbers
 
 
-def build_material_table():
-    """The Materials tab's table: one row per material. All cells are text."""
+def _build_list_table(fields, items):
+    """One row per sample or material. All cells are text."""
     names = ["id"]
-    for attribute, name, unit, kind in database.MATERIAL_FIELDS:
+    for attribute, name, unit, kind in fields:
         names.append(database.column_label(name, unit))
     names.append("Tests")
 
     rows = []
-    for material in database.list_materials():
-        row = {"id": material["id"], "Tests": material["n_tests"]}
-        for attribute, name, unit, kind in database.MATERIAL_FIELDS:
-            row[database.column_label(name, unit)] = _text_or_empty(material[attribute])
+    for item in items:
+        row = {"id": item["id"], "Tests": item["n_tests"]}
+        for attribute, name, unit, kind in fields:
+            row[database.column_label(name, unit)] = _text_or_empty(item[attribute])
         rows.append(row)
     return pd.DataFrame(rows, columns=names)
+
+
+def build_material_table():
+    """The Materials tab's table."""
+    return _build_list_table(database.MATERIAL_FIELDS, database.list_materials())
+
+
+def build_sample_table():
+    """The Samples tab's table."""
+    return _build_list_table(database.SAMPLE_FIELDS, database.list_samples())
 
 
 def save_typed_values(test_ids, typed):
