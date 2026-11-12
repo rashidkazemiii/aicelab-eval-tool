@@ -32,8 +32,10 @@ APP_FILES = [
     "pyproject.toml",
     "backend/raw_data_settings.json",
     "backend/templates/summary_template.xlsx",
-    "backend/templates/sample_parameters.png",
 ]
+
+# Folders whose .png pictures are uploaded.
+PICTURE_FOLDERS = ["backend/templates/help"]
 
 # Folders whose .py files are uploaded (subfolders are not included).
 CODE_FOLDERS = ["backend", "backend/physics"]
@@ -50,6 +52,14 @@ def collect_files():
     for relative_path in APP_FILES:
         local_path = os.path.join(PROJECT_FOLDER, relative_path)
         operations.append(CommitOperationAdd(path_in_repo=relative_path, path_or_fileobj=local_path))
+
+    for folder in PICTURE_FOLDERS:
+        folder_path = os.path.join(PROJECT_FOLDER, folder)
+        for name in sorted(os.listdir(folder_path)):
+            if not name.endswith(".png"):
+                continue
+            local_path = os.path.join(folder_path, name)
+            operations.append(CommitOperationAdd(path_in_repo=folder + "/" + name, path_or_fileobj=local_path))
 
     for folder in CODE_FOLDERS:
         folder_path = os.path.join(PROJECT_FOLDER, folder)

@@ -91,6 +91,176 @@ def parse_main_and_step_data(raw_text: str, params: dict):
     return df_raw, step_df
 
 
+def _cells(line):
+    """The tab-separated cells of one line, without spaces around them."""
+    cells = []
+    for cell in line.split("\t"):
+        cells.append(cell.strip())
+    return cells
+
+
+def _column_of(cells, wanted):
+    """The column number (1 = first) of the cell that is exactly `wanted`
+    (not minding upper/lower case), or None."""
+    for k in range(len(cells)):
+        if cells[k].lower() == wanted.lower():
+            return k + 1
+    return None
+
+
+def _column_starting_with(cells, start):
+    """The column number (1 = first) of the first cell starting with
+    `start` (not minding upper/lower case), or None."""
+    for k in range(len(cells)):
+        if cells[k].lower().startswith(start.lower()):
+            return k + 1
+    return None
+
+
+def _number(text):
+    """The cell as a number (decimal comma), or None."""
+    try:
+        return float(text.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def detect_raw_data_settings(raw_text: str):
+    """Find the Raw Data settings (rows and columns) from the words in an
+    OFT file, for "Automatic" on the Raw Data card. Returns (settings,
+    problems): settings has the same keys as the Raw Data boxes (as text,
+    rows and columns counted from 1) plus "has_step"; problems lists what
+    could not be found (then the settings can't be used).
+
+    What it looks for:
+    - Main data: the line naming the columns ("Nummer", "Zeit", ...). The
+      data starts at the first line after it that begins with a number (the
+      line in between holds the units). Columns: "Zeit", "RK OFT Links",
+      "RK OFT Rechts" and "Belastung".
+    - Step data: "Versuch mit Stufen" Ja/Nein, the line with
+      "Startzeit [s]" and "Drehzahl [U/min]", and the "Stufe ..." lines
+      below it. The steps start at the slowest speed before the fastest one,
+      so the warm-up steps at the start (e.g. 120 U/min at 10 N, then at the
+      test load) are left out; steps of no length (two steps starting at
+      the same time) are left out too. They end at the last "Stufe" line.
+    """
+    lines = raw_text.splitlines()
+    settings = {"stop_main_row": "0"}
+    problems = []
+
+    # ── Main data ────────────────────────────────────────────────────────────
+    header_index = None
+    for i in range(len(lines)):
+        cells = _cells(lines[i])
+        if _column_of(cells, "Zeit") is not None and _column_of(cells, "Belastung") is not None:
+            header_index = i
+            break
+    if header_index is None:
+        problems.append("no line naming the columns (with 'Zeit' and 'Belastung')")
+    else:
+        cells = _cells(lines[header_index])
+        for key, wanted in [("col_time", "Zeit"), ("col_left", "RK OFT Links"),
+                            ("col_right", "RK OFT Rechts"), ("col_load", "Belastung")]:
+            column = _column_of(cells, wanted)
+            if column is None:
+                problems.append(f"no column '{wanted}'")
+            else:
+                settings[key] = str(column)
+        for i in range(header_index + 1, min(header_index + 6, len(lines))):
+            first = _cells(lines[i])[0]
+            if first != "" and _number(first) is not None:
+                settings["start_main_row"] = str(i + 1)
+                break
+        if "start_main_row" not in settings:
+            problems.append("no numbers below the line naming the columns")
+
+    # ── Step data ────────────────────────────────────────────────────────────
+    has_step = None
+    for line in lines[:200]:
+        cells = _cells(line)
+        if len(cells) >= 2 and cells[0].lower() == "versuch mit stufen":
+            has_step = cells[1].lower() == "ja"
+            break
+    step_header = None
+    for i in range(min(len(lines), 300)):
+        cells = _cells(lines[i])
+        if _column_starting_with(cells, "Startzeit") is not None:
+            step_header = i
+            break
+    if has_step is None:
+        has_step = step_header is not None
+    settings["has_step"] = has_step
+    if not has_step:
+        settings["start_step_row"] = "0"
+        settings["end_step_row"] = "0"
+        settings["step_col_time"] = "1"
+        settings["step_col_speed"] = "0"
+        return settings, problems
+    if step_header is None:
+        problems.append("the file has steps, but no line with 'Startzeit'")
+        return settings, problems
+
+    cells = _cells(lines[step_header])
+    time_column = _column_starting_with(cells, "Startzeit")
+    speed_column = _column_starting_with(cells, "Drehzahl")
+    settings["step_col_time"] = str(time_column)
+    if speed_column is None:
+        problems.append("no step column 'Drehzahl'")
+        return settings, problems
+    settings["step_col_speed"] = str(speed_column)
+
+    # The "Stufe" lines: (line number, start time, speed)
+    steps = []
+    for i in range(step_header + 1, len(lines)):
+        cells = _cells(lines[i])
+        if not cells[0].lower().startswith("stufe"):
+            break
+        start = None
+        speed = None
+        if len(cells) >= time_column:
+            start = _number(cells[time_column - 1])
+        if len(cells) >= speed_column:
+            speed = _number(cells[speed_column - 1])
+        if start is None or speed is None:
+            problems.append(f"line {i + 1} is a step without a start time or speed")
+            return settings, problems
+        steps.append((i + 1, start, speed))
+    if len(steps) == 0:
+        problems.append("no 'Stufe' lines below 'Startzeit'")
+        return settings, problems
+
+    # Steps of no length at the start: the next one starts at the same time
+    first = 0
+    while first < len(steps) - 1 and steps[first + 1][1] <= steps[first][1]:
+        first = first + 1
+    # The fastest step, then the slowest one up to it
+    fastest = first
+    for k in range(first, len(steps)):
+        if steps[k][2] > steps[fastest][2]:
+            fastest = k
+    slowest = first
+    for k in range(first, fastest + 1):
+        if steps[k][2] < steps[slowest][2]:
+            slowest = k
+    settings["start_step_row"] = str(steps[slowest][0])
+    settings["end_step_row"] = str(steps[-1][0])
+    return settings, problems
+
+
+def describe_detected_settings(settings):
+    """One line for the user: what "Automatic" read from the file."""
+    text = (f"main data from row {settings['start_main_row']}: Zeit col {settings['col_time']}, "
+            f"friction L/R col {settings['col_left']}/{settings['col_right']}, "
+            f"Belastung col {settings['col_load']}")
+    if settings["has_step"]:
+        text = (f"steps rows {settings['start_step_row']}-{settings['end_step_row']} "
+                f"(Startzeit col {settings['step_col_time']}, Drehzahl col {settings['step_col_speed']}); "
+                + text)
+    else:
+        text = "no step data; " + text
+    return text
+
+
 def read_stroke_mm(raw_text: str):
     """The stroke [mm] from the file header line "Hub Exzenter<TAB>24,0<TAB>mm",
     or None when the file has no such line (or its value is not a number)."""

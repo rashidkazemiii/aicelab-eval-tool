@@ -260,6 +260,64 @@ def build_friction_velocity_figures(step_results, stroke_mm, title, all_steps=No
     return figures[0], figures[1]
 
 
+def build_prediction_figures(curve, neighbours):
+    """The AI tab's two charts: the predicted static and sliding friction
+    against velocity, going up (solid) and coming down (dashed). The shaded
+    band runs from the lowest to the highest value of the similar tests;
+    their own measured curves are drawn thin and grey behind it.
+
+    `curve` and `neighbours` come from prediction.predict."""
+    figures = []
+    for column, y_title, color, band_color in [
+        ("static", "Static friction", "#0b5d8c", "rgba(11,93,140,0.15)"),
+        ("dynamic", "Sliding friction", "#c2185b", "rgba(194,24,91,0.15)"),
+    ]:
+        fig = go.Figure()
+        top = 0.35
+        for neighbour in neighbours:
+            points = neighbour["test"]["points"]
+            for down in [False, True]:
+                part = points[points["down"] == down].sort_values("velocity")
+                fig.add_trace(go.Scatter(
+                    x=list(part["velocity"]), y=list(part[column]), mode="lines",
+                    line=dict(color="#c8ccd3", width=1), hoverinfo="skip", showlegend=False,
+                ))
+        for down, dash, name in [(False, "solid", "going up"), (True, "dash", "coming down")]:
+            part = curve[(curve["down"] == down) & curve[column].notna()].sort_values("velocity")
+            if len(part) == 0:
+                continue
+            x = list(part["velocity"])
+            low = list(part[column + "_low"])
+            high = list(part[column + "_high"])
+            band_x = x + x[::-1]
+            band_y = high + low[::-1]
+            fig.add_trace(go.Scatter(
+                x=band_x, y=band_y, mode="lines", fill="toself", fillcolor=band_color,
+                line=dict(width=0), hoverinfo="skip", showlegend=False,
+            ))
+            fig.add_trace(go.Scatter(
+                x=x, y=list(part[column]), mode="lines+markers", name=name,
+                line=dict(color=color, width=2, dash=dash), marker=dict(color=color, size=7),
+                hovertemplate="%{x:.3f} m/s: %{y:.4f}<extra>" + name + "</extra>",
+            ))
+            for value in high:
+                if value > top:
+                    top = value
+        fig.update_layout(
+            height=340,
+            margin=dict(l=60, r=20, t=40, b=50),
+            plot_bgcolor="#fff", paper_bgcolor="#fff",
+            font=dict(color="#1f2a40", size=12),
+            legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0),
+            xaxis=dict(title="Mean velocity (m/s)", rangemode="tozero",
+                       gridcolor="#e3e6ea", linecolor="#999", zeroline=False),
+            yaxis=dict(title=y_title, range=[0, top * 1.05], tickformat=".2f",
+                       gridcolor="#e3e6ea", linecolor="#999", zeroline=False),
+        )
+        figures.append(fig)
+    return figures[0], figures[1]
+
+
 # A long test can be 100,000+ raw samples, and a chart only a few hundred
 # pixels wide can't show more detail than that anyway - plotting every raw
 # point just makes panning/zooming slow with no visual benefit.

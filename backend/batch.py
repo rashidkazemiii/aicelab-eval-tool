@@ -52,7 +52,15 @@ def make_plan(uploaded_files, raw_params, filter_params, eval_params):
 def evaluate_file(raw_text, raw_params, filter_params, eval_params):
     """Run one file (its text) through the whole pipeline. Returns a dict
     with the pieces database.save_full_evaluation needs. Raises on any
-    error."""
+    error. With raw_params["automatic"], the rows and columns are read from
+    the file itself (data_loader.detect_raw_data_settings), so files with
+    different layouts can be run together."""
+    if raw_params.get("automatic"):
+        detected, problems = data_loader.detect_raw_data_settings(raw_text)
+        if len(problems) > 0:
+            raise Exception("Automatic could not read this file: " + "; ".join(problems))
+        detected["nlc"] = raw_params["nlc"]
+        raw_params = detected
 
     # parse_main_and_step_data prints the step lines it reads - useful for
     # one file, just noise for a whole folder.

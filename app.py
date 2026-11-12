@@ -21,8 +21,9 @@ def _():
     import speed_pulse
     import batch
     import info_fields
+    import prediction
 
-    return batch, charts, data_loader, info_fields, mo, pipeline, results_table, settings_store, speed_pulse, table_helpers
+    return batch, charts, data_loader, info_fields, mo, pipeline, prediction, results_table, settings_store, speed_pulse, table_helpers
 
 
 # ── App init (database) ───────────────────────────────────────────────────────
@@ -378,7 +379,8 @@ def _(db_mod, info_fields, mo):
         database.SAMPLE_FIELDS or MATERIAL_FIELDS, `values` is {attribute:
         value}, `choices` is {attribute: {shown text: value}} for the boxes
         that are lists, `hints` is {attribute: grey text in the empty box}.
-        `.value` gives {attribute: typed text}."""
+        A box with a picture in backend/templates/help gets an "i" in front
+        of it (see help_icon). `.value` gives {attribute: typed text}."""
         _boxes = {}
         _rows = []
         for _attribute, _name, _unit, _kind in fields:
@@ -389,10 +391,47 @@ def _(db_mod, info_fields, mo):
                     value=info_fields.value_as_text(values.get(_attribute)),
                     placeholder=hints.get(_attribute, ""), full_width=True,
                 )
-            _rows.append((
-                info_fields.html_label(_name), "{" + _attribute + "}", info_fields.html_label(_unit),
-            ))
+            _label = info_fields.html_label(_name)
+            _icon = help_icon(_attribute)
+            if _icon != "":
+                # The "i" at the right end of the label, just in front of the box
+                _label = ('<span style="display:flex;align-items:center;justify-content:space-between;'
+                          f'gap:8px">{_label}{_icon}</span>')
+            _rows.append((_label, "{" + _attribute + "}", info_fields.html_label(_unit)))
         return mo.Html(form_rows_html(_rows)).batch(**_boxes)
+
+    # Boxes that share another box's picture: {attribute: picture name}.
+    _SAME_PICTURE = {"hardness_scale": "hardness"}
+
+    def help_icon(attribute):
+        """A small "i" button that opens the picture
+        backend/templates/help/<attribute>.png on top of the page, or "" when
+        there is no picture. It is the browser's own popup (the "popover"
+        attribute): a click outside it or on Close shuts it."""
+        import pathlib as _pathlib
+        _name = _SAME_PICTURE.get(attribute, attribute)
+        _picture = _pathlib.Path(__file__).parent / "backend" / "templates" / "help" / (_name + ".png")
+        if not _picture.exists():
+            return ""
+        _popup_id = "help-" + attribute
+        _image = mo.image(src=_picture, width=500).text
+        return (
+            f'<button popovertarget="{_popup_id}" title="What does this mean?" style="flex:none;'
+            'width:18px;height:18px;padding:0;border:1px solid #9aa5b4;border-radius:50%;'
+            'background:#fff;color:#2563a8;font-size:11px;font-weight:700;line-height:16px;'
+            'font-family:Georgia,serif;cursor:pointer">i</button>'
+            # The page's own styles would push the popup into the top left
+            # corner, so its place is set here.
+            f'<div id="{_popup_id}" popover style="position:fixed;inset:0;margin:auto;'
+            'width:fit-content;height:fit-content;padding:16px;border:1px solid #c9ced6;'
+            'border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.25);max-height:90vh;overflow:auto;'
+            'white-space:normal">'
+            f'{_image}'
+            '<div style="text-align:right;margin-top:8px">'
+            f'<button popovertarget="{_popup_id}" popovertargetaction="hide" style="font-size:0.85rem;'
+            'padding:4px 14px;border:1px solid #c9ced6;border-radius:6px;background:#fff;cursor:pointer">'
+            'Close</button></div></div>'
+        )
     return build_info_form, build_list_form, form_rows_html
 
 
@@ -402,6 +441,28 @@ def _(mo):
     # grey out the step fields below right away, without needing "Calculate".
     has_step_checkbox = mo.ui.checkbox(label="Has step data", value=True)
     return (has_step_checkbox,)
+
+
+@app.cell
+def _(mo, settings_store):
+    # Manual: the rows and columns come from the Raw Data boxes. Automatic:
+    # they are read from the words in each file (see
+    # data_loader.detect_raw_data_settings). Never rebuilt; the choice is
+    # remembered in the settings file for the next start.
+    def _remember_mode(value):
+        _settings = settings_store.load_raw_data_settings() or {}
+        _settings["mode"] = value
+        settings_store.save_raw_data_settings(_settings)
+
+    _saved = settings_store.load_raw_data_settings() or {}
+    _start = "Manual"
+    if _saved.get("mode") == "auto":
+        _start = "Automatic"
+    raw_mode_radio = mo.ui.radio(
+        options={"Manual": "manual", "Automatic": "auto"}, value=_start,
+        inline=True, on_change=_remember_mode,
+    )
+    return (raw_mode_radio,)
 
 
 
@@ -454,6 +515,7 @@ def _(
     has_step_checkbox,
     mo,
     raw_data_form,
+    raw_mode_radio,
     set_loaded_test,
     set_parsed_data,
     set_results_status_msg,
@@ -474,12 +536,33 @@ def _(
         # reuses the old result. A test loaded from the Database tab is dropped too.
         set_parsed_data(None)
         set_loaded_test(None)
-        settings_store.save_raw_data_settings(_p)
-        if data_loader.is_ready_to_parse(bool(file_upload.value), _p):
+        # Added to what is saved, so Automatic (which has only the Load
+        # correction box) keeps the Manual boxes' values.
+        _settings = settings_store.load_raw_data_settings() or {}
+        _settings.update(_p)
+        settings_store.save_raw_data_settings(_settings)
+        _automatic = raw_mode_radio.value == "auto"
+        _found = ""
+        if _automatic:
+            _ready = bool(file_upload.value)
+        else:
+            _ready = data_loader.is_ready_to_parse(bool(file_upload.value), _p)
+        if _ready:
             try:
                 _raw = file_upload.value[0].contents.decode("latin-1")
-                _p = dict(_p)
-                _p["has_step"] = has_step_checkbox.value
+                if _automatic:
+                    _detected, _problems = data_loader.detect_raw_data_settings(_raw)
+                    if len(_problems) > 0:
+                        raise ValueError(
+                            "Automatic could not read this file: " + "; ".join(_problems)
+                            + ". Switch Raw Data to Manual and type in the rows and columns"
+                        )
+                    _found = "  \nRead from the file: " + data_loader.describe_detected_settings(_detected) + "."
+                    _detected["nlc"] = _p["nlc"]
+                    _p = _detected
+                else:
+                    _p = dict(_p)
+                    _p["has_step"] = has_step_checkbox.value
                 _df_raw, _step_df = data_loader.parse_main_and_step_data(_raw, _p)
                 # Tagged with the file it was parsed from (name, size), so a
                 # later upload can't leave stale results looking like they
@@ -488,11 +571,14 @@ def _(
                 _file_id = (file_upload.value[0].name, len(file_upload.value[0].contents))
                 set_parsed_data((_df_raw, _step_df, _p, _file_id))
                 set_results_status_msg(mo.callout(
-                    mo.md(f"**{file_upload.value[0].name}** &mdash; {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`"),
+                    mo.md(f"**{file_upload.value[0].name}** &mdash; {len(_df_raw):,} rows, {len(_df_raw.columns)} columns: `{list(_df_raw.columns)}`" + _found),
                     kind="success",
                 ))
             except Exception as _e:
-                set_parsed_data((None, None, None, None))
+                # Tagged with the file too, so the "New file uploaded"
+                # banner doesn't cover this message.
+                _file_id = (file_upload.value[0].name, len(file_upload.value[0].contents))
+                set_parsed_data((None, None, None, _file_id))
                 set_results_status_msg(mo.callout(mo.md(f"**Error:** {_e}"), kind="danger"))
 
     return
@@ -1382,7 +1468,7 @@ def _(
 
 
 @app.cell
-def _(has_step_checkbox, mo, PANEL_STYLE, settings_store):
+def _(has_step_checkbox, mo, PANEL_STYLE, raw_mode_radio, settings_store):
     # The Raw Data boxes are created in the same cell that lays them out.
     # marimo never re-runs the cell that created a UI element when that
     # element's value changes, so editing a box leaves this cell - and with
@@ -1445,29 +1531,54 @@ def _(has_step_checkbox, mo, PANEL_STYLE, settings_store):
         + _group_close
         + '</div>'
     )
-    raw_data_form = _raw_data_tpl.batch(
-        nlc=mo.ui.text(value=_saved.get("nlc", ""), debounce=True),
-        start_step_row=mo.ui.text(value=_saved.get("start_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
-        end_step_row=mo.ui.text(value=_saved.get("end_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
-        step_col_time=mo.ui.text(value=_saved.get("step_col_time", "1"), disabled=_step_fields_disabled, debounce=True),
-        step_col_speed=mo.ui.text(value=_saved.get("step_col_speed", "0"), disabled=_step_fields_disabled, debounce=True),
-        start_main_row=mo.ui.text(value=_saved.get("start_main_row", "41"), debounce=True),
-        stop_main_row=mo.ui.text(value=_saved.get("stop_main_row", "0"), debounce=True),
-        col_time=mo.ui.text(value=_saved.get("col_time", "1"), debounce=True),
-        col_left=mo.ui.text(value=_saved.get("col_left", "13"), debounce=True),
-        col_right=mo.ui.text(value=_saved.get("col_right", "14"), debounce=True),
-        col_load=mo.ui.text(value=_saved.get("col_load", "3"), debounce=True),
-    )
+    if raw_mode_radio.value == "auto":
+        # Only the Load correction is typed in: it is not in the file.
+        _raw_data_tpl = mo.Html(
+            '<div style="display:flex;flex-direction:column;gap:10px">'
+            + _group_open.format(title="GENERAL")
+            + _field.format(label="Load correction", field="nlc")
+            + _group_close
+            + '<p style="margin:0;font-size:0.8rem;color:#555">The rows and columns are read from '
+            'the words in each file (Stufe, Startzeit, Drehzahl, Zeit, RK OFT Links / Rechts, '
+            'Belastung) when you click <b>Calculate</b>, and for every file in Batch. The steps '
+            'start at the slowest speed before the fastest one, so the warm-up steps are left out.</p>'
+            + '</div>'
+        )
+        raw_data_form = _raw_data_tpl.batch(
+            nlc=mo.ui.text(value=_saved.get("nlc", ""), debounce=True),
+        )
+        raw_data_card = mo.vstack([
+            mo.hstack([
+                mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
+                raw_mode_radio,
+            ], justify="space-between", align="center"),
+            raw_data_form,
+        ], gap=1).style(PANEL_STYLE)
+    else:
+        raw_data_form = _raw_data_tpl.batch(
+            nlc=mo.ui.text(value=_saved.get("nlc", ""), debounce=True),
+            start_step_row=mo.ui.text(value=_saved.get("start_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
+            end_step_row=mo.ui.text(value=_saved.get("end_step_row", "0"), disabled=_step_fields_disabled, debounce=True),
+            step_col_time=mo.ui.text(value=_saved.get("step_col_time", "1"), disabled=_step_fields_disabled, debounce=True),
+            step_col_speed=mo.ui.text(value=_saved.get("step_col_speed", "0"), disabled=_step_fields_disabled, debounce=True),
+            start_main_row=mo.ui.text(value=_saved.get("start_main_row", "41"), debounce=True),
+            stop_main_row=mo.ui.text(value=_saved.get("stop_main_row", "0"), debounce=True),
+            col_time=mo.ui.text(value=_saved.get("col_time", "1"), debounce=True),
+            col_left=mo.ui.text(value=_saved.get("col_left", "13"), debounce=True),
+            col_right=mo.ui.text(value=_saved.get("col_right", "14"), debounce=True),
+            col_load=mo.ui.text(value=_saved.get("col_load", "3"), debounce=True),
+        )
 
-    # Title and the "Has step data" checkbox share one line; the form
-    # itself is three compact rows below.
-    raw_data_card = mo.vstack([
-        mo.hstack([
-            mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
-            has_step_checkbox,
-        ], justify="space-between", align="center"),
-        raw_data_form,
-    ], gap=1).style(PANEL_STYLE)
+        # Title, the Manual / Automatic choice and the "Has step data"
+        # checkbox share one line; the form itself is three compact rows
+        # below.
+        raw_data_card = mo.vstack([
+            mo.hstack([
+                mo.Html('<p class="panel-title" style="margin:0">Raw Data</p>'),
+                mo.hstack([raw_mode_radio, has_step_checkbox], justify="end", align="center", gap=2),
+            ], justify="space-between", align="center"),
+            raw_data_form,
+        ], gap=1).style(PANEL_STYLE)
     return raw_data_card, raw_data_form
 
 
@@ -2146,6 +2257,7 @@ def _(
     has_step_checkbox,
     mo,
     raw_data_form,
+    raw_mode_radio,
     run_batch,
     set_batch_log,
     set_batch_msg,
@@ -2161,6 +2273,8 @@ def _(
         else:
             _raw_params = dict(raw_data_form.value)
             _raw_params["has_step"] = has_step_checkbox.value
+            # Automatic: batch.evaluate_file reads each file's own rows and columns.
+            _raw_params["automatic"] = raw_mode_radio.value == "auto"
             _plan = batch.make_plan(
                 batch_folder.value, _raw_params,
                 dict(filter_fields.value), dict(eval_fields.value),
@@ -2303,30 +2417,18 @@ def _(build_list_form, db_mod, mo, sample_table, selected_row_ids):
     sample_delete_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
     if sample_selected_id is None:
         sample_save_btn = mo.ui.run_button(label="&#10133; Add sample")
-        _form_part = mo.vstack([
+        sample_form_panel = mo.vstack([
             mo.md("**Add a sample**  \nOr tick a sample in the table to change or delete it."),
             sample_form,
             mo.hstack([sample_save_btn], justify="start"),
         ], gap=1)
     else:
         sample_save_btn = mo.ui.run_button(label="&#128190; Save")
-        _form_part = mo.vstack([
+        sample_form_panel = mo.vstack([
             mo.md(f"**Sample {_values['name']}**"),
             sample_form,
             mo.hstack([sample_save_btn, sample_delete_btn], justify="start", gap=1),
         ], gap=1)
-
-    # Next to the form: a picture of what Ra, Rz, Rq, Rsk, Rku and the
-    # chamfer mean.
-    import pathlib as _pathlib
-    _picture = _pathlib.Path(__file__).parent / "backend" / "templates" / "sample_parameters.png"
-    if _picture.exists():
-        sample_form_panel = mo.hstack(
-            [_form_part, mo.image(src=_picture, width=480)],
-            widths=[1, 1], align="start", gap=3,
-        )
-    else:
-        sample_form_panel = _form_part
     return (
         sample_delete_btn,
         sample_form,
@@ -2605,6 +2707,304 @@ def _(
     return (materials_tab,)
 
 
+# ── AI (predict a new test from the similar saved ones) ───────────────────
+@app.cell
+def _(mo):
+    # The factors chosen to compare on (None = not chosen yet, use the
+    # default), kept while the tab is closed. The last prediction and the
+    # last quality check, or a message instead.
+    get_ai_factors, set_ai_factors = mo.state(None)
+    get_ai_result, set_ai_result = mo.state(None)
+    get_ai_quality, set_ai_quality = mo.state(None)
+    return get_ai_factors, get_ai_quality, get_ai_result, set_ai_factors, set_ai_quality, set_ai_result
+
+
+@app.cell
+def _(
+    AI_TAB,
+    get_active_tab,
+    get_batch_log,
+    get_database_version,
+    get_materials_version,
+    get_samples_version,
+    get_tests_version,
+    prediction,
+):
+    # The saved tests to learn from, read only while this tab is open:
+    # reading every test's steps takes a moment.
+    get_batch_log()
+    get_database_version()
+    get_materials_version()
+    get_samples_version()
+    get_tests_version()
+    ai_tests = []
+    if get_active_tab() == AI_TAB:
+        ai_tests = prediction.load_saved_tests()
+    return (ai_tests,)
+
+
+@app.cell
+def _(ai_tests, db_mod, get_ai_factors, mo, prediction, set_ai_factors):
+    # Step 1: what to compare on, and how many similar tests to use. Only
+    # factors filled in on at least one test can be chosen; at the start,
+    # those filled in on every test are chosen.
+    _counts = prediction.filled_counts(ai_tests)
+    _options = {}
+    _chosen = []
+    for _key, _name, _unit, _kind, _stored_on, _attribute in prediction.FACTORS:
+        if _counts[_key] == 0:
+            continue
+        _label = f"{_name} ({_counts[_key]} of {len(ai_tests)} tests)"
+        _options[_label] = _key
+        if get_ai_factors() is None:
+            if _counts[_key] == len(ai_tests):
+                _chosen.append(_label)
+        elif _key in get_ai_factors():
+            _chosen.append(_label)
+    ai_factor_select = mo.ui.multiselect(
+        options=_options, value=_chosen, label="Compare on", on_change=set_ai_factors,
+        full_width=True,
+    )
+    ai_k_select = mo.ui.dropdown(
+        options={"1": 1, "2": 2, "3": 3, "4": 4, "5": 5}, value="3",
+        label="Number of similar tests to use", allow_select_none=False,
+    )
+    _samples = {}
+    for _sample in db_mod.list_samples():
+        _samples[_sample["name"]] = _sample["name"]
+    ai_start_sample = mo.ui.dropdown(
+        options=_samples, label="Fill in the sample boxes from a saved sample (optional)",
+    )
+    return ai_factor_select, ai_k_select, ai_start_sample
+
+
+@app.cell
+def _(ai_factor_select, ai_start_sample, ai_tests, build_list_form, db_mod, mo, prediction):
+    # Step 2: the new test, one box per chosen factor. Created AND laid out
+    # here (see db_fill_form), so typing in it rebuilds nothing.
+    ai_fields = []
+    _choices = {}
+    for _key in ai_factor_select.value:
+        _key_, _name, _unit, _kind, _stored_on, _attribute = prediction.factor_info(_key)
+        if _kind == "number":
+            ai_fields.append((_key, _name, _unit, "number"))
+            continue
+        ai_fields.append((_key, _name, _unit, "text"))
+        _values = prediction.seen_values(ai_tests, _key)
+        for _value in db_mod.COLUMN_CHOICES.get(_key, []) + db_mod.SAMPLE_CHOICES.get(_key, []):
+            if _value not in _values:
+                _values.append(_value)
+        if _key == "material":
+            for _material in db_mod.list_materials():
+                if _material["name"] not in _values:
+                    _values.append(_material["name"])
+        _choices[_key] = {}
+        for _value in _values:
+            _choices[_key][_value] = _value
+        _choices[_key]["something else"] = "(something else)"
+
+    # Values of the chosen sample and its material, to start with.
+    _start = {}
+    if ai_start_sample.value is not None:
+        for _sample in db_mod.list_samples():
+            if _sample["name"] == ai_start_sample.value:
+                _start = dict(_sample)
+        _start["surface_treatment"] = _start.get("surface_treatment")
+        for _material in db_mod.list_materials():
+            if _material["name"] == _start.get("material"):
+                for _key in _material:
+                    if _key not in ("id", "name", "n_tests", "note"):
+                        _start[_key] = _material[_key]
+
+    ai_form = build_list_form(ai_fields, _start, _choices, {})
+    ai_predict_btn = mo.ui.run_button(label="&#129504; Predict")
+    ai_check_btn = mo.ui.run_button(label="&#9989; How good is it?")
+    if len(ai_fields) == 0:
+        ai_form_panel = mo.md("Choose at least one factor in step 1.")
+    else:
+        ai_form_panel = mo.vstack([
+            ai_form,
+            mo.hstack([ai_predict_btn, ai_check_btn], justify="start", gap=1),
+        ], gap=1)
+    return ai_check_btn, ai_fields, ai_form, ai_form_panel, ai_predict_btn
+
+
+@app.cell
+def _(
+    ai_factor_select,
+    ai_fields,
+    ai_form,
+    ai_k_select,
+    ai_predict_btn,
+    ai_tests,
+    info_fields,
+    mo,
+    prediction,
+    set_ai_result,
+):
+    if ai_predict_btn.value:
+        _values, _not_numbers = info_fields.read_list_form(ai_fields, ai_form.value)
+        _empty = []
+        for _key, _name, _unit, _kind in ai_fields:
+            if _values[_key] is None:
+                _empty.append(_name)
+        if len(_not_numbers) > 0:
+            set_ai_result(mo.callout(mo.md(f"**Not predicted:** {', '.join(_not_numbers)} must be a number."), kind="warn"))
+        elif len(_empty) > 0:
+            set_ai_result(mo.callout(mo.md(f"**Not predicted:** fill in {', '.join(_empty)}."), kind="warn"))
+        else:
+            try:
+                set_ai_result(prediction.predict(_values, ai_tests, ai_factor_select.value, ai_k_select.value))
+            except ValueError as _e:
+                set_ai_result(mo.callout(mo.md(f"**Not predicted:** {_e}."), kind="warn"))
+    return
+
+
+@app.cell
+def _(ai_check_btn, ai_factor_select, ai_k_select, ai_tests, mo, prediction, set_ai_quality):
+    if ai_check_btn.value:
+        try:
+            set_ai_quality(prediction.check_quality(ai_tests, ai_factor_select.value, ai_k_select.value))
+        except ValueError as _e:
+            set_ai_quality(mo.callout(mo.md(f"**Not checked:** {_e}."), kind="warn"))
+    return
+
+
+@app.cell
+def _(charts, get_ai_quality, get_ai_result, mo):
+    # The answers: the prediction, then the quality check.
+    import pandas as _pd
+
+    ai_answer_parts = []
+    _result = get_ai_result()
+    if _result is not None and not isinstance(_result, dict):
+        ai_answer_parts.append(_result)
+    elif _result is not None:
+        if len(_result["outside"]) > 0:
+            ai_answer_parts.append(mo.callout(mo.md(
+                "**Careful, this is a guess:** the new test is unlike all the saved tests in "
+                + "; ".join(_result["outside"]) + "."
+            ), kind="warn"))
+        _static_fig, _sliding_fig = charts.build_prediction_figures(_result["curve"], _result["neighbours"])
+        ai_answer_parts.append(mo.md(
+            f"**Prediction** from the {len(_result['neighbours'])} most similar of "
+            f"{_result['n_usable']} usable saved tests. Lines: the prediction, going up (solid) "
+            "and coming down (dashed). Shaded: the lowest to highest value of those tests. "
+            "Grey: their own curves."
+        ))
+        ai_answer_parts.append(mo.hstack(
+            [mo.ui.plotly(_static_fig), mo.ui.plotly(_sliding_fig)], widths="equal", gap=2,
+        ))
+
+        _rows = []
+        for _neighbour in _result["neighbours"]:
+            _rows.append({
+                "File name": _neighbour["test"]["file_name"],
+                "Sample": _neighbour["test"]["sample"],
+                "Distance": round(_neighbour["distance"], 3),
+                "Counts for [%]": round(100 * _neighbour["weight"], 1),
+            })
+        ai_answer_parts.append(mo.md("**The similar tests used** (distance 0 = the same in every factor)"))
+        ai_answer_parts.append(mo.ui.table(
+            _pd.DataFrame(_rows), selection=None, pagination=False,
+            show_column_summaries=False, show_data_types=False,
+        ))
+
+        _rows = []
+        _curve = _result["curve"]
+        for _i in range(len(_curve)):
+            _direction = "up"
+            if _curve["down"].iloc[_i]:
+                _direction = "down"
+            _row = {"Direction": _direction, "Velocity [m/s]": round(float(_curve["velocity"].iloc[_i]), 4)}
+            for _column, _name in [("static", "Static"), ("dynamic", "Sliding")]:
+                for _part, _suffix in [("", ""), ("_low", " lowest"), ("_high", " highest")]:
+                    _value = _curve[_column + _part].iloc[_i]
+                    if _value is None or _value != _value:
+                        _row[_name + _suffix] = None
+                    else:
+                        _row[_name + _suffix] = round(float(_value), 4)
+            _row["Tests"] = int(_curve["n_tests"].iloc[_i])
+            _rows.append(_row)
+        ai_answer_parts.append(mo.md("**Predicted values**"))
+        ai_answer_parts.append(mo.ui.table(
+            _pd.DataFrame(_rows), selection=None, pagination=False,
+            show_column_summaries=False, show_data_types=False,
+        ))
+
+    _quality = get_ai_quality()
+    if _quality is not None and not isinstance(_quality, dict):
+        ai_answer_parts.append(_quality)
+    elif _quality is not None:
+        if _quality["static"] < _quality["static_plain"] and _quality["dynamic"] < _quality["dynamic_plain"]:
+            _verdict = "The chosen factors **help**: the prediction is closer than the plain average."
+            _kind = "success"
+        else:
+            _verdict = (
+                "The chosen factors **don't help yet**: the plain average of all tests is as "
+                "close or closer. Try other factors, or fill in more tests."
+            )
+            _kind = "warn"
+        ai_answer_parts.append(mo.callout(mo.md(
+            f"**How good is it?** Each of {_quality['n_tests']} saved tests was predicted from the "
+            "others and compared with what was measured. Mean difference:\n\n"
+            f"- Static friction: **{_quality['static']:.4f}** "
+            f"(plain average of all other tests: {_quality['static_plain']:.4f})\n"
+            f"- Sliding friction: **{_quality['dynamic']:.4f}** "
+            f"(plain average of all other tests: {_quality['dynamic_plain']:.4f})\n\n"
+            + _verdict
+        ), kind=_kind))
+    return (ai_answer_parts,)
+
+
+@app.cell
+def _(
+    PANEL_STYLE,
+    ai_answer_parts,
+    ai_factor_select,
+    ai_form_panel,
+    ai_k_select,
+    ai_start_sample,
+    ai_tests,
+    mo,
+):
+    _intro = mo.md(
+        "Predicts the friction of a test that is **not in the database yet**, from the saved "
+        "tests that are most like it. It finds the saved tests closest to the new one in the "
+        "chosen factors and combines their friction curves, closer tests counting more. "
+        "The more tests have their information filled in on the Database tab, the better it gets."
+    )
+    if len(ai_tests) == 0:
+        _parts = [_intro, mo.callout(mo.md(
+            "No saved test can be used yet: a test needs its friction per step and a stroke."
+        ), kind="info")]
+    elif len(ai_factor_select.options) == 0:
+        _parts = [_intro, mo.callout(mo.md(
+            f"There are **{len(ai_tests)}** saved tests, but none has any information filled in. "
+            "Choose a sample and fill in the conditions (normal force, ice, temperatures...) "
+            "on the **Database** tab first."
+        ), kind="info")]
+    else:
+        _parts = [
+            _intro,
+            mo.Html('<hr class="divider">'),
+            mo.md("**1. What should be compared?**"),
+            ai_factor_select,
+            ai_k_select,
+            mo.Html('<hr class="divider">'),
+            mo.md("**2. The new test**"),
+            ai_start_sample,
+            ai_form_panel,
+        ]
+        if len(ai_answer_parts) > 0:
+            _parts.append(mo.Html('<hr class="divider">'))
+            _parts = _parts + ai_answer_parts
+    ai_tab = mo.vstack([
+        mo.vstack(_parts, gap=2).style(PANEL_STYLE),
+    ], gap=2).style({"padding": "20px 0"})
+    return (ai_tab,)
+
+
 # ── Final layout ───────────────────────────────────────────────────────────
 # Split into independent cells (rather than one monolithic layout cell) so
 # that a widget somewhere getting rebuilt with a new identity - which
@@ -2751,12 +3151,13 @@ def _(mo):
     DATABASE_TAB = "&#128451;  Database"
     SAMPLES_TAB = "&#129514;  Samples"
     MATERIALS_TAB = "&#129521;  Materials"
+    AI_TAB = "&#129504;  AI"
     get_active_tab, set_active_tab = mo.state(ANALYSIS_TAB)
-    return ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, get_active_tab, set_active_tab
+    return AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, get_active_tab, set_active_tab
 
 
 @app.cell
-def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, batch_tab, database_tab, get_active_tab, materials_tab, mo, results_tab, samples_tab):
+def _(AI_TAB, ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, ai_tab, batch_tab, database_tab, get_active_tab, materials_tab, mo, results_tab, samples_tab):
     # Only the active tab's real content goes into the page. mo.ui.tabs puts
     # every tab's HTML into the one output marimo sizes against its 5 MB
     # limit, and each tab can hold a chart of ~2 MB - both at once was what
@@ -2778,6 +3179,7 @@ def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, batch_t
         DATABASE_TAB: _placeholder,
         SAMPLES_TAB: _placeholder,
         MATERIALS_TAB: _placeholder,
+        AI_TAB: _placeholder,
     }
     if get_active_tab() == BATCH_TAB:
         tab_contents[BATCH_TAB] = batch_tab
@@ -2787,6 +3189,8 @@ def _(ANALYSIS_TAB, BATCH_TAB, DATABASE_TAB, MATERIALS_TAB, SAMPLES_TAB, batch_t
         tab_contents[SAMPLES_TAB] = samples_tab
     elif get_active_tab() == MATERIALS_TAB:
         tab_contents[MATERIALS_TAB] = materials_tab
+    elif get_active_tab() == AI_TAB:
+        tab_contents[AI_TAB] = ai_tab
     else:
         tab_contents[ANALYSIS_TAB] = results_tab
     return (tab_contents,)
