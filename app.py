@@ -1180,8 +1180,11 @@ def _(charts, db_mod, get_shown_test_id, mo):
                     "Type the stroke (Hub Exzenter, e.g. 24) into **Stroke** above and click "
                     "**Save**, then tick the test and click **Show chart** again._"
                 ))
-            _parts.append(mo.ui.plotly(_figures[0]))
-            _parts.append(mo.ui.plotly(_figures[1]))
+            # Static and sliding side by side, so they can be compared.
+            _parts.append(mo.hstack(
+                [mo.ui.plotly(_figures[0]), mo.ui.plotly(_figures[1])],
+                widths="equal", gap=2,
+            ))
             shown_velocity_charts = mo.vstack(_parts, gap=1)
     return (shown_velocity_charts,)
 
@@ -1220,6 +1223,7 @@ def _(db_mod, get_shown_test_id, mo, pipeline, results_table):
                     _parts.append(mo.ui.table(
                         _pm_df, selection=None,
                         pagination=False, show_column_summaries=False, show_data_types=False,
+                        style_cell=results_table.plus_minus_row_colors(_pm_df),
                     ))
             except Exception as _e:
                 _parts.append(mo.callout(mo.md(f"**CoF+ / CoF- could not be shown:** {_e}"), kind="danger"))
@@ -1330,6 +1334,7 @@ def _(cof_eval, mo, plus_minus_error, plus_minus_result, results_table, stats_er
             _parts.append(mo.ui.table(
                 _pm_df, selection=None,
                 pagination=False, show_column_summaries=False, show_data_types=False,
+                style_cell=results_table.plus_minus_row_colors(_pm_df),
             ))
         eval_table_panel = mo.vstack(_parts, gap=1)
     return (eval_table_panel,)
@@ -2298,18 +2303,30 @@ def _(build_list_form, db_mod, mo, sample_table, selected_row_ids):
     sample_delete_btn = mo.ui.run_button(label="&#128465; Delete", kind="danger")
     if sample_selected_id is None:
         sample_save_btn = mo.ui.run_button(label="&#10133; Add sample")
-        sample_form_panel = mo.vstack([
+        _form_part = mo.vstack([
             mo.md("**Add a sample**  \nOr tick a sample in the table to change or delete it."),
             sample_form,
             mo.hstack([sample_save_btn], justify="start"),
         ], gap=1)
     else:
         sample_save_btn = mo.ui.run_button(label="&#128190; Save")
-        sample_form_panel = mo.vstack([
+        _form_part = mo.vstack([
             mo.md(f"**Sample {_values['name']}**"),
             sample_form,
             mo.hstack([sample_save_btn, sample_delete_btn], justify="start", gap=1),
         ], gap=1)
+
+    # Next to the form: a picture of what Ra, Rz, Rq, Rsk, Rku and the
+    # chamfer mean.
+    import pathlib as _pathlib
+    _picture = _pathlib.Path(__file__).parent / "backend" / "templates" / "sample_parameters.png"
+    if _picture.exists():
+        sample_form_panel = mo.hstack(
+            [_form_part, mo.image(src=_picture, width=480)],
+            widths=[1, 1], align="start", gap=3,
+        )
+    else:
+        sample_form_panel = _form_part
     return (
         sample_delete_btn,
         sample_form,

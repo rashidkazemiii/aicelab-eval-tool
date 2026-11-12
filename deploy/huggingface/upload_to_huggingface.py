@@ -32,6 +32,7 @@ APP_FILES = [
     "pyproject.toml",
     "backend/raw_data_settings.json",
     "backend/templates/summary_template.xlsx",
+    "backend/templates/sample_parameters.png",
 ]
 
 # Folders whose .py files are uploaded (subfolders are not included).

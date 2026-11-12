@@ -181,6 +181,25 @@ def build_plus_minus_table(plus_minus_stats, include_check=True):
     return pd.DataFrame(cols)
 
 
+# Background of each Group's rows in the CoF+ / CoF- table on the page.
+GROUP_COLORS = {"CoF AVG": "#e8eef8", "CoF+": "#e6f4ea", "CoF-": "#fbe9e7"}
+
+
+def plus_minus_row_colors(table):
+    """For mo.ui.table's style_cell: gives every cell of a row of the
+    CoF+ / CoF- table (from build_plus_minus_table) its Group's colour."""
+    def style_cell(row_id, column_name, value):
+        # row_id is the row's number in `table`, as text
+        row = int(row_id)
+        if row < 0 or row >= len(table):
+            return {}
+        color = GROUP_COLORS.get(table["Group"].iloc[row])
+        if color is None:
+            return {}
+        return {"backgroundColor": color}
+    return style_cell
+
+
 def build_plus_minus_export(plus_minus_stats):
     """The CoF AVG / CoF+ / CoF- table for an Excel (.csv) export: no Check
     column, and every column name marked with "(±)" so it can't clash with
